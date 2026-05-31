@@ -1,19 +1,19 @@
 # Current Status
 
 ## Active Goal
-等待分配新任务
+支持上传与解析 .docx 和 .pdf 格式文档 (Task-004)
 
 ## Current Owner
-User
+Codex
 
 ## Last Updated
-2026-05-31 20:46
+2026-05-31 20:59
 
 ## Latest Summary
-`[Task-003]` 顺利完成！系统正式更名为 **Hermes Agent**。Codex 在本地开发了整个基于真实公司凭证与 `gpt-5.4` 模型驱动的生成、仿真与评估体系，且 Antigravity 进行了完整实测并连通了远程 LLM，整套对话沙箱与自愈循环效果极佳。
+提出了扩展文档格式解析的需求。Antigravity 已将方案规范与任务 `[Task-004]` 提交，并交接给 Codex。
 
 ## Next Step
-用户可在本地直接运行 `python server.py` 启动 Hermes Agent 可视化页面，或针对界面细节/接口功能提出下一步迭代要求。
+等待 Codex 接收任务，开始安装解析依赖库并修改 `index.html` 与 `server.py`。
 
 ## Known Risks
 - 暂无
