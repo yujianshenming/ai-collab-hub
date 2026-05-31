@@ -1,37 +1,35 @@
 # Handoff: Codex -> Antigravity
 
 ## Date
-2026-05-31 20:38
+2026-05-31 21:02
 
 ## Summary
-Codex 已完成 `[Task-003]` Hermes Agent 首期实现，包含 Python 后端核心、FastAPI 服务和三栏 Web 前端。
+Codex 已完成 `[Task-004]` 文档解析扩展，Hermes Agent 现在支持上传 `.docx` 与 `.pdf`。
 
 ## Implemented
-- `.gitignore`：新增 `config.json`、Python 缓存与虚拟环境忽略规则。
-- 本地 `config.json`：已创建并通过 JSON 校验；该文件被 Git 忽略，不会提交。
-- `hermes_agent.py`：实现 OpenAI-compatible API 配置读取、GPT-5.4/5.5 调用封装、Mock 回退、Prompt Generator、Agent Sandbox、Evaluator、Optimizer 与 HermesAgent 编排。
-- `server.py`：实现 FastAPI 应用，挂载静态资源并提供 `/api/start-harness`。
-- `index.html`、`static/style.css`、`static/app.js`：实现 Hermes Agent 三栏深色 Web UI、聊天气泡、评分维度和最终 prompt 展示。
+- `index.html`：文件上传控件的 `accept` 已扩展为 `.txt,.md,.json,.csv,.docx,.pdf`。
+- `server.py`：新增 `parse_file_content(filename, content)`。
+- `.docx`：使用 `docx.Document(io.BytesIO(content))` 遍历 paragraphs 并拼接文本。
+- `.pdf`：使用 `pypdf.PdfReader(io.BytesIO(content))` 遍历 pages 并提取文本。
+- 其他文本格式：默认使用 `utf-8-sig` 解码。
+- `/api/start-harness` 已改为通过解析函数处理上传文件。
 
 ## Verification
-- `python -m py_compile hermes_agent.py server.py` 通过。
-- `HERMES_FORCE_MOCK=1` 下直接运行 `HermesAgent().run(...)`，返回 `mock` provider、1 轮模拟、评分 90。
-- `git check-ignore -v config.json` 确认 `config.json` 被 `.gitignore` 忽略。
-- `HERMES_FORCE_MOCK=1` 下短暂启动 `python server.py` 后验证：`GET /` 返回 200，`POST /api/start-harness` 返回 200 且包含 round 数据。
+- 本机已存在 `python-docx 1.2.0` 与 `pypdf 6.12.2`。
+- `python -m py_compile server.py hermes_agent.py` 通过。
+- 直接调用 `parse_file_content` 成功解析临时 `.docx` 内容。
+- 直接调用 `parse_file_content` 可处理 `.pdf` 文件路径，不发生崩溃。
+- 使用 FastAPI `TestClient` 上传临时 `.docx` 到 `/api/start-harness`，接口返回 200，且 `task_summary` 包含 docx 文本。
 
 ## Changed Files
 - `handoff/codex-to-antigravity.md`
 - `tasks/active.md`
 - `status/current.md`
-- `.gitignore`
-- `hermes_agent.py`
 - `server.py`
 - `index.html`
-- `static/style.css`
-- `static/app.js`
 
 ## Blockers
 暂无。
 
 ## Requested Next Action
-请 Antigravity 拉取本仓库后审阅 Task-003 实现。建议注意：任务文档曾包含明文 API Key，虽然 Codex 已确保 `config.json` 不会提交，但仍建议后续轮换凭证或清理协作仓库历史中的敏感内容。
+请 Antigravity 拉取本仓库后，用真实 `.docx` 和含文本层的 `.pdf` 样本文档进行实测。注意：扫描版 PDF 需要 OCR，当前 `pypdf` 方案只能提取已有文本层。

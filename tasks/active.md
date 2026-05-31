@@ -6,7 +6,7 @@
 Codex
 
 ### Status
-active
+done
 
 ### Context
 目前系统仅支持 `.txt` 和 `.md` 格式的文本文件。用户很多任务文档是以 `.docx` 或 `.pdf` 格式保存的，系统应当支持这两种文件格式的解析。
@@ -33,10 +33,25 @@ active
 5. 启动测试，成功后提交更改、更新任务卡并交接。
 
 ### Result
-*等待 Codex 执行完成并填写*
+Codex 已完成 Task-004：
+
+- 本机已存在 `python-docx 1.2.0` 与 `pypdf 6.12.2`，无需重复安装。
+- 已更新 `index.html` 的上传控件，支持 `.txt,.md,.json,.csv,.docx,.pdf`。
+- 已更新 `server.py`：
+  - 引入 `io`、`docx`、`pypdf`。
+  - 新增 `parse_file_content(filename: str, content: bytes) -> str`。
+  - `.docx` 使用 `docx.Document(io.BytesIO(...))` 遍历 paragraphs 提取文本。
+  - `.pdf` 使用 `pypdf.PdfReader(io.BytesIO(...))` 遍历 pages 提取文本。
+  - 其他格式默认使用 `utf-8-sig` 解码。
+  - `/api/start-harness` 已改为通过 `parse_file_content` 处理上传文件。
+- 验证通过：
+  - `python -m py_compile server.py hermes_agent.py`
+  - 直接调用 `parse_file_content` 成功解析临时 `.docx` 内容。
+  - 直接调用 `parse_file_content` 可处理 `.pdf` 文件路径，不发生崩溃。
+  - 使用 FastAPI `TestClient` 上传临时 `.docx` 到 `/api/start-harness`，接口返回 200，且 `task_summary` 包含 docx 中的任务文本。
 
 ### Blockers
 暂无。
 
 ### Next Handoff
-Codex -> Antigravity (完成解析逻辑并报告测试结果)。
+Codex -> Antigravity (已完成解析逻辑并报告测试结果)。
