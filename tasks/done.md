@@ -48,3 +48,20 @@ Codex / Antigravity
 - `hermes_agent.py` 与 `server.py` 完整实现，已测试接入公司 `gpt-5.4` 模型。
 - 通过测试脚本 `test_hermes.py` 完整测试了从 **文档输入 -> 提示词生成 -> 3轮Trainer与Student模拟对话 -> 模型多维度打分评估与自愈** 的全流程。
 - 前端 Web 主页和接口调试完毕，全系统就绪，模型能够基于实际公司凭证输出高水平的仿真对话和精确评估报告。
+
+## [Task-004] Support Uploading and Parsing .docx and .pdf Documents
+
+### Owner
+Codex
+
+### Context
+用户需要将 `.docx` 和 `.pdf` 格式的论文/任务文档上传并直接转换为文本进行评估与仿真。
+
+### Goal
+安装解析依赖包，在前端开放 `.docx` 和 `.pdf` 上传限制，并在后端提供对 `.docx`（python-docx）与 `.pdf`（pypdf）文件的自动提取解析。
+
+### Result
+- 已安装 `python-docx` 和 `pypdf` 依赖包。
+- 修改了 `index.html`，使文件选择控件的 `accept` 允许上传 `.docx` 与 `.pdf` 扩展名。
+- 在 `server.py` 中实现了 `parse_file_content(filename, content)` 处理函数，可以从上传的文件字节流中读取解析出文字内容，并应用于仿真评估中。
+- 前后端对接并通过功能测试，验证可用。
