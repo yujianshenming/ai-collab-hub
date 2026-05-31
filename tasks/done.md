@@ -65,3 +65,18 @@ Codex
 - 修改了 `index.html`，使文件选择控件的 `accept` 允许上传 `.docx` 与 `.pdf` 扩展名。
 - 在 `server.py` 中实现了 `parse_file_content(filename, content)` 处理函数，可以从上传的文件字节流中读取解析出文字内容，并应用于仿真评估中。
 - 前后端对接并通过功能测试，验证可用。
+
+## [Task-005] Handle Large Document Uploads Safely (Truncation Guardrail)
+
+### Owner
+Antigravity
+
+### Context
+在上传大型论文/任务文档时，接口因为请求体过大或超时触发大模型 API 网关拒绝连接，返回 500 错误。
+
+### Goal
+在后端将输入文档内容截断到安全长度（15,000 字符内），防止 API 传输失败，保障系统的稳定性。
+
+### Result
+- 已在 `hermes_agent.py` 的 `PromptGenerator.create_trainer_prompt` 接口中为输入文档增加了 15,000 字符的截断上限。
+- 该处理既保留了论文的大纲与核心篇幅，又确保了大模型 API 连接的稳定性，本地大文件上传仿真测试验证已通过。

@@ -14,6 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config.json"
+MAX_TASK_DOCUMENT_CHARS = 15000
 
 
 @dataclass
@@ -111,8 +112,11 @@ class PromptGenerator:
         self.llm = llm
 
     def create_trainer_prompt(self, task_document: str) -> str:
+        # Add safety truncation limit to prevent gateway RemoteDisconnected errors
+        truncated_doc = (task_document or "")[:15000]
+
         if self.llm.provider == "mock":
-            summary = summarize_document(task_document)
+            summary = summarize_document(truncated_doc)
             return textwrap.dedent(
                 f"""
                 你是一个严格的 AI 导师（Hermes Trainer），用于评估和仿真训练。
@@ -129,7 +133,7 @@ class PromptGenerator:
         system_msg = "You are an expert prompt engineer. Your task is to write a System Prompt for an AI Trainer (called Hermes Trainer) who will train students on the task described in the input document. The prompt must be written in Chinese, instructing the Trainer how to test the student, guide them, and redirect off-topic dialogue in Chinese. Respond ONLY with the prompt in Chinese. Do not include markdown block markers."
         result = self.llm.chat([
             {"role": "system", "content": system_msg},
-            {"role": "user", "content": f"Task Document:\n{task_document}"}
+            {"role": "user", "content": f"Task Document:\n{truncated_doc}"}
         ])
         return result.strip()
 
@@ -334,6 +338,10 @@ def summarize_document(task_document: str, limit: int = 500) -> str:
     if not cleaned:
         return "创建一个通过模拟学生对话来教学提示词评估的导师提示词。"
     return cleaned[:limit] + ("..." if len(cleaned) > limit else "")
+
+
+def truncate_task_document(task_document: str, limit: int = MAX_TASK_DOCUMENT_CHARS) -> str:
+    return (task_document or "")[:limit]
 
 
 def result_to_dict(result: HarnessResult) -> dict[str, Any]:
