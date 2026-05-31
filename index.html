@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Hermes Agent</title>
+    <title>Hermes Agent - 提示词仿真与评估系统</title>
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -11,69 +11,69 @@
       <section class="panel controls">
         <div>
           <p class="eyebrow">Hermes Agent</p>
-          <h1>Prompt evaluation simulator</h1>
+          <h1>提示词评估模拟器</h1>
         </div>
 
         <form id="harness-form">
           <label>
-            Task document
-            <textarea name="text" rows="10" placeholder="Paste a training task, persona spec, or evaluation goal..."></textarea>
+            任务文档内容
+            <textarea name="text" rows="10" placeholder="在此粘贴您的训练任务大纲、人设描述文件或评估目标文档..."></textarea>
           </label>
 
           <label>
-            Upload document
+            上传任务文档
             <input name="document" type="file" accept=".txt,.md,.json,.csv" />
           </label>
 
           <label>
-            Student persona
+            模拟学生人设
             <select name="student_persona">
-              <option value="auto">Auto select</option>
-              <option value="Distracted beginner who answers partly off-topic.">Distracted beginner</option>
-              <option value="Motivated learner with gaps in vocabulary.">Motivated learner</option>
-              <option value="Skeptical student who asks for practical proof.">Skeptical student</option>
+              <option value="auto">自动选择人设</option>
+              <option value="注意力分散的初学者 (经常答非所问，偏离主题)。">注意力分散的初学者</option>
+              <option value="积极的主动学习者 (有基础理解，但缺乏实操经验)。">积极的主动学习者</option>
+              <option value="持怀疑态度的务实学生 (要求具体实例与逻辑论证)。">持怀疑态度的务实学生</option>
             </select>
           </label>
 
           <label>
-            Passing threshold
+            评估合格分数线
             <input name="threshold" type="range" min="60" max="95" value="85" />
             <span id="threshold-value">85</span>
           </label>
 
-          <button type="submit">Run simulation</button>
+          <button type="submit">启动仿真评估</button>
         </form>
       </section>
 
       <section class="panel conversation">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Agent sandbox</p>
-            <h2>Simulated dialogue</h2>
+            <p class="eyebrow">智能体沙箱</p>
+            <h2>模拟对话仿真回放</h2>
           </div>
-          <span id="provider-pill">idle</span>
+          <span id="provider-pill">空闲</span>
         </div>
         <div id="chat-log" class="chat-log">
-          <div class="empty">Run a simulation to inspect trainer and student behavior.</div>
+          <div class="empty">请启动仿真评估，以观察培训导师（Trainer）与模拟学生之间的多轮对答细节。</div>
         </div>
       </section>
 
       <section class="panel report">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Evaluator</p>
-            <h2>Score and refinement</h2>
+            <p class="eyebrow">智能评估器</p>
+            <h2>评分与自愈优化</h2>
           </div>
           <div id="score" class="score">--</div>
         </div>
 
         <div id="dimensions" class="dimensions"></div>
         <div class="report-block">
-          <h3>Diagnosis</h3>
+          <h3>评估诊断与优化建议</h3>
           <ul id="diagnosis"></ul>
         </div>
         <div class="report-block">
-          <h3>Final prompt</h3>
+          <h3>最终优化后的合格提示词</h3>
           <pre id="final-prompt"></pre>
         </div>
       </section>

@@ -99,11 +99,11 @@ class OpenAICompatibleClient:
                 data = json.loads(response.read().decode("utf-8"))
             return data["choices"][0]["message"]["content"]
         except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError) as exc:
-            return f"[Provider fallback] API call failed. Reason: {exc}"
+            return f"[API 调用失败，已切换到备用模式] 原因: {exc}"
 
     def _mock_response(self, messages: list[dict[str, str]]) -> str:
         last = messages[-1]["content"] if messages else ""
-        return "Mock Hermes response: " + summarize_document(last, 220)
+        return "模拟的 Hermes 助手回答: " + summarize_document(last, 220)
 
 
 class PromptGenerator:
@@ -115,17 +115,18 @@ class PromptGenerator:
             summary = summarize_document(task_document)
             return textwrap.dedent(
                 f"""
-                You are Hermes Agent, a rigorous AI trainer prompt used for simulation and evaluation.
-                Training objective: {summary}
-                Trainer protocol:
-                - Discover the student's baseline first.
-                - Teach in short, concrete steps.
-                - Ask one question at a time.
-                - Redirect off-topic answers without shaming the student.
+                你是一个严格的 AI 导师（Hermes Trainer），用于评估和仿真训练。
+                训练目标：{summary}
+                导师规范：
+                - 首先探明学生的认知水平。
+                - 采取小步骤、渐进式的教学方法。
+                - 一次只提一个具体问题。
+                - 遇到学生偏离主题时，温和地引导其重回主线。
+                - 在对话结束前进行一次实际应用考核。
                 """
             ).strip()
 
-        system_msg = "You are an expert prompt engineer. Your task is to write a System Prompt for an AI Trainer (called Hermes Trainer) who will train students on the task described in the input document. The prompt must tell the Trainer how to test the student, guide them, and redirect off-topic dialogue. Respond ONLY with the prompt."
+        system_msg = "You are an expert prompt engineer. Your task is to write a System Prompt for an AI Trainer (called Hermes Trainer) who will train students on the task described in the input document. The prompt must be written in Chinese, instructing the Trainer how to test the student, guide them, and redirect off-topic dialogue in Chinese. Respond ONLY with the prompt in Chinese. Do not include markdown block markers."
         result = self.llm.chat([
             {"role": "system", "content": system_msg},
             {"role": "user", "content": f"Task Document:\n{task_document}"}
@@ -142,23 +143,22 @@ class AgentSandbox:
             return requested_persona
         return random.choice(
             [
-                "Distracted beginner who answers off-topic questions frequently.",
-                "Motivated learner who has a general understanding but lacks experience.",
-                "Skeptical student who asks for practical proof and examples.",
+                "注意力分散的初学者，经常在回答中掺杂无关事宜，甚至跑题。",
+                "积极的主动学习者，有一定基础理解但缺乏实操经验。",
+                "持怀疑态度的务实学生，倾向于挑战模糊的说法并要求具体实例。",
             ]
         )
 
     def simulate(self, trainer_prompt: str, student_prompt: str, round_number: int) -> list[ChatTurn]:
         if self.llm.provider == "mock":
-            # Fallback to hardcoded mock simulation turns
-            distracted = "distracted" in student_prompt.lower()
+            distracted = "注意力分散" in student_prompt
             turns = [
-                ChatTurn("Trainer", "trainer", "What do you already understand about the task we are practicing?"),
-                ChatTurn("Student", "student", "I know prompts matter, but I usually just paste examples and tweak random words." if distracted else "I understand the objective, but I need a repeatable method."),
-                ChatTurn("Trainer", "trainer", "Use a five-part frame: role, goal, context, constraints, and success criteria."),
-                ChatTurn("Student", "student", "Can we focus on making it sound cooler instead?" if distracted and round_number == 1 else "So the prompt should say what success looks like."),
-                ChatTurn("Trainer", "trainer", "Style can come later. Let's write one success criterion for this task."),
-                ChatTurn("Student", "student", "The answer should include a checklist and one example output."),
+                ChatTurn("Trainer", "trainer", "你好！请问你对我们要进行的训练任务有什么了解？"),
+                ChatTurn("Student", "student", "我知道提示词很重要，但我通常只是复制例子然后随便改改字。" if distracted else "我理解这个目标，但我需要一个可重复的实践方法。"),
+                ChatTurn("Trainer", "trainer", "我们可以使用五步框架：角色、目标、背景、约束和成功标准。"),
+                ChatTurn("Student", "student", "我们能不能先讨论怎么让提示词听起来更酷？" if distracted and round_number == 1 else "所以提示词应该明确说明成功标准，而不仅仅是生成什么。"),
+                ChatTurn("Trainer", "trainer", "词藻修饰可以稍后进行。让我们先回归目标：请为这个任务写一个成功标准。"),
+                ChatTurn("Student", "student", "回答应该包含一个检查清单和一个示例输出。"),
             ]
             return turns
 
@@ -166,7 +166,7 @@ class AgentSandbox:
         # Turn 1: Trainer greeting
         trainer_msg = self.llm.chat([
             {"role": "system", "content": trainer_prompt},
-            {"role": "user", "content": "Greet the student, state the training objective, and ask what they know about this task."}
+            {"role": "user", "content": "Greet the student, state the training objective, and ask what they know about this task. Speak in Chinese."}
         ])
         turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
 
@@ -178,7 +178,7 @@ class AgentSandbox:
                 role = "assistant" if t.role == "student" else "user"
                 student_history.append({"role": role, "content": t.content})
             
-            student_system = f"You are simulating a student in a training session. Your persona is: {student_prompt}. Follow your persona. Speak directly to the trainer in character. Keep responses very short (1-2 sentences)."
+            student_system = f"You are simulating a student in a training session. Your persona is: {student_prompt}. Follow your persona. Speak directly to the trainer in character. Keep responses very short (1-2 sentences). Speak in Chinese."
             student_msg = self.llm.chat([
                 {"role": "system", "content": student_system},
                 *student_history
@@ -206,8 +206,6 @@ class Evaluator:
 
     def evaluate(self, transcript: list[ChatTurn], trainer_prompt: str) -> Evaluation:
         if self.llm.provider == "mock":
-            # Simple mock evaluation
-            joined = " ".join(turn.content.lower() for turn in transcript)
             dimensions = {
                 "objective_alignment": 90 if "objective" in trainer_prompt.lower() else 75,
                 "student_simulation_quality": 85,
@@ -219,8 +217,8 @@ class Evaluator:
             return Evaluation(
                 score=score,
                 dimensions=dimensions,
-                diagnosis=["Mock assessment: System prompt operates reasonably."],
-                recommendations=["Focus on making redirects more explicit."]
+                diagnosis=["内置仿真诊断：系统提示词操作流程合理。"],
+                recommendations=["可以进一步精细化偏离主题时的对话拉回引导。"]
             )
 
         transcript_text = "\n".join(f"{t.speaker} ({t.role}): {t.content}" for t in transcript)
@@ -237,9 +235,10 @@ class Evaluator:
                 "assessment_rigor": <score_0_to_100>,
                 "prompt_operability": <score_0_to_100>
               },
-              "diagnosis": ["issue 1", "issue 2"],
-              "recommendations": ["suggestion 1", "suggestion 2"]
+              "diagnosis": ["diagnosis text 1 in Chinese", "diagnosis text 2 in Chinese"],
+              "recommendations": ["rec text 1 in Chinese", "rec text 2 in Chinese"]
             }
+            The values in diagnosis and recommendations lists MUST be written in Chinese.
             Respond ONLY with the raw JSON object. Do not include markdown wraps like ```json.
             """
         ).strip()
@@ -251,7 +250,6 @@ class Evaluator:
         ])
 
         try:
-            # Clean possible markdown wrap if the model ignored system prompts
             cleaned = res.strip()
             if cleaned.startswith("```"):
                 cleaned = cleaned.split("\n", 1)[1]
@@ -268,7 +266,6 @@ class Evaluator:
                 recommendations=data["recommendations"]
             )
         except Exception as exc:
-            # Fallback on parse failure
             return Evaluation(
                 score=75,
                 dimensions={
@@ -278,8 +275,8 @@ class Evaluator:
                     "assessment_rigor": 75,
                     "prompt_operability": 75
                 },
-                diagnosis=[f"Failed to parse LLM evaluation JSON: {exc}"],
-                recommendations=["Ensure model returns properly formatted JSON output."]
+                diagnosis=[f"大模型评估 JSON 解析失败: {exc}"],
+                recommendations=["请检查并重试以获取模型输出。"]
             )
 
 
@@ -290,9 +287,9 @@ class Optimizer:
     def refine(self, trainer_prompt: str, evaluation: Evaluation) -> str:
         if self.llm.provider == "mock":
             notes = "\n".join(f"- {item}" for item in evaluation.recommendations)
-            return f"{trainer_prompt}\n\nRefined guidelines:\n{notes}"
+            return f"{trainer_prompt}\n\n优化升级细节：\n{notes}"
 
-        system_msg = "You are an expert prompt optimizer. Refine the given Trainer System Prompt to address the recommendations provided. Output ONLY the refined prompt. Do not include any meta-text."
+        system_msg = "You are an expert prompt optimizer. Refine the given Trainer System Prompt in Chinese to address the recommendations provided. Output ONLY the refined prompt in Chinese. Do not include any meta-text."
         user_content = f"Current Prompt:\n{trainer_prompt}\n\nRecommendations:\n" + "\n".join(evaluation.recommendations)
         result = self.llm.chat([
             {"role": "system", "content": system_msg},
@@ -335,7 +332,7 @@ class HermesAgent:
 def summarize_document(task_document: str, limit: int = 500) -> str:
     cleaned = " ".join((task_document or "").split())
     if not cleaned:
-        return "Create a trainer prompt that teaches prompt evaluation through simulated student dialogue."
+        return "创建一个通过模拟学生对话来教学提示词评估的导师提示词。"
     return cleaned[:limit] + ("..." if len(cleaned) > limit else "")
 
 
