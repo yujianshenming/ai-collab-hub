@@ -43,7 +43,7 @@ form.addEventListener("submit", async (event) => {
     studentPersonaDisplay.textContent = "执行失败";
   } finally {
     button.disabled = false;
-    button.textContent = "启动仿真评估";
+    button.textContent = "开始生成提示词并仿真评估";
   }
 });
 
