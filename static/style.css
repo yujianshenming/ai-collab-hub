@@ -317,6 +317,125 @@ pre.prompt-box {
   max-height: 200px;
 }
 
+.metadata-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  background: rgba(2, 6, 23, 0.4);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.meta-item {
+  display: flex;
+  flex-direction: column;
+  font-size: 0.8rem;
+}
+
+.meta-item span {
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.status-pill {
+  display: inline-block;
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  width: fit-content;
+}
+
+.cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.card-item {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.card-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.card-title {
+  color: #60a5fa;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.card-rounds {
+  background: rgba(96, 165, 250, 0.14);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.card-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-field-label {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.card-field-value {
+  background: rgba(2, 6, 23, 0.3);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  color: #f8fafc;
+}
+
+pre.card-field-value {
+  margin: 0;
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.criteria-list {
+  padding-left: 16px;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  line-height: 1.5;
+}
+
 @media (max-width: 1040px) {
   .shell {
     grid-template-columns: 1fr;

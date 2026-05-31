@@ -48,6 +48,12 @@ class HarnessResult:
     provider: str
     started_at: str
     threshold: int
+    school: str = ""
+    course: str = ""
+    task_type: str = ""
+    cards: list[dict[str, Any]] = field(default_factory=list)
+    evaluation_criteria: list[str] = field(default_factory=list)
+    student_persona: str = ""
     rounds: list[HarnessRound] = field(default_factory=list)
     final_prompt: str = ""
     status: str = "completed"
@@ -109,34 +115,136 @@ class OpenAICompatibleClient:
         return "模拟的 Hermes 助手回答: " + summarize_document(last, 220)
 
 
+class TaskAnalyzer:
+    def __init__(self, llm: OpenAICompatibleClient) -> None:
+        self.llm = llm
+
+    def analyze_task(self, task_document: str, transition_word: str = "下个阶段") -> dict[str, Any]:
+        truncated_doc = (task_document or "")[:4000]
+
+        if self.llm.provider == "mock" or not truncated_doc:
+            return {
+                "school": "测试第一中学",
+                "course": "高中体育与健康",
+                "task_type": "教学计划设计",
+                "cards": [
+                    {
+                        "stage_number": 1,
+                        "name": "阶段一：体能恢复与评估",
+                        "max_rounds": 4,
+                        "description": "引导学生设计恢复游戏和完成体能测试评估",
+                        "opening": "你好！今天我们进行高一体能设计实训。请问阶段一你打算怎么做？",
+                        "prompt": f"你是一个严格的AI导师。引导学生设计阶段一的体能恢复与评估。在学生完成本阶段要求后仅输出“{transition_word}”。"
+                    },
+                    {
+                        "stage_number": 2,
+                        "name": "阶段二：科学锻炼原理学习",
+                        "max_rounds": 4,
+                        "description": "引导学生结合学习目标设计教学重难点与学练内容",
+                        "opening": "很好，已进入第二阶段。这一阶段主要是科学锻炼原理，你有什么想法？",
+                        "prompt": f"你是一个严格的AI导师。引导学生设计科学锻炼原理与多种练习内容。在学生完成本阶段要求后仅输出“{transition_word}”。"
+                    },
+                    {
+                        "stage_number": 3,
+                        "name": "阶段三：计划制订与习惯养成",
+                        "max_rounds": 4,
+                        "description": "引导学生结合自身情况制订锻炼计划并长期坚持",
+                        "opening": "很好，进入最终阶段。这一阶段的核心目标是计划制订，请问你的设计是？",
+                        "prompt": "你是一个严格的AI导师。引导学生制订个性化计划。完成本阶段要求后进行总结考核并结束对话。"
+                    }
+                ],
+                "evaluation_criteria": [
+                    "体能模块教学计划设计必须贴合目标",
+                    "各阶段教学设计需符合高一学生特点",
+                    "教学方法与手段设计需体现科学合理性"
+                ],
+                "student_persona": "注意力分散的初学者，在回答中掺杂跑题事宜。"
+            }
+
+        system_msg = textwrap.dedent(
+            f"""
+            You are a pedagogical design and prompt engineering expert. Analyze the provided task document in Chinese and output a complete training plan structure in JSON format.
+            The JSON object must contain exactly the following keys:
+            {{
+              "school": "Automatically extract the school name or default to '高中'",
+              "course": "Automatically extract the course name or default to '体育学'",
+              "task_type": "Extract the task type (e.g. 实训/作业/课程设计)",
+              "cards": [
+                {{
+                  "stage_number": 1,
+                  "name": "Card name in Chinese (e.g., 阶段一：体能恢复与评估)",
+                  "max_rounds": <integer suggested rounds, between 3 and 5>,
+                  "description": "Stage description in Chinese (under 40 chars)",
+                  "opening": "First greeting question from the Trainer to start this stage in Chinese (under 50 chars)",
+                  "prompt": "Concise Trainer prompt for this stage in Chinese (under 120 chars) instructing how to guide and when to transition (must output '{transition_word}' when the stage objectives are met)."
+                }},
+                ...
+              ],
+              "evaluation_criteria": [
+                "Evaluation criterion 1 in Chinese (under 30 chars)",
+                "Evaluation criterion 2 in Chinese"
+              ],
+              "student_persona": "Custom student persona description for simulation based on common learning difficulties (under 40 chars) in Chinese"
+            }}
+            Ensure that for each card, the Trainer prompt instructs the trainer to ONLY output the transition word '{transition_word}' (and absolutely nothing else) when the student achieves that card's goals.
+            Respond ONLY with the raw JSON object. Do not include markdown wraps like ```json.
+            """
+        ).strip()
+
+        res = self.llm.chat([
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": f"Task Document:\n{truncated_doc}"}
+        ])
+
+        try:
+            cleaned = res.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1]
+            if cleaned.endswith("```"):
+                cleaned = cleaned.rsplit("\n", 1)[0]
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:].strip()
+            
+            data = json.loads(cleaned.strip())
+            # Basic structural validation
+            required_keys = {"school", "course", "task_type", "cards", "evaluation_criteria", "student_persona"}
+            if not required_keys.issubset(data):
+                raise ValueError("Missing required JSON keys")
+            return data
+        except Exception as exc:
+            print(f"[API Warning] Dynamic task analysis failed: {exc}. Using default fallback.")
+            # Run mock analyzer fallback
+            self.force_mock = True
+            return self.analyze_task(None, transition_word=transition_word)
+
+
 class PromptGenerator:
     def __init__(self, llm: OpenAICompatibleClient) -> None:
         self.llm = llm
 
-    def create_trainer_prompt(self, task_document: str, transition_word: str = "下个阶段", suggested_rounds: int = 3) -> str:
-        # Add safety truncation limit to prevent gateway RemoteDisconnected errors
+    def create_trainer_prompt(self, task_document: str, cards: list[dict[str, Any]], transition_word: str = "下个阶段") -> str:
         truncated_doc = (task_document or "")[:4000]
+        stages_text = "\n".join(f"- 阶段 {c['stage_number']}（{c['name']}）：{c['description']}（上限轮次: {c['max_rounds']}）" for c in cards)
 
         if self.llm.provider == "mock":
-            summary = summarize_document(truncated_doc)
             return textwrap.dedent(
                 f"""
-                你是一个严格的 AI 导师（Hermes Trainer），用于评估和仿真训练。本次训练包含多个阶段。
-                训练目标：{summary}
+                你是一个严格的 AI 导师（Hermes Trainer），用于评估和仿真训练。本次训练包含以下阶段：
+                {stages_text}
                 导师规范：
-                - 从阶段一（Stage 1）开始引导，采取小步骤渐进教学。
-                - 一次只提一个具体问题，针对当前阶段目标提问（每阶段建议约{suggested_rounds}次对答）。
-                - 遇到学生偏离主题时，温和地引导其重回主线。
+                - 从阶段一开始引导，采取小步骤渐进教学。
+                - 一次只提一个具体问题，针对当前阶段目标提问。
                 - 重要规则：当你确认学生已完全达成当前阶段的目标、可进入下一阶段时，你必须且只能输出“{transition_word}”这四个字，绝对不要附带其他任何标点或文字。
                 """
             ).strip()
 
         system_msg = (
             f"You are an expert prompt engineer. Your task is to write a concise System Prompt in Chinese (strictly under 300 characters) "
-            f"for an AI Trainer (called Hermes Trainer) based on the task document. The training program has multiple stages. "
+            f"for an AI Trainer (called Hermes Trainer) based on the task document. The training program has the following stages:\n"
+            f"{stages_text}\n"
             f"The prompt must instruct the Trainer to:\n"
             f"1. Guide the student sequentially starting from Stage 1 based on the document.\n"
-            f"2. Keep responses brief (under 100 characters) and ask questions to test the student (suggested {suggested_rounds} turns per stage).\n"
+            f"2. Keep responses brief (under 100 characters) and ask questions to test the student on each stage's objective.\n"
             f"3. CRITICAL RULE: When the Trainer decides the student has achieved the current stage's objective and is ready to enter the next stage, "
             f"the Trainer MUST output ONLY the transition word '{transition_word}' and absolutely nothing else (no punctuation, no other words).\n"
             f"Respond ONLY with the prompt in Chinese. Do not include markdown block markers, intro, or outro."
@@ -168,42 +276,46 @@ class AgentSandbox:
         trainer_prompt: str,
         student_prompt: str,
         round_number: int,
+        cards: list[dict[str, Any]],
         transition_word: str = "下个阶段",
-        suggested_rounds: int = 3,
-        max_rounds_per_stage: int = 5,
     ) -> list[ChatTurn]:
         if self.llm.provider == "mock":
-            # For mock simulation, we show a multi-stage transition log
-            turns = [
-                ChatTurn("Trainer", "trainer", "你好！今天我们开始高一体能设计实训。首先请说下阶段一你打算怎么做？"),
-                ChatTurn("Student", "student", "第一阶段是恢复体能，我想设计一些跑跳游戏，比如原地高抬腿。"),
-                ChatTurn("Trainer", "trainer", "不错，分组和测试方面呢？"),
-                ChatTurn("Student", "student", "用健康体能测试，同质和异质分组结合。"),
-                ChatTurn("Trainer", "trainer", f"{transition_word}"),
-                ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."),
-                ChatTurn("Trainer", "trainer", "很好，已进入第二阶段。这一阶段主要是原理学习，你有什么想法？"),
-                ChatTurn("Student", "student", "第二阶段我要设计力量和耐力类练习，采用循环练习法。"),
-                ChatTurn("Trainer", "trainer", f"{transition_word}"),
-                ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."),
-                ChatTurn("Trainer", "trainer", "很好，进入第三阶段。这一阶段的核心目标是？"),
-                ChatTurn("Student", "student", "制订个性化体能锻炼计划，养成坚持锻炼习惯！"),
-            ]
+            # For mock simulation, we show a multi-stage transition log based on the cards
+            turns = []
+            turns.append(ChatTurn("Trainer", "trainer", cards[0]["opening"]))
+            turns.append(ChatTurn("Student", "student", "第一阶段是恢复体能，我想设计一些跑跳游戏，比如原地高抬腿。"))
+            turns.append(ChatTurn("Trainer", "trainer", "不错，分组和测试方面呢？"))
+            turns.append(ChatTurn("Student", "student", "用健康体能测试，同质和异质分组结合。"))
+            turns.append(ChatTurn("Trainer", "trainer", transition_word))
+            turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
+            
+            if len(cards) > 1:
+                turns.append(ChatTurn("Trainer", "trainer", cards[1]["opening"]))
+                turns.append(ChatTurn("Student", "student", "我们要设计力量和耐力类练习，采用循环练习法。"))
+                turns.append(ChatTurn("Trainer", "trainer", transition_word))
+                turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
+            
+            if len(cards) > 2:
+                turns.append(ChatTurn("Trainer", "trainer", cards[2]["opening"]))
+                turns.append(ChatTurn("Student", "student", "制订个性化体能锻炼计划，养成坚持锻炼习惯！"))
             return turns
 
         turns: list[ChatTurn] = []
-        current_stage = 1
+        current_stage_idx = 0
         stage_turns_count = 0
 
-        # Turn 1: Trainer greeting
-        trainer_msg = self.llm.chat([
-            {"role": "system", "content": trainer_prompt},
-            {"role": "user", "content": "Greet the student, introduce Stage 1 (recovery and interest assessment), and ask what they know or plan. Speak in Chinese. Keep response under 100 characters."}
-        ])
-        turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
+        # Turn 1: Trainer greeting (Use the opening of the first card directly!)
+        turns.append(ChatTurn("Trainer", "trainer", cards[0]["opening"]))
 
-        # We simulate a total of 12 speech exchanges maximum (which handles multiple stages)
-        # We will dynamically transition through stages when transition_word is matched
-        for exchange_idx in range(12):
+        # We simulate a total of 30 speech turns maximum (exchanges * 2) as requested by the user
+        max_exchanges = 15
+        
+        for exchange_idx in range(max_exchanges):
+            if current_stage_idx >= len(cards):
+                break
+                
+            current_stage = cards[current_stage_idx]
+            
             # Student response
             student_history = []
             for t in turns:
@@ -215,6 +327,7 @@ class AgentSandbox:
             student_system = (
                 f"You are simulating a student in a training session. Your persona is: {student_prompt}. "
                 f"Follow your persona, behave cooperative, and try to complete the requested stage objectives. "
+                f"Currently in Card {current_stage_idx + 1}: {current_stage['name']}. "
                 f"Keep responses very short (strictly under 60 characters). Speak in Chinese."
             )
             student_msg = self.llm.chat([
@@ -232,15 +345,20 @@ class AgentSandbox:
                 role = "assistant" if t.role == "trainer" else "user"
                 trainer_history.append({"role": role, "content": t.content})
             
+            # Calculate max limit per stage dynamically based on cards suggested limit (max_rounds)
+            max_limit_for_this_stage = current_stage.get("max_rounds", 4)
+            
             # If the stage has run too long, add a system hint to guide transition
-            if stage_turns_count >= max_rounds_per_stage - 1:
+            if stage_turns_count >= max_limit_for_this_stage - 1:
                 trainer_history.append({
                     "role": "user",
-                    "content": f"[系统提示：本阶段的对话轮次已到上限，如果你认为学生的设计已符合当前阶段要求，请**仅输出**跳转词“{transition_word}”进入下一阶段。]"
+                    "content": f"[系统提示：当前卡片（{current_stage['name']}）的对话轮次已到上限，如果你认为学生的设计已符合要求，请**仅输出**跳转词“{transition_word}”进入下一阶段。]"
                 })
 
+            # Use the specific prompt of the current card!
+            current_card_prompt = current_stage["prompt"]
             trainer_msg = self.llm.chat([
-                {"role": "system", "content": trainer_prompt},
+                {"role": "system", "content": current_card_prompt},
                 *trainer_history
             ])
             
@@ -249,50 +367,36 @@ class AgentSandbox:
             
             if cleaned_trainer_msg == transition_word:
                 turns.append(ChatTurn("Trainer", "trainer", transition_word))
-                turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
-                current_stage += 1
+                
+                # Check if this was the last stage
+                if current_stage_idx == len(cards) - 1:
+                    turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，本次所有阶段训练已全部圆满结束！"))
+                    break
+                    
+                next_stage = cards[current_stage_idx + 1]
+                turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一卡片：{next_stage['name']}..."))
+                current_stage_idx += 1
                 stage_turns_count = 0
                 
-                # Immediately call trainer again to start the next stage
-                next_history = []
-                for t in turns:
-                    if t.role == "system":
-                        continue
-                    role = "assistant" if t.role == "trainer" else "user"
-                    next_history.append({"role": role, "content": t.content})
-                next_history.append({
-                    "role": "user",
-                    "content": f"[系统提示：检测到跳转词。你已成功切换至阶段 {current_stage}。请向学生介绍阶段 {current_stage} 的任务要求并提出第一个问题。]"
-                })
-                trainer_msg = self.llm.chat([
-                    {"role": "system", "content": trainer_prompt},
-                    *next_history
-                ])
-                turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
+                # Directly push the next card's opening!
+                turns.append(ChatTurn("Trainer", "trainer", next_stage["opening"]))
             else:
                 turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
                 
                 # Check for forced transition if it exceeds maximum limit
-                if stage_turns_count >= max_rounds_per_stage:
-                    turns.append(ChatTurn("System", "system", f"已达到最大限制轮次（{max_rounds_per_stage}轮），系统强制跳转至下一阶段..."))
-                    current_stage += 1
+                if stage_turns_count >= max_limit_for_this_stage:
+                    # If this was the last stage, end simulation
+                    if current_stage_idx == len(cards) - 1:
+                        turns.append(ChatTurn("System", "system", "已达到最后一阶段的最大限制轮次，仿真结束。"))
+                        break
+                        
+                    next_stage = cards[current_stage_idx + 1]
+                    turns.append(ChatTurn("System", "system", f"已达到本阶段最大限制轮次（{max_limit_for_this_stage}轮），系统强制跳转至下一卡片：{next_stage['name']}..."))
+                    current_stage_idx += 1
                     stage_turns_count = 0
                     
-                    next_history = []
-                    for t in turns:
-                        if t.role == "system":
-                            continue
-                        role = "assistant" if t.role == "trainer" else "user"
-                        next_history.append({"role": role, "content": t.content})
-                    next_history.append({
-                        "role": "user",
-                        "content": f"[系统提示：已强制切换至阶段 {current_stage}。请向学生介绍阶段 {current_stage} 的任务要求并提出第一个问题。]"
-                    })
-                    trainer_msg = self.llm.chat([
-                        {"role": "system", "content": trainer_prompt},
-                        *next_history
-                    ])
-                    turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
+                    # Directly push the next card's opening!
+                    turns.append(ChatTurn("Trainer", "trainer", next_stage["opening"]))
 
         return turns
 
@@ -304,9 +408,9 @@ class Evaluator:
     def evaluate(self, transcript: list[ChatTurn], trainer_prompt: str) -> Evaluation:
         if self.llm.provider == "mock":
             dimensions = {
-                "objective_alignment": 90 if "objective" in trainer_prompt.lower() else 75,
+                "objective_alignment": 90,
                 "student_simulation_quality": 85,
-                "adaptive_redirect": 88 if "redirect" in trainer_prompt.lower() else 70,
+                "adaptive_redirect": 88,
                 "assessment_rigor": 85,
                 "prompt_operability": 86
             }
@@ -413,19 +517,45 @@ class HermesAgent:
         threshold: int = 85,
         student_persona: str | None = "auto",
         transition_word: str = "下个阶段",
-        suggested_rounds: int = 3,
-        max_rounds_per_stage: int = 5,
     ) -> HarnessResult:
         threshold = max(1, min(100, threshold))
+
+        # 1. Dynamically analyze stages/cards from task document
+        analyzer = TaskAnalyzer(self.llm)
+        task_plan = analyzer.analyze_task(task_document, transition_word=transition_word)
+        
+        school = task_plan.get("school", "测试学校")
+        course = task_plan.get("course", "体育与健康")
+        task_type = task_plan.get("task_type", "实训")
+        cards = task_plan.get("cards", [])
+        evaluation_criteria = task_plan.get("evaluation_criteria", [])
+        analyzed_student_persona = task_plan.get("student_persona", "自动测试学生人设")
+
+        print(f"[DEBUG] Analyzed metadata: {school} - {course} ({task_type})")
+        print(f"[DEBUG] Analyzed cards count: {len(cards)}")
+
+        # Build trainer prompt based on cards planning
         trainer_prompt = self.generator.create_trainer_prompt(
-            task_document, transition_word=transition_word, suggested_rounds=suggested_rounds
+            task_document, cards=cards, transition_word=transition_word
         )
-        student_prompt = self.sandbox.create_student_prompt(student_persona)
+        
+        # Determine student persona (use analyzed student persona if auto selected)
+        if not student_persona or student_persona == "auto":
+            student_prompt = analyzed_student_persona
+        else:
+            student_prompt = self.sandbox.create_student_prompt(student_persona)
+
         result = HarnessResult(
             task_summary=summarize_document(task_document),
             provider=self.llm.provider,
             started_at=datetime.now().isoformat(timespec="seconds"),
             threshold=threshold,
+            school=school,
+            course=course,
+            task_type=task_type,
+            cards=cards,
+            evaluation_criteria=evaluation_criteria,
+            student_persona=student_prompt,
         )
 
         for index in range(1, 3):
@@ -433,9 +563,8 @@ class HermesAgent:
                 trainer_prompt,
                 student_prompt,
                 index,
+                cards=cards,
                 transition_word=transition_word,
-                suggested_rounds=suggested_rounds,
-                max_rounds_per_stage=max_rounds_per_stage,
             )
             evaluation = self.evaluator.evaluate(transcript, trainer_prompt)
             result.rounds.append(HarnessRound(index, trainer_prompt, student_prompt, transcript, evaluation, index > 1))
@@ -466,6 +595,12 @@ def result_to_dict(result: HarnessResult) -> dict[str, Any]:
         "threshold": result.threshold,
         "status": result.status,
         "final_prompt": result.final_prompt,
+        "school": result.school,
+        "course": result.course,
+        "task_type": result.task_type,
+        "cards": result.cards,
+        "evaluation_criteria": result.evaluation_criteria,
+        "student_persona": result.student_persona,
         "rounds": [
             {
                 "round_number": item.round_number,

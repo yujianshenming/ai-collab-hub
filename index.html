@@ -28,7 +28,7 @@
           <label>
             模拟学生人设
             <select name="student_persona">
-              <option value="auto">自动选择人设</option>
+              <option value="auto">自动根据文档生成人设</option>
               <option value="注意力分散的初学者 (经常答非所问，偏离主题)。">注意力分散的初学者</option>
               <option value="积极的主动学习者 (有基础理解，但缺乏实操经验)。">积极的主动学习者</option>
               <option value="持怀疑态度的务实学生 (要求具体实例与逻辑论证)。">持怀疑态度的务实学生</option>
@@ -39,17 +39,6 @@
             阶段跳转标识词 (跳档词)
             <input name="transition_word" type="text" value="下个阶段" placeholder="当阶段目标达成，智能体纯净输出此词将触发阶段跳转..." required />
           </label>
-
-          <div class="form-row-2">
-            <label>
-              阶段建议轮次
-              <input name="suggested_rounds" type="number" min="1" max="10" value="3" required />
-            </label>
-            <label>
-              最大限制轮次
-              <input name="max_rounds_per_stage" type="number" min="2" max="20" value="5" required />
-            </label>
-          </div>
 
           <label>
             评估合格分数线
@@ -86,7 +75,31 @@
         <div id="dimensions" class="dimensions"></div>
 
         <div class="report-block">
-          <h3>当前仿真采用的测试学生人设</h3>
+          <h3>任务元数据卡片 (本周任务)</h3>
+          <div id="task-metadata" class="metadata-grid">
+            <div class="meta-item"><span>学校名称：</span><strong id="meta-school">--</strong></div>
+            <div class="meta-item"><span>课程名称：</span><strong id="meta-course">--</strong></div>
+            <div class="meta-item"><span>任务类型：</span><strong id="meta-type">--</strong></div>
+            <div class="meta-item"><span>任务状态：</span><span id="meta-status" class="status-pill">--</span></div>
+          </div>
+        </div>
+
+        <div class="report-block">
+          <h3>多阶段卡片方案 (自动设计与生成)</h3>
+          <div id="cards-container" class="cards-list">
+            <div class="empty">等待方案分析...</div>
+          </div>
+        </div>
+
+        <div class="report-block">
+          <h3>任务评价标准</h3>
+          <ul id="evaluation-criteria-list" class="criteria-list">
+            <li>等待标准分析...</li>
+          </ul>
+        </div>
+
+        <div class="report-block">
+          <h3>仿真测试学生人设</h3>
           <div id="student-persona-display" class="persona-box">等待输入...</div>
         </div>
 
