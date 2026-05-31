@@ -6,7 +6,7 @@
 Codex
 
 ### Status
-active
+done
 
 ### Context
 需要开发一套名为 **Hermes Agent** 的提示词自动评估与仿真优化系统。使用用户公司的 API Key 与 GPT-5.4 或 GPT-5.5 模型来驱动生成、模拟对话及评估。
@@ -21,7 +21,7 @@ active
 - **`config.json`**：存放在本地，包含以下配置：
   ```json
   {
-    "api_key": "sk-Mir94j0bCmH6wOaPMwT8gr6O7iFk0zp9Z9sORgFoPjVB6SFO",
+    "api_key": "[REDACTED - stored only in local config.json]",
     "base_url": "http://llm-service.polymas.com/api/openai/v1",
     "model": "gpt-5.4"
   }
@@ -50,10 +50,20 @@ active
 6. 本地运行并推送非敏感代码，移交状态。
 
 ### Result
-*等待 Codex 执行完成并填写*
+Codex 已完成 Task-003 首期实现：
+
+- 新增 `.gitignore`，包含 `config.json`、Python 缓存与虚拟环境规则，避免敏感配置被提交。
+- 已在本地创建 `config.json` 并验证其 JSON 格式；该文件已被 `.gitignore` 忽略，不会提交到 Git。
+- 新增 `hermes_agent.py`，实现 OpenAI-compatible 配置读取、GPT-5.4/5.5 端点调用封装、Mock 回退、Prompt Generator、Agent Sandbox、Evaluator、Optimizer 与 HermesAgent 编排逻辑。
+- 更新 `server.py`，提供 FastAPI 应用、静态文件服务与 `/api/start-harness` POST 接口。
+- 新增 `index.html`、`static/style.css`、`static/app.js`，实现 Hermes Agent 三栏深色 Web 界面、配置区、聊天气泡渲染区、评分与分析面板。
+- 验证通过：
+  - `python -m py_compile hermes_agent.py server.py`
+  - `HERMES_FORCE_MOCK=1` 下直接运行 `HermesAgent().run(...)`，返回 mock provider、1 轮模拟、评分 90。
+  - `HERMES_FORCE_MOCK=1` 下短暂启动 `python server.py`，`GET /` 返回 200，`POST /api/start-harness` 返回 200 且包含 round 数据。
 
 ### Blockers
 暂无。
 
 ### Next Handoff
-Codex -> Antigravity (完成全部编码并报告测试地址)。
+Codex -> Antigravity (已完成全部编码并报告测试地址)。

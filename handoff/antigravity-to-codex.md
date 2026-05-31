@@ -9,7 +9,7 @@
 ## Current State
 - 系统名称纠正为：**Hermes Agent**。
 - 已在桌面的 `api_key.txt` 中找到用户公司的 API 凭证：
-  - API Key: `sk-Mir94j0bCmH6wOaPMwT8gr6O7iFk0zp9Z9sORgFoPjVB6SFO`
+  - API Key: `[REDACTED - stored only in local config.json]`
   - Base URL: `http://llm-service.polymas.com/api/openai/v1`
   - 运行模型：优先选用 `gpt-5.4`，也可使用 `gpt-5.5`。
 - 任务 `[Task-003]` 细节已更新入 `tasks/active.md`。

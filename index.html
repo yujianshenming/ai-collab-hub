@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Hermes Agent</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel controls">
+        <div>
+          <p class="eyebrow">Hermes Agent</p>
+          <h1>Prompt evaluation simulator</h1>
+        </div>
+
+        <form id="harness-form">
+          <label>
+            Task document
+            <textarea name="text" rows="10" placeholder="Paste a training task, persona spec, or evaluation goal..."></textarea>
+          </label>
+
+          <label>
+            Upload document
+            <input name="document" type="file" accept=".txt,.md,.json,.csv" />
+          </label>
+
+          <label>
+            Student persona
+            <select name="student_persona">
+              <option value="auto">Auto select</option>
+              <option value="Distracted beginner who answers partly off-topic.">Distracted beginner</option>
+              <option value="Motivated learner with gaps in vocabulary.">Motivated learner</option>
+              <option value="Skeptical student who asks for practical proof.">Skeptical student</option>
+            </select>
+          </label>
+
+          <label>
+            Passing threshold
+            <input name="threshold" type="range" min="60" max="95" value="85" />
+            <span id="threshold-value">85</span>
+          </label>
+
+          <button type="submit">Run simulation</button>
+        </form>
+      </section>
+
+      <section class="panel conversation">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Agent sandbox</p>
+            <h2>Simulated dialogue</h2>
+          </div>
+          <span id="provider-pill">idle</span>
+        </div>
+        <div id="chat-log" class="chat-log">
+          <div class="empty">Run a simulation to inspect trainer and student behavior.</div>
+        </div>
+      </section>
+
+      <section class="panel report">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Evaluator</p>
+            <h2>Score and refinement</h2>
+          </div>
+          <div id="score" class="score">--</div>
+        </div>
+
+        <div id="dimensions" class="dimensions"></div>
+        <div class="report-block">
+          <h3>Diagnosis</h3>
+          <ul id="diagnosis"></ul>
+        </div>
+        <div class="report-block">
+          <h3>Final prompt</h3>
+          <pre id="final-prompt"></pre>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
