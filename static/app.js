@@ -6,7 +6,9 @@ const providerPill = document.querySelector("#provider-pill");
 const score = document.querySelector("#score");
 const dimensions = document.querySelector("#dimensions");
 const diagnosis = document.querySelector("#diagnosis");
+const initialPrompt = document.querySelector("#initial-prompt");
 const finalPrompt = document.querySelector("#final-prompt");
+const studentPersonaDisplay = document.querySelector("#student-persona-display");
 
 threshold.addEventListener("input", () => {
   thresholdValue.textContent = threshold.value;
@@ -18,6 +20,9 @@ form.addEventListener("submit", async (event) => {
   button.disabled = true;
   button.textContent = "仿真评估运行中...";
   chatLog.innerHTML = '<div class="empty">正在根据大纲生成提示词、启动智能体对话沙箱并评估多轮对话质量...</div>';
+  initialPrompt.textContent = "正在生成提示词...";
+  finalPrompt.textContent = "正在优化提示词...";
+  studentPersonaDisplay.textContent = "正在确定学生人设...";
 
   try {
     const payload = new FormData(form);
@@ -33,6 +38,9 @@ form.addEventListener("submit", async (event) => {
     renderResult(await response.json());
   } catch (error) {
     chatLog.innerHTML = `<div class="empty">执行错误: ${error.message}</div>`;
+    initialPrompt.textContent = "执行失败";
+    finalPrompt.textContent = "执行失败";
+    studentPersonaDisplay.textContent = "执行失败";
   } finally {
     button.disabled = false;
     button.textContent = "启动仿真评估";
@@ -43,7 +51,11 @@ function renderResult(result) {
   providerPill.textContent = result.provider === "mock" ? "内置模拟引擎" : `大语言模型: ${result.provider}`;
   const latestRound = result.rounds[result.rounds.length - 1];
   score.textContent = latestRound.evaluation.score;
+  
+  // Render initial generated prompt from round 1, and final prompt
+  initialPrompt.textContent = result.rounds[0].trainer_prompt;
   finalPrompt.textContent = result.final_prompt;
+  studentPersonaDisplay.textContent = result.rounds[0].student_prompt;
 
   chatLog.innerHTML = "";
   result.rounds.forEach((round) => {
