@@ -114,6 +114,13 @@ function renderResult(result) {
           </div>
           <div class="card-field">
             <div class="card-field-header">
+              <span class="card-field-label">评估要点</span>
+              <button type="button" class="copy-btn" onclick="copyDirectText(this)">复制</button>
+            </div>
+            <div class="card-field-value text-to-copy">${escapeHtml(card.evaluation_points)}</div>
+          </div>
+          <div class="card-field">
+            <div class="card-field-header">
               <span class="card-field-label">开场白</span>
               <button type="button" class="copy-btn" onclick="copyDirectText(this)">复制</button>
             </div>

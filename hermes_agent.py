@@ -131,34 +131,37 @@ class TaskAnalyzer:
                     {
                         "stage_number": 1,
                         "name": "阶段一：体能恢复与评估",
-                        "max_rounds": 4,
+                        "max_rounds": 6,
                         "description": "引导学生设计恢复游戏和完成体能测试评估",
                         "opening": "你好！今天我们进行高一体能设计实训。请问阶段一你打算怎么做？",
-                        "prompt": f"你是一个严格的AI导师。引导学生设计阶段一的体能恢复与评估。在学生完成本阶段要求后仅输出“{transition_word}”。"
+                        "evaluation_points": "学生必须明确说明评估方式（如健康测试）与具体的跑跳恢复游戏，并提及同质/异质分组。",
+                        "prompt": f"引导学生完成阶段一的设计。重点考察评估方式、分组手段及恢复游戏设计。当学生回答出这两点后，仅输出“{transition_word}”。"
                     },
                     {
                         "stage_number": 2,
                         "name": "阶段二：科学锻炼原理学习",
-                        "max_rounds": 4,
+                        "max_rounds": 6,
                         "description": "引导学生结合学习目标设计教学重难点与学练内容",
                         "opening": "很好，已进入第二阶段。这一阶段主要是科学锻炼原理，你有什么想法？",
-                        "prompt": f"你是一个严格的AI导师。引导学生设计科学锻炼原理与多种练习内容。在学生完成本阶段要求后仅输出“{transition_word}”。"
+                        "evaluation_points": "学生必须清晰划分出本阶段教学的重难点，并列举灵敏（如闪躲跑）、速度及力量（蛙跳）设计学练内容。",
+                        "prompt": f"引导学生理清阶段二的教学重难点，设计速度、灵敏和力量（蛙跳）学练内容。合格后仅输出“{transition_word}”。"
                     },
                     {
                         "stage_number": 3,
                         "name": "阶段三：计划制订与习惯养成",
-                        "max_rounds": 4,
+                        "max_rounds": 6,
                         "description": "引导学生结合自身情况制订锻炼计划并长期坚持",
-                        "opening": "很好，进入最终阶段。这一阶段的核心目标是计划制订，请问你的设计是？",
-                        "prompt": "你是一个严格的AI导师。引导学生制订个性化计划。完成本阶段要求后进行总结考核并结束对话。"
+                        "opening": "很好，进入最终阶段。这一阶段的核心目标是计划制订与习惯养成，请问你的设计是？",
+                        "evaluation_points": "学生必须设计个性化体能计划，并提供引导与监督学生养成坚持锻炼习惯的具体手段。",
+                        "prompt": "引导学生设计个性化计划和习惯监督机制。完成后给出一段实训考核总结并结束对话。"
                     }
                 ],
                 "evaluation_criteria": [
                     "体能模块教学计划设计必须贴合目标",
-                    "各阶段教学设计需符合高一学生特点",
+                    "各阶段教学设计需符合高一学生身心发展规律",
                     "教学方法与手段设计需体现科学合理性"
                 ],
-                "student_persona": "注意力分散的初学者，在回答中掺杂跑题事宜。"
+                "student_persona": "注意力分散的初学者，偏好简单回答，跑题但顺从。"
             }
 
         system_msg = textwrap.dedent(
@@ -173,10 +176,11 @@ class TaskAnalyzer:
                 {{
                   "stage_number": 1,
                   "name": "Card name in Chinese (e.g., 阶段一：体能恢复与评估)",
-                  "max_rounds": <integer suggested rounds, between 3 and 5>,
+                  "max_rounds": <integer suggested rounds, between 4 and 6 depending on complexity>,
                   "description": "Stage description in Chinese (under 40 chars)",
                   "opening": "First greeting question from the Trainer to start this stage in Chinese (under 50 chars)",
-                  "prompt": "Concise Trainer prompt for this stage in Chinese (under 120 chars) instructing how to guide and when to transition (must output '{transition_word}' when the stage objectives are met)."
+                  "evaluation_points": "Specific criteria for the student's answer in this stage (e.g., must list 3 games and grouping rules) in Chinese (under 60 chars)",
+                  "prompt": "Trainer guide system prompt for this stage in Chinese (under 120 chars) instructing how to guide and when to transition (output '{transition_word}')."
                 }},
                 ...
               ],
@@ -206,16 +210,45 @@ class TaskAnalyzer:
                 cleaned = cleaned[4:].strip()
             
             data = json.loads(cleaned.strip())
-            # Basic structural validation
             required_keys = {"school", "course", "task_type", "cards", "evaluation_criteria", "student_persona"}
             if not required_keys.issubset(data):
                 raise ValueError("Missing required JSON keys")
             return data
         except Exception as exc:
             print(f"[API Warning] Dynamic task analysis failed: {exc}. Using default fallback.")
-            # Run mock analyzer fallback
             self.force_mock = True
             return self.analyze_task(None, transition_word=transition_word)
+
+
+def compile_card_prompt(card_data: dict[str, Any], transition_word: str) -> str:
+    name = card_data.get("name", "未命名阶段")
+    description = card_data.get("description", "设计本阶段任务")
+    max_rounds = card_data.get("max_rounds", 4)
+    eval_points = card_data.get("evaluation_points", "设计合理的教学内容与方法")
+    micro_prompt = card_data.get("prompt", "引导学生完成本阶段设计")
+
+    template = f"""# 角色设定
+你是一名专业的高中体育教师（AI 培训导师）。你的任务是根据《学校体育学》的核心教学规律，引导学生（教学设计者）完成高一第一学期体能模块设计实训。
+
+# 当前卡片设定
+- 卡片名称：{name}
+- 核心任务：{description}
+- 上限轮次：{max_rounds} 轮
+
+# 导师专属引导提示（Micro Prompt）
+{micro_prompt}
+
+# 核心教学规范
+1. 一次只能提一个问题。采取循序渐进的启发式提问，绝对不能一次性抛出多个要求。
+2. 围绕以下核心评估要点引导学生进行深度设计：
+   {eval_points}
+3. 严禁直接替学生给出方案。如果学生回答含糊、缺失关键点，必须进行追问，直到学生回答出具体游戏、学练内容（如跑跳、灵敏练习、蛙跳等）和教学方法。
+4. 如果学生偏离本阶段主题，温和引导其重回主线。
+
+# 阶段跳转切档规则（极其重要）
+当你确信学生已经完全设计好本卡片的所有核心细节，且在【核心评估要点】上达到了合格标准时，你必须**仅输出“{transition_word}”**这四个字，绝对不要附加任何其他话语、解释、多余字符或标点符号。这是切档的唯一指令。
+"""
+    return template.strip()
 
 
 class PromptGenerator:
@@ -280,24 +313,29 @@ class AgentSandbox:
         transition_word: str = "下个阶段",
     ) -> list[ChatTurn]:
         if self.llm.provider == "mock":
-            # For mock simulation, we show a multi-stage transition log based on the cards
+            # Detailed mock transcript to show realistic multi-stage dialogue flow
             turns = []
             turns.append(ChatTurn("Trainer", "trainer", cards[0]["opening"]))
-            turns.append(ChatTurn("Student", "student", "第一阶段是恢复体能，我想设计一些跑跳游戏，比如原地高抬腿。"))
-            turns.append(ChatTurn("Trainer", "trainer", "不错，分组和测试方面呢？"))
+            turns.append(ChatTurn("Student", "student", "我想设计一些小游戏来恢复体能。"))
+            turns.append(ChatTurn("Trainer", "trainer", "具体设计什么游戏呢？请举例说明游戏名称及规则。"))
+            turns.append(ChatTurn("Student", "student", "比如跑跳结合游戏、跳台阶游戏和原地高抬腿比赛。"))
+            turns.append(ChatTurn("Trainer", "trainer", "很好。那体能评估和分组上有什么安排？"))
             turns.append(ChatTurn("Student", "student", "用健康体能测试，同质和异质分组结合。"))
             turns.append(ChatTurn("Trainer", "trainer", transition_word))
             turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
             
             if len(cards) > 1:
                 turns.append(ChatTurn("Trainer", "trainer", cards[1]["opening"]))
-                turns.append(ChatTurn("Student", "student", "我们要设计力量和耐力类练习，采用循环练习法。"))
+                turns.append(ChatTurn("Student", "student", "重难点是掌握科学锻炼原理，难点是磨炼意志。"))
+                turns.append(ChatTurn("Trainer", "trainer", "那么这一阶段具体的学练内容包含哪些分类？"))
+                turns.append(ChatTurn("Student", "student", "包含速度跑（100米）、灵敏（十字象限跳）和蛙跳。"))
                 turns.append(ChatTurn("Trainer", "trainer", transition_word))
                 turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
             
             if len(cards) > 2:
                 turns.append(ChatTurn("Trainer", "trainer", cards[2]["opening"]))
-                turns.append(ChatTurn("Student", "student", "制订个性化体能锻炼计划，养成坚持锻炼习惯！"))
+                turns.append(ChatTurn("Student", "student", "引导学生制订个性化计划，并让组长和体育教师共同监督。"))
+                turns.append(ChatTurn("Trainer", "trainer", "非常好。这套教学计划设计实训到此圆满完成，期待你的实际交付！"))
             return turns
 
         turns: list[ChatTurn] = []
@@ -315,6 +353,7 @@ class AgentSandbox:
                 break
                 
             current_stage = cards[current_stage_idx]
+            current_card_prompt = compile_card_prompt(current_stage, transition_word)
             
             # Student response
             student_history = []
@@ -325,10 +364,12 @@ class AgentSandbox:
                 student_history.append({"role": role, "content": t.content})
             
             student_system = (
-                f"You are simulating a student in a training session. Your persona is: {student_prompt}. "
-                f"Follow your persona, behave cooperative, and try to complete the requested stage objectives. "
-                f"Currently in Card {current_stage_idx + 1}: {current_stage['name']}. "
-                f"Keep responses very short (strictly under 60 characters). Speak in Chinese."
+                f"You are simulating a student in a P.E. training session. Your persona is: {student_prompt}.\n"
+                f"Currently in Card {current_stage_idx + 1}: {current_stage['name']}.\n"
+                f"CRITICAL ROLEPLAY RULE:\n"
+                f"1. Behave like a real, slightly raw student. Do NOT give perfect, complete answers immediately.\n"
+                f"2. Answer the trainer's questions gradually. If the trainer asks multiple things, only answer part of them, or give a slightly simple response first, forcing the trainer to ask follow-up questions to guide you.\n"
+                f"3. Speak naturally in Chinese. Keep each response very short (strictly under 40 Chinese characters). Do not include any meta-text."
             )
             student_msg = self.llm.chat([
                 {"role": "system", "content": student_system},
@@ -346,7 +387,7 @@ class AgentSandbox:
                 trainer_history.append({"role": role, "content": t.content})
             
             # Calculate max limit per stage dynamically based on cards suggested limit (max_rounds)
-            max_limit_for_this_stage = current_stage.get("max_rounds", 4)
+            max_limit_for_this_stage = current_stage.get("max_rounds", 5)
             
             # If the stage has run too long, add a system hint to guide transition
             if stage_turns_count >= max_limit_for_this_stage - 1:
@@ -355,8 +396,6 @@ class AgentSandbox:
                     "content": f"[系统提示：当前卡片（{current_stage['name']}）的对话轮次已到上限，如果你认为学生的设计已符合要求，请**仅输出**跳转词“{transition_word}”进入下一阶段。]"
                 })
 
-            # Use the specific prompt of the current card!
-            current_card_prompt = current_stage["prompt"]
             trainer_msg = self.llm.chat([
                 {"role": "system", "content": current_card_prompt},
                 *trainer_history
