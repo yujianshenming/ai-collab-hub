@@ -1,5 +1,19 @@
 # AI Collaboration Protocol
 
+> [!IMPORTANT]
+> **首次在新电脑启动命令（执行完成后，请将本段落删除并提交推送）**：
+> 请先在您的终端执行以下命令，克隆当前协作仓库：
+> ```powershell
+> git clone https://github.com/yujianshenming/ai-collab-hub.git
+> ```
+> 克隆完成后，请立即修改本协议文件（删除本段 `[!IMPORTANT]` 说明），并执行以下命令提交：
+> ```powershell
+> git add PROTOCOL.md ai_collaboration_protocol.md
+> git commit -m "Initialize: Repository cloned on new device"
+> git push origin master
+> ```
+> 之后按照本协议正常开展协作。
+
 > 用途：让生活电脑、工作电脑上的 Codex 与 Antigravity 通过同一个 GitHub 仓库协同工作。
 >
 > 推荐模式：Antigravity 负责方案、分析、规划；Codex 负责读取方案、修改代码、运行命令、验证结果；GitHub 仓库作为共享记忆、任务队列和交接区。
