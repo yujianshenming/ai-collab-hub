@@ -1,19 +1,19 @@
 # Current Status
 
 ## Active Goal
-等待分配新任务
+修复大文档上传接口 500 异常 (Task-005)
 
 ## Current Owner
-User
+Codex
 
 ## Last Updated
-2026-05-31 21:07
+2026-05-31 21:12
 
 ## Latest Summary
-`[Task-004]`（支持上传与解析 `.docx` 和 `.pdf` 文档）已由 Codex 顺利开发并推送到 GitHub！前端上传选单已开放新扩展名，后端解析器成功与大模型仿真工作流打通。Antigravity 已拉取代码并热重启了服务。
+在用户上传真实大型论文文档测试时，系统抛出 API 拒绝连接的 500 异常。定位原因为大模型接口对单次请求包大小限制。Antigravity 已将方案规范与任务 `[Task-005]` 提交，并交接给 Codex。
 
 ## Next Step
-等待用户使用实际的 `.docx` 或 `.pdf` 任务大纲文件在浏览器 `http://127.0.0.1:8000` 进行仿真测试，或进一步提出优化指示。
+等待 Codex 接收任务，开始修改 `hermes_agent.py` 对大文档上传添加截断防护逻辑。
 
 ## Known Risks
-- 扫描版 PDF 如不含文本层，`pypdf` 无法提取正文；后续如需要可增加 OCR 支持。
+- 暂无扫描版 PDF 如不含文本层，`pypdf` 无法提取正文；后续如需要可增加 OCR 支持。
