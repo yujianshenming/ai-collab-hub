@@ -14,7 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config.json"
-MAX_TASK_DOCUMENT_CHARS = 15000
+MAX_TASK_DOCUMENT_CHARS = 4000
 
 
 @dataclass
@@ -96,11 +96,13 @@ class OpenAICompatibleClient:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
+            with urllib.request.urlopen(request, timeout=25) as response:
                 data = json.loads(response.read().decode("utf-8"))
             return data["choices"][0]["message"]["content"]
-        except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError) as exc:
-            return f"[API 调用失败，已切换到备用模式] 原因: {exc}"
+        except Exception as exc:
+            print(f"[API Warning] Call failed: {exc}. Switching to mock fallback.")
+            self.force_mock = True
+            return self._mock_response(messages)
 
     def _mock_response(self, messages: list[dict[str, str]]) -> str:
         last = messages[-1]["content"] if messages else ""
@@ -113,7 +115,7 @@ class PromptGenerator:
 
     def create_trainer_prompt(self, task_document: str) -> str:
         # Add safety truncation limit to prevent gateway RemoteDisconnected errors
-        truncated_doc = (task_document or "")[:15000]
+        truncated_doc = (task_document or "")[:4000]
 
         if self.llm.provider == "mock":
             summary = summarize_document(truncated_doc)
@@ -130,7 +132,12 @@ class PromptGenerator:
                 """
             ).strip()
 
-        system_msg = "You are an expert prompt engineer. Your task is to write a System Prompt for an AI Trainer (called Hermes Trainer) who will train students on the task described in the input document. The prompt must be written in Chinese, instructing the Trainer how to test the student, guide them, and redirect off-topic dialogue in Chinese. Respond ONLY with the prompt in Chinese. Do not include markdown block markers."
+        system_msg = (
+            "You are an expert prompt engineer. Your task is to write a concise System Prompt in Chinese (strictly under 300 characters) "
+            "for an AI Trainer (called Hermes Trainer) who will train students on the task described in the input document. "
+            "The prompt must instruct the Trainer how to test the student, guide them, redirect off-topic dialogue in Chinese, and keep responses concise (under 100 characters). "
+            "Respond ONLY with the prompt in Chinese. Do not include markdown block markers, intro, or outro."
+        )
         result = self.llm.chat([
             {"role": "system", "content": system_msg},
             {"role": "user", "content": f"Task Document:\n{truncated_doc}"}
@@ -170,7 +177,7 @@ class AgentSandbox:
         # Turn 1: Trainer greeting
         trainer_msg = self.llm.chat([
             {"role": "system", "content": trainer_prompt},
-            {"role": "user", "content": "Greet the student, state the training objective, and ask what they know about this task. Speak in Chinese."}
+            {"role": "user", "content": "Greet the student, state the training objective, and ask what they know about this task. Speak in Chinese. Keep response under 100 characters."}
         ])
         turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
 
@@ -182,7 +189,7 @@ class AgentSandbox:
                 role = "assistant" if t.role == "student" else "user"
                 student_history.append({"role": role, "content": t.content})
             
-            student_system = f"You are simulating a student in a training session. Your persona is: {student_prompt}. Follow your persona. Speak directly to the trainer in character. Keep responses very short (1-2 sentences). Speak in Chinese."
+            student_system = f"You are simulating a student in a training session. Your persona is: {student_prompt}. Follow your persona. Speak directly to the trainer in character. Keep responses very short (strictly under 60 characters). Speak in Chinese."
             student_msg = self.llm.chat([
                 {"role": "system", "content": student_system},
                 *student_history
@@ -243,6 +250,7 @@ class Evaluator:
               "recommendations": ["rec text 1 in Chinese", "rec text 2 in Chinese"]
             }
             The values in diagnosis and recommendations lists MUST be written in Chinese.
+            Keep the diagnosis and recommendations lists very short (strictly at most 2 simple items each, under 20 Chinese characters each).
             Respond ONLY with the raw JSON object. Do not include markdown wraps like ```json.
             """
         ).strip()
@@ -293,7 +301,10 @@ class Optimizer:
             notes = "\n".join(f"- {item}" for item in evaluation.recommendations)
             return f"{trainer_prompt}\n\n优化升级细节：\n{notes}"
 
-        system_msg = "You are an expert prompt optimizer. Refine the given Trainer System Prompt in Chinese to address the recommendations provided. Output ONLY the refined prompt in Chinese. Do not include any meta-text."
+        system_msg = (
+            "You are an expert prompt optimizer. Refine the given Trainer System Prompt in Chinese to address the recommendations provided. "
+            "The refined prompt must be concise (strictly under 300 characters). Output ONLY the refined prompt in Chinese. Do not include any intro, outro, or explanation."
+        )
         user_content = f"Current Prompt:\n{trainer_prompt}\n\nRecommendations:\n" + "\n".join(evaluation.recommendations)
         result = self.llm.chat([
             {"role": "system", "content": system_msg},

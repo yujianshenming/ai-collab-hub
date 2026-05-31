@@ -57,6 +57,16 @@ async def start_harness(
         raw = await document.read()
         body = parse_file_content(document.filename, raw) or body
 
+    # Save to a debug file to inspect the exact input causing issues
+    try:
+        debug_dir = Path(r"C:\Users\24391\.gemini\antigravity\brain\7319f9a2-220d-4c09-b872-fa3db7a254b7\scratch")
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        debug_file = debug_dir / "debug_input.txt"
+        debug_file.write_text(body, encoding="utf-8")
+        print(f"[DEBUG] Received document/text of length: {len(body)} chars, saved to {debug_file}")
+    except Exception as e:
+        print(f"[DEBUG] Failed to save debug input: {e}")
+
     harness = HermesAgent()
     result = harness.run(body, threshold=threshold, student_persona=student_persona)
     return result_to_dict(result)
