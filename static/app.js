@@ -66,9 +66,13 @@ function renderResult(result) {
 
     round.transcript.forEach((turn) => {
       const bubble = document.createElement("div");
-      const isTrainer = turn.role === "trainer";
       bubble.className = `bubble ${turn.role}`;
-      bubble.innerHTML = `<span class="speaker">${isTrainer ? "AI 导师 (Trainer)" : "模拟学生 (Student)"}</span>${escapeHtml(turn.content)}`;
+      if (turn.role === "system") {
+        bubble.innerHTML = `<span class="speaker">[系统消息]</span>${escapeHtml(turn.content)}`;
+      } else {
+        const isTrainer = turn.role === "trainer";
+        bubble.innerHTML = `<span class="speaker">${isTrainer ? "AI 导师 (Trainer)" : "模拟学生 (Student)"}</span>${escapeHtml(turn.content)}`;
+      }
       chatLog.appendChild(bubble);
     });
   });
@@ -113,5 +117,23 @@ function escapeHtml(value) {
       "'": "&#039;",
     };
     return map[char];
+  });
+}
+
+function copyText(elementId, button) {
+  const text = document.getElementById(elementId).textContent;
+  if (!text || text.includes("等待") || text.includes("失败")) {
+    return;
+  }
+  navigator.clipboard.writeText(text).then(() => {
+    const originalText = button.textContent;
+    button.textContent = "已复制!";
+    button.classList.add("copied");
+    setTimeout(() => {
+      button.textContent = originalText;
+      button.classList.remove("copied");
+    }, 2000);
+  }).catch(err => {
+    console.error("Failed to copy text: ", err);
   });
 }

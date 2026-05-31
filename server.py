@@ -51,6 +51,9 @@ async def start_harness(
     text: str = Form(default=""),
     threshold: int = Form(default=85),
     student_persona: str = Form(default="auto"),
+    transition_word: str = Form(default="下个阶段"),
+    suggested_rounds: int = Form(default=3),
+    max_rounds_per_stage: int = Form(default=5),
 ) -> dict:
     body = text
     if document and document.filename:
@@ -68,7 +71,14 @@ async def start_harness(
         print(f"[DEBUG] Failed to save debug input: {e}")
 
     harness = HermesAgent()
-    result = harness.run(body, threshold=threshold, student_persona=student_persona)
+    result = harness.run(
+        body,
+        threshold=threshold,
+        student_persona=student_persona,
+        transition_word=transition_word,
+        suggested_rounds=suggested_rounds,
+        max_rounds_per_stage=max_rounds_per_stage,
+    )
     return result_to_dict(result)
 
 

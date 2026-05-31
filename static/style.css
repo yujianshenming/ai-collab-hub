@@ -253,6 +253,70 @@ pre {
   font-size: 0.78rem;
 }
 
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.copy-btn {
+  background: rgba(96, 165, 250, 0.16);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: #93c5fd;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  padding: 4px 10px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.copy-btn:hover {
+  background: rgba(96, 165, 250, 0.32);
+  border-color: #60a5fa;
+  color: #ffffff;
+}
+
+.copy-btn.copied {
+  background: rgba(52, 211, 153, 0.2);
+  border-color: #34d399;
+  color: #a7f3d0;
+}
+
+.bubble.system {
+  align-self: center;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px dashed rgba(245, 158, 11, 0.32);
+  color: #fef3c7;
+  font-size: 0.8rem;
+  max-width: 95%;
+  text-align: center;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.bubble.system .speaker {
+  color: #fde047;
+  display: inline-block;
+  margin-right: 6px;
+  margin-bottom: 0;
+}
+
+pre.prompt-box {
+  background: rgba(2, 6, 23, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 6px;
+  padding: 10px 12px;
+  max-height: 200px;
+}
+
 @media (max-width: 1040px) {
   .shell {
     grid-template-columns: 1fr;

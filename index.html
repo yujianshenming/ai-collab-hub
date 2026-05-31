@@ -36,6 +36,22 @@
           </label>
 
           <label>
+            阶段跳转标识词 (跳档词)
+            <input name="transition_word" type="text" value="下个阶段" placeholder="当阶段目标达成，智能体纯净输出此词将触发阶段跳转..." required />
+          </label>
+
+          <div class="form-row-2">
+            <label>
+              阶段建议轮次
+              <input name="suggested_rounds" type="number" min="1" max="10" value="3" required />
+            </label>
+            <label>
+              最大限制轮次
+              <input name="max_rounds_per_stage" type="number" min="2" max="20" value="5" required />
+            </label>
+          </div>
+
+          <label>
             评估合格分数线
             <input name="threshold" type="range" min="60" max="95" value="85" />
             <span id="threshold-value">85</span>
@@ -75,7 +91,10 @@
         </div>
 
         <div class="report-block">
-          <h3>初始生成的导师提示词 (Initial Prompt)</h3>
+          <div class="block-header">
+            <h3>初始生成的导师提示词 (Initial Prompt)</h3>
+            <button type="button" class="copy-btn" onclick="copyText('initial-prompt', this)">复制提示词</button>
+          </div>
           <pre id="initial-prompt" class="prompt-box">等待生成...</pre>
         </div>
 
@@ -85,7 +104,10 @@
         </div>
 
         <div class="report-block">
-          <h3>最终优化后的合格提示词 (Final Prompt)</h3>
+          <div class="block-header">
+            <h3>最终优化后的合格提示词 (Final Prompt)</h3>
+            <button type="button" class="copy-btn" onclick="copyText('final-prompt', this)">复制提示词</button>
+          </div>
           <pre id="final-prompt" class="prompt-box">等待优化...</pre>
         </div>
       </section>

@@ -113,7 +113,7 @@ class PromptGenerator:
     def __init__(self, llm: OpenAICompatibleClient) -> None:
         self.llm = llm
 
-    def create_trainer_prompt(self, task_document: str) -> str:
+    def create_trainer_prompt(self, task_document: str, transition_word: str = "下个阶段", suggested_rounds: int = 3) -> str:
         # Add safety truncation limit to prevent gateway RemoteDisconnected errors
         truncated_doc = (task_document or "")[:4000]
 
@@ -121,22 +121,25 @@ class PromptGenerator:
             summary = summarize_document(truncated_doc)
             return textwrap.dedent(
                 f"""
-                你是一个严格的 AI 导师（Hermes Trainer），用于评估和仿真训练。
+                你是一个严格的 AI 导师（Hermes Trainer），用于评估和仿真训练。本次训练包含多个阶段。
                 训练目标：{summary}
                 导师规范：
-                - 首先探明学生的认知水平。
-                - 采取小步骤、渐进式的教学方法。
-                - 一次只提一个具体问题。
+                - 从阶段一（Stage 1）开始引导，采取小步骤渐进教学。
+                - 一次只提一个具体问题，针对当前阶段目标提问（每阶段建议约{suggested_rounds}次对答）。
                 - 遇到学生偏离主题时，温和地引导其重回主线。
-                - 在对话结束前进行一次实际应用考核。
+                - 重要规则：当你确认学生已完全达成当前阶段的目标、可进入下一阶段时，你必须且只能输出“{transition_word}”这四个字，绝对不要附带其他任何标点或文字。
                 """
             ).strip()
 
         system_msg = (
-            "You are an expert prompt engineer. Your task is to write a concise System Prompt in Chinese (strictly under 300 characters) "
-            "for an AI Trainer (called Hermes Trainer) who will train students on the task described in the input document. "
-            "The prompt must instruct the Trainer how to test the student, guide them, redirect off-topic dialogue in Chinese, and keep responses concise (under 100 characters). "
-            "Respond ONLY with the prompt in Chinese. Do not include markdown block markers, intro, or outro."
+            f"You are an expert prompt engineer. Your task is to write a concise System Prompt in Chinese (strictly under 300 characters) "
+            f"for an AI Trainer (called Hermes Trainer) based on the task document. The training program has multiple stages. "
+            f"The prompt must instruct the Trainer to:\n"
+            f"1. Guide the student sequentially starting from Stage 1 based on the document.\n"
+            f"2. Keep responses brief (under 100 characters) and ask questions to test the student (suggested {suggested_rounds} turns per stage).\n"
+            f"3. CRITICAL RULE: When the Trainer decides the student has achieved the current stage's objective and is ready to enter the next stage, "
+            f"the Trainer MUST output ONLY the transition word '{transition_word}' and absolutely nothing else (no punctuation, no other words).\n"
+            f"Respond ONLY with the prompt in Chinese. Do not include markdown block markers, intro, or outro."
         )
         result = self.llm.chat([
             {"role": "system", "content": system_msg},
@@ -160,53 +163,136 @@ class AgentSandbox:
             ]
         )
 
-    def simulate(self, trainer_prompt: str, student_prompt: str, round_number: int) -> list[ChatTurn]:
+    def simulate(
+        self,
+        trainer_prompt: str,
+        student_prompt: str,
+        round_number: int,
+        transition_word: str = "下个阶段",
+        suggested_rounds: int = 3,
+        max_rounds_per_stage: int = 5,
+    ) -> list[ChatTurn]:
         if self.llm.provider == "mock":
-            distracted = "注意力分散" in student_prompt
+            # For mock simulation, we show a multi-stage transition log
             turns = [
-                ChatTurn("Trainer", "trainer", "你好！请问你对我们要进行的训练任务有什么了解？"),
-                ChatTurn("Student", "student", "我知道提示词很重要，但我通常只是复制例子然后随便改改字。" if distracted else "我理解这个目标，但我需要一个可重复的实践方法。"),
-                ChatTurn("Trainer", "trainer", "我们可以使用五步框架：角色、目标、背景、约束和成功标准。"),
-                ChatTurn("Student", "student", "我们能不能先讨论怎么让提示词听起来更酷？" if distracted and round_number == 1 else "所以提示词应该明确说明成功标准，而不仅仅是生成什么。"),
-                ChatTurn("Trainer", "trainer", "词藻修饰可以稍后进行。让我们先回归目标：请为这个任务写一个成功标准。"),
-                ChatTurn("Student", "student", "回答应该包含一个检查清单和一个示例输出。"),
+                ChatTurn("Trainer", "trainer", "你好！今天我们开始高一体能设计实训。首先请说下阶段一你打算怎么做？"),
+                ChatTurn("Student", "student", "第一阶段是恢复体能，我想设计一些跑跳游戏，比如原地高抬腿。"),
+                ChatTurn("Trainer", "trainer", "不错，分组和测试方面呢？"),
+                ChatTurn("Student", "student", "用健康体能测试，同质和异质分组结合。"),
+                ChatTurn("Trainer", "trainer", f"{transition_word}"),
+                ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."),
+                ChatTurn("Trainer", "trainer", "很好，已进入第二阶段。这一阶段主要是原理学习，你有什么想法？"),
+                ChatTurn("Student", "student", "第二阶段我要设计力量和耐力类练习，采用循环练习法。"),
+                ChatTurn("Trainer", "trainer", f"{transition_word}"),
+                ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."),
+                ChatTurn("Trainer", "trainer", "很好，进入第三阶段。这一阶段的核心目标是？"),
+                ChatTurn("Student", "student", "制订个性化体能锻炼计划，养成坚持锻炼习惯！"),
             ]
             return turns
 
         turns: list[ChatTurn] = []
+        current_stage = 1
+        stage_turns_count = 0
+
         # Turn 1: Trainer greeting
         trainer_msg = self.llm.chat([
             {"role": "system", "content": trainer_prompt},
-            {"role": "user", "content": "Greet the student, state the training objective, and ask what they know about this task. Speak in Chinese. Keep response under 100 characters."}
+            {"role": "user", "content": "Greet the student, introduce Stage 1 (recovery and interest assessment), and ask what they know or plan. Speak in Chinese. Keep response under 100 characters."}
         ])
         turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
 
-        # We run 3 rounds of conversation exchange (6 total turns)
-        for _ in range(3):
+        # We simulate a total of 12 speech exchanges maximum (which handles multiple stages)
+        # We will dynamically transition through stages when transition_word is matched
+        for exchange_idx in range(12):
             # Student response
             student_history = []
             for t in turns:
+                if t.role == "system":
+                    continue
                 role = "assistant" if t.role == "student" else "user"
                 student_history.append({"role": role, "content": t.content})
             
-            student_system = f"You are simulating a student in a training session. Your persona is: {student_prompt}. Follow your persona. Speak directly to the trainer in character. Keep responses very short (strictly under 60 characters). Speak in Chinese."
+            student_system = (
+                f"You are simulating a student in a training session. Your persona is: {student_prompt}. "
+                f"Follow your persona, behave cooperative, and try to complete the requested stage objectives. "
+                f"Keep responses very short (strictly under 60 characters). Speak in Chinese."
+            )
             student_msg = self.llm.chat([
                 {"role": "system", "content": student_system},
                 *student_history
             ])
             turns.append(ChatTurn("Student", "student", student_msg))
+            stage_turns_count += 1
 
             # Trainer response
             trainer_history = []
             for t in turns:
+                if t.role == "system":
+                    continue
                 role = "assistant" if t.role == "trainer" else "user"
                 trainer_history.append({"role": role, "content": t.content})
             
+            # If the stage has run too long, add a system hint to guide transition
+            if stage_turns_count >= max_rounds_per_stage - 1:
+                trainer_history.append({
+                    "role": "user",
+                    "content": f"[系统提示：本阶段的对话轮次已到上限，如果你认为学生的设计已符合当前阶段要求，请**仅输出**跳转词“{transition_word}”进入下一阶段。]"
+                })
+
             trainer_msg = self.llm.chat([
                 {"role": "system", "content": trainer_prompt},
                 *trainer_history
             ])
-            turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
+            
+            # Check for transition trigger (case/punctuation insensitive)
+            cleaned_trainer_msg = trainer_msg.strip().replace("。", "").replace("！", "").replace(".", "")
+            
+            if cleaned_trainer_msg == transition_word:
+                turns.append(ChatTurn("Trainer", "trainer", transition_word))
+                turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
+                current_stage += 1
+                stage_turns_count = 0
+                
+                # Immediately call trainer again to start the next stage
+                next_history = []
+                for t in turns:
+                    if t.role == "system":
+                        continue
+                    role = "assistant" if t.role == "trainer" else "user"
+                    next_history.append({"role": role, "content": t.content})
+                next_history.append({
+                    "role": "user",
+                    "content": f"[系统提示：检测到跳转词。你已成功切换至阶段 {current_stage}。请向学生介绍阶段 {current_stage} 的任务要求并提出第一个问题。]"
+                })
+                trainer_msg = self.llm.chat([
+                    {"role": "system", "content": trainer_prompt},
+                    *next_history
+                ])
+                turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
+            else:
+                turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
+                
+                # Check for forced transition if it exceeds maximum limit
+                if stage_turns_count >= max_rounds_per_stage:
+                    turns.append(ChatTurn("System", "system", f"已达到最大限制轮次（{max_rounds_per_stage}轮），系统强制跳转至下一阶段..."))
+                    current_stage += 1
+                    stage_turns_count = 0
+                    
+                    next_history = []
+                    for t in turns:
+                        if t.role == "system":
+                            continue
+                        role = "assistant" if t.role == "trainer" else "user"
+                        next_history.append({"role": role, "content": t.content})
+                    next_history.append({
+                        "role": "user",
+                        "content": f"[系统提示：已强制切换至阶段 {current_stage}。请向学生介绍阶段 {current_stage} 的任务要求并提出第一个问题。]"
+                    })
+                    trainer_msg = self.llm.chat([
+                        {"role": "system", "content": trainer_prompt},
+                        *next_history
+                    ])
+                    turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
 
         return turns
 
@@ -321,9 +407,19 @@ class HermesAgent:
         self.evaluator = Evaluator(self.llm)
         self.optimizer = Optimizer(self.llm)
 
-    def run(self, task_document: str, threshold: int = 85, student_persona: str | None = "auto") -> HarnessResult:
+    def run(
+        self,
+        task_document: str,
+        threshold: int = 85,
+        student_persona: str | None = "auto",
+        transition_word: str = "下个阶段",
+        suggested_rounds: int = 3,
+        max_rounds_per_stage: int = 5,
+    ) -> HarnessResult:
         threshold = max(1, min(100, threshold))
-        trainer_prompt = self.generator.create_trainer_prompt(task_document)
+        trainer_prompt = self.generator.create_trainer_prompt(
+            task_document, transition_word=transition_word, suggested_rounds=suggested_rounds
+        )
         student_prompt = self.sandbox.create_student_prompt(student_persona)
         result = HarnessResult(
             task_summary=summarize_document(task_document),
@@ -333,7 +429,14 @@ class HermesAgent:
         )
 
         for index in range(1, 3):
-            transcript = self.sandbox.simulate(trainer_prompt, student_prompt, index)
+            transcript = self.sandbox.simulate(
+                trainer_prompt,
+                student_prompt,
+                index,
+                transition_word=transition_word,
+                suggested_rounds=suggested_rounds,
+                max_rounds_per_stage=max_rounds_per_stage,
+            )
             evaluation = self.evaluator.evaluate(transcript, trainer_prompt)
             result.rounds.append(HarnessRound(index, trainer_prompt, student_prompt, transcript, evaluation, index > 1))
             if evaluation.score >= threshold:
