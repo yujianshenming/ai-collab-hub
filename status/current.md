@@ -1,24 +1,26 @@
 # Current Status
 
 ## Active Goal
-等待用户进行教学场景仿真测试与评估，并反馈优化建议
+等待 Antigravity 或用户用真实课程任务文档审查 Hermes Agent 的双模式提示词重构效果
 
 ## Current Owner
-User / Other Computer Agent
+Antigravity / User
 
 ## Last Updated
-2026-06-01 15:00
+2026-06-01 15:33
 
 ## Latest Summary
-已由 Antigravity 针对桌面 12 个高校真实提示词模板进行了深度梳理与系统升级（Task-008）：
-1. **多模板规律分析**：完成对 12 个课程文档和提示词的特征提取，归纳出“导师/专家引导型”和“扮演被动互动型”两大对话模式，并输出深度分析报告 `task_prompt_analysis.md`。
-2. **跳档词动态提取**：在 `TaskAnalyzer` 中加入了 `"transition_word"` 动态提取参数，大模型分析文档时会自动识别出该课程特有的跳转切档词并在仿真沙箱中精准匹配，前端页面输入框同步完成联动更新。
-3. **动作神态噪音过滤**：在卡片提示词模板、导师系统提示词及学生扮演人设中强制注入“仅输出对话台词，严禁包含动作、神态等任何描写”的约束规则，彻底清除仿真回放中非必要的 `*点头*` / `(微笑)` 噪音。
-4. **编译与运行验证**：进行了全流程的编译核校与脑卒中 docx 实测运行，证明纯台词输出与动态切档控制工作良好。
+Codex 已根据 Antigravity 的 `refactoring_implementation_plan.md` 完成 Task-008 核心代码实施：
+1. `TaskAnalyzer` 现在会提取 `ai_role`、`dialogue_mode`、`transition_rule_desc`。
+2. `compile_card_prompt()` 已拆分为导师引导型 `tutor` 与被动角色型 `passive` 两套模板。
+3. 仿真链路已贯通角色/模式元数据，并增加台词输出清洗：过滤 `<think>`、动作神态描写，普通台词限制 100 字。
+4. `server.py` 不再写死 Antigravity 本机 scratch 路径，改用 `HERMES_DEBUG_DIR` 或仓库本地 `debug/`。
+5. 语法编译、硬编码搜索、mock 仿真检查均已通过。
 
 ## Next Step
-等待用户在前端页面上传不同的课程任务文档，调用仿真，测试动态切档与对话去噪的实际评估效果。
+Antigravity 或用户使用真实医学问诊、商务谈判、工程导师类任务文档各测试一次，确认模式识别、台词约束和精确跳转词在真实模型输出中的稳定性。
 
 ## Known Risks
-- 暂无
-
+- 真实 LLM 对 `dialogue_mode` 的分类可能偶尔不稳定，需要用真实样本回归观察。
+- `normalize_dialogue_output()` 会清理常见动作描写，但不能覆盖所有隐晦表情或舞台说明。
+- 100 字限制目前通过提示词和输出截断共同实现，若前端需要展示被截断提示，可后续增加标记字段。
