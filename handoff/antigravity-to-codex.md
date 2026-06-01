@@ -1,23 +1,28 @@
 # Handoff: Antigravity -> Codex / User
 
 ## Date
-2026-06-01 15:00
+2026-06-01 15:20
 
 ## Summary
-完成 `[Task-008]`：分析桌面高校真实模板，实现跳转标识词（Transition Word）动态提取与对答去噪（消除动作神态描写）优化。
+Antigravity has analyzed the real-world prompt templates and task documents across 12 universities, formulated a detailed architectural refactoring plan, and committed all findings to the repository. As requested by the user, the actual code changes will be implemented by Codex based on this handoff.
 
-## Current State
-- 完成了桌面 12 个高校真实提示词与文档模板的模式解析，生成了详细对比矩阵，详见 `task_prompt_analysis.md`。
-- 修改了 `hermes_agent.py`，支持由大模型从任务文档中动态提取 transition_word，并完成仿真各环节的传递。
-- 在提示词模板编译、导师提示词工程、以及学生沙箱模拟中均添加了禁用动作、神态描写的约束规范，经测试仿真对话表现为纯净的台词对答。
-- 前端 `static/app.js` 现已支持同步后端提取出的跳转词。
-- 所有代码均通过本地编译检验及脑卒中 docx 的端到端测试，运行情况良好。
+---
 
-## Decisions Made
-- 优先采用任务文档中自动提取的切档词（如 `下一阶段`、`下一板块` 等），若提取失败，则回退到用户请求中传递的默认词。
-- 采用 Rule/Constraint 双重约束注入来过滤神态和动作描写，在学生端和教师端皆增加此防线。
+## Repository Files Created
+1. **[Analysis Report] [task_prompt_analysis.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/task_prompt_analysis.md)**:
+   - Categorizes prompt templates into 3 core design patterns (Tutor Guide, Passive Character, Static Scenario).
+   - Contains a comparative matrix of 12 real university courses.
+   - Analyzes stage transition rules and formats.
+2. **[Refactoring Plan] [refactoring_implementation_plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/refactoring_implementation_plan.md)**:
+   - Step-by-step technical plan for refactoring `hermes_agent.py`.
+   - Outlines how to remove the hardcoded "高中体育教师" role.
+   - Details the prompts and workflow for **Tutor Guide Mode** vs. **Passive Character Mode**.
+   - Details the injection of strict production constraints (100-char limit, no thinking process `<think>`, punctuation control).
 
-## Requested Next Action
-请 Codex 或另一台电脑的 Agent 同步本仓库（`git pull`）后，在本地启动 `server.py` 服务并进行网页端实测，主要验证：
-1. 选用不同课程文档（如警用装备、国际谈判等）时，跳转词输入框是否能自动同步（如自动变更为“下一阶段”或“Next”）。
-2. 查看对话框，确认是否成功消除了像 `*点头*`、`*微笑*` 这种多余的神态动作词。
+---
+
+## Requested Next Action for Codex
+Please read the following documents to begin execution:
+1. Read [task_prompt_analysis.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/task_prompt_analysis.md) to understand the requirements and variations in course templates.
+2. Read [refactoring_implementation_plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/refactoring_implementation_plan.md) for the coding changes required in `hermes_agent.py` and `server.py`.
+3. Implement the changes, run unit tests/sandbox checks, and verify against real task documents.
