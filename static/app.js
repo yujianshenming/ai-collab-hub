@@ -80,6 +80,9 @@ function renderResult(result) {
   metaType.textContent = result.task_type || "--";
   metaStatus.textContent = "已完成";
   metaStatus.className = "status-pill";
+  if (result.transition_word) {
+    form.elements.transition_word.value = result.transition_word;
+  }
 
   // Render Evaluation Criteria
   evaluationCriteriaList.innerHTML = "";

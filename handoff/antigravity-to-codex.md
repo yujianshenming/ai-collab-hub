@@ -1,33 +1,23 @@
-# Handoff: Antigravity -> Codex
+# Handoff: Antigravity -> Codex / User
 
 ## Date
-2026-05-31 21:12
+2026-06-01 15:00
 
 ## Summary
-下发接口 500 崩溃修复任务 `[Task-005]`：对上传大文档增加截断防护，防止大模型 API 网关拒绝连接。
+完成 `[Task-008]`：分析桌面高校真实模板，实现跳转标识词（Transition Word）动态提取与对答去噪（消除动作神态描写）优化。
 
 ## Current State
-- 用户上传了真实的论文文档，但接口返回 500。
-- 日志分析显示在 `hermes_agent.py` 的第 130 行：
-  ```python
-  result = self.llm.chat([
-      {"role": "system", "content": system_msg},
-      {"role": "user", "content": f"Task Document:\n{task_document}"}
-  ])
-  ```
-  因为 `task_document` 直接发送了未截断的整篇论文内容，导致请求体过大或超时，API 中转网关报错 `http.client.RemoteDisconnected: Remote end closed connection without response` 并断开连接。
+- 完成了桌面 12 个高校真实提示词与文档模板的模式解析，生成了详细对比矩阵，详见 `task_prompt_analysis.md`。
+- 修改了 `hermes_agent.py`，支持由大模型从任务文档中动态提取 transition_word，并完成仿真各环节的传递。
+- 在提示词模板编译、导师提示词工程、以及学生沙箱模拟中均添加了禁用动作、神态描写的约束规范，经测试仿真对话表现为纯净的台词对答。
+- 前端 `static/app.js` 现已支持同步后端提取出的跳转词。
+- 所有代码均通过本地编译检验及脑卒中 docx 的端到端测试，运行情况良好。
+
+## Decisions Made
+- 优先采用任务文档中自动提取的切档词（如 `下一阶段`、`下一板块` 等），若提取失败，则回退到用户请求中传递的默认词。
+- 采用 Rule/Constraint 双重约束注入来过滤神态和动作描写，在学生端和教师端皆增加此防线。
 
 ## Requested Next Action
-请 Codex 接收此交接并以 `Current Owner` 身份完成修复：
-
-1. **修改 `hermes_agent.py`**：
-   - 定位到 `PromptGenerator.create_trainer_prompt` 方法。
-   - 对输入的 `task_document` 截取前 15,000 个字符（可以设置安全上限，如 `task_document[:15000]`）。这足够保留论文的核心背景、大纲及前言部分用于生成提示词。
-2. **测试验证**：
-   - 验证大文件上传并仿真时，接口不会再报 500 错误且能顺利拿到评估结果。
-3. **提交与推送**：
-   - 更新任务卡和状态，进行 `git add .`、`git commit` 并 `git push origin master` 完成交接。
-
-## Important Files
-- `tasks/active.md`
-- `hermes_agent.py`
+请 Codex 或另一台电脑的 Agent 同步本仓库（`git pull`）后，在本地启动 `server.py` 服务并进行网页端实测，主要验证：
+1. 选用不同课程文档（如警用装备、国际谈判等）时，跳转词输入框是否能自动同步（如自动变更为“下一阶段”或“Next”）。
+2. 查看对话框，确认是否成功消除了像 `*点头*`、`*微笑*` 这种多余的神态动作词。

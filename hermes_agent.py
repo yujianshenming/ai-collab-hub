@@ -57,6 +57,7 @@ class HarnessResult:
     rounds: list[HarnessRound] = field(default_factory=list)
     final_prompt: str = ""
     status: str = "completed"
+    transition_word: str = ""
 
 
 class OpenAICompatibleClient:
@@ -127,12 +128,13 @@ class TaskAnalyzer:
                 "school": "测试第一中学",
                 "course": "高中体育与健康",
                 "task_type": "教学计划设计",
+                "transition_word": transition_word,
                 "cards": [
                     {
                         "stage_number": 1,
                         "name": "阶段一：体能恢复与评估",
                         "max_rounds": 6,
-                        "description": "引导学生设计恢复游戏和完成体能测试评估",
+                        "description": "引导学生设计恢复游戏 and 完成体能测试评估",
                         "opening": "你好！今天我们进行高一体能设计实训。请问阶段一你打算怎么做？",
                         "evaluation_points": "学生必须明确说明评估方式（如健康测试）与具体的跑跳恢复游戏，并提及同质/异质分组。",
                         "prompt": f"引导学生完成阶段一的设计。重点考察评估方式、分组手段及恢复游戏设计。当学生回答出这两点后，仅输出“{transition_word}”。"
@@ -172,6 +174,7 @@ class TaskAnalyzer:
               "school": "Automatically extract the school name or default to '高中'",
               "course": "Automatically extract the course name or default to '体育学'",
               "task_type": "Extract the task type (e.g. 实训/作业/课程设计)",
+              "transition_word": "The exact transition word/phrase to trigger switching stages (e.g., '下一阶段', '下一板块', 'Next', '训练结束'), extracted from the task document if specified, otherwise default to '{transition_word}'",
               "cards": [
                 {{
                   "stage_number": 1,
@@ -180,7 +183,7 @@ class TaskAnalyzer:
                   "description": "Stage description in Chinese (under 40 chars)",
                   "opening": "First greeting question from the Trainer to start this stage in Chinese (under 50 chars)",
                   "evaluation_points": "Specific criteria for the student's answer in this stage (e.g., must list 3 games and grouping rules) in Chinese (under 60 chars)",
-                  "prompt": "Trainer guide system prompt for this stage in Chinese (under 120 chars) instructing how to guide and when to transition (output '{transition_word}')."
+                  "prompt": "Trainer guide system prompt for this stage in Chinese (under 120 chars) instructing how to guide and when to transition (output the exact transition_word specified at the root of the JSON)."
                 }},
                 ...
               ],
@@ -190,7 +193,7 @@ class TaskAnalyzer:
               ],
               "student_persona": "Custom student persona description for simulation based on common learning difficulties (under 40 chars) in Chinese"
             }}
-            Ensure that for each card, the Trainer prompt instructs the trainer to ONLY output the transition word '{transition_word}' (and absolutely nothing else) when the student achieves that card's goals.
+            Ensure that for each card, the Trainer prompt instructs the trainer to ONLY output the transition word (the same string as in the 'transition_word' key of this JSON, absolutely nothing else) when the student achieves that card's goals.
             Respond ONLY with the raw JSON object. Do not include markdown wraps like ```json.
             """
         ).strip()
@@ -210,6 +213,8 @@ class TaskAnalyzer:
                 cleaned = cleaned[4:].strip()
             
             data = json.loads(cleaned.strip())
+            if "transition_word" not in data:
+                data["transition_word"] = transition_word
             required_keys = {"school", "course", "task_type", "cards", "evaluation_criteria", "student_persona"}
             if not required_keys.issubset(data):
                 raise ValueError("Missing required JSON keys")
@@ -244,6 +249,7 @@ def compile_card_prompt(card_data: dict[str, Any], transition_word: str) -> str:
    {eval_points}
 3. 严禁直接替学生给出方案。如果学生回答含糊、缺失关键点，必须进行追问，直到学生回答出具体游戏、学练内容（如跑跳、灵敏练习、蛙跳等）和教学方法。
 4. 如果学生偏离本阶段主题，温和引导其重回主线。
+5. 仅输出对话内容，严禁包含任何动作、神态、动作描写（如 *点头*、*微笑*、*叹气*、(笑) 等）。
 
 # 阶段跳转切档规则（极其重要）
 当你确信学生已经完全设计好本卡片的所有核心细节，且在【核心评估要点】上达到了合格标准时，你必须**仅输出“{transition_word}”**这四个字，绝对不要附加任何其他话语、解释、多余字符或标点符号。这是切档的唯一指令。
@@ -268,6 +274,7 @@ class PromptGenerator:
                 - 从阶段一开始引导，采取小步骤渐进教学。
                 - 一次只提一个具体问题，针对当前阶段目标提问。
                 - 重要规则：当你确认学生已完全达成当前阶段的目标、可进入下一阶段时，你必须且只能输出“{transition_word}”这四个字，绝对不要附带其他任何标点或文字。
+                - 仅输出对话内容，严禁包含任何动作、神态、动作描写（如 *点头*、*微笑*、(笑)、(叹气) 等）。
                 """
             ).strip()
 
@@ -280,6 +287,7 @@ class PromptGenerator:
             f"2. Keep responses brief (under 100 characters) and ask questions to test the student on each stage's objective.\n"
             f"3. CRITICAL RULE: When the Trainer decides the student has achieved the current stage's objective and is ready to enter the next stage, "
             f"the Trainer MUST output ONLY the transition word '{transition_word}' and absolutely nothing else (no punctuation, no other words).\n"
+            f"4. CRITICAL RULE: The Trainer must ONLY output dialogue, and strictly forbid including any actions, physical descriptions, or facial expressions (e.g., *点头*, (微笑)).\n"
             f"Respond ONLY with the prompt in Chinese. Do not include markdown block markers, intro, or outro."
         )
         result = self.llm.chat([
@@ -369,7 +377,8 @@ class AgentSandbox:
                 f"CRITICAL ROLEPLAY RULE:\n"
                 f"1. Behave like a real, slightly raw student. Do NOT give perfect, complete answers immediately.\n"
                 f"2. Answer the trainer's questions gradually. If the trainer asks multiple things, only answer part of them, or give a slightly simple response first, forcing the trainer to ask follow-up questions to guide you.\n"
-                f"3. Speak naturally in Chinese. Keep each response very short (strictly under 40 Chinese characters). Do not include any meta-text."
+                f"3. Speak naturally in Chinese. Keep each response very short (strictly under 40 Chinese characters). Do not include any meta-text.\n"
+                f"4. 只能输出直接对话的台词内容，绝对不能包含任何动作、神态、动作描写（如 *点头*、*微笑*、(笑)、(叹气) 等）。"
             )
             student_msg = self.llm.chat([
                 {"role": "system", "content": student_system},
@@ -532,7 +541,8 @@ class Optimizer:
 
         system_msg = (
             "You are an expert prompt optimizer. Refine the given Trainer System Prompt in Chinese to address the recommendations provided. "
-            "The refined prompt must be concise (strictly under 300 characters). Output ONLY the refined prompt in Chinese. Do not include any intro, outro, or explanation."
+            "The refined prompt must be concise (strictly under 300 characters). Ensure it retains the instruction to only output dialogue and forbid physical/emotional descriptions (e.g. *点头*, (微笑)). "
+            "Output ONLY the refined prompt in Chinese. Do not include any intro, outro, or explanation."
         )
         user_content = f"Current Prompt:\n{trainer_prompt}\n\nRecommendations:\n" + "\n".join(evaluation.recommendations)
         result = self.llm.chat([
@@ -569,13 +579,15 @@ class HermesAgent:
         cards = task_plan.get("cards", [])
         evaluation_criteria = task_plan.get("evaluation_criteria", [])
         analyzed_student_persona = task_plan.get("student_persona", "自动测试学生人设")
+        extracted_transition_word = task_plan.get("transition_word", transition_word) or transition_word
 
         print(f"[DEBUG] Analyzed metadata: {school} - {course} ({task_type})")
         print(f"[DEBUG] Analyzed cards count: {len(cards)}")
+        print(f"[DEBUG] Extracted transition word: {extracted_transition_word}")
 
         # Build trainer prompt based on cards planning
         trainer_prompt = self.generator.create_trainer_prompt(
-            task_document, cards=cards, transition_word=transition_word
+            task_document, cards=cards, transition_word=extracted_transition_word
         )
         
         # Determine student persona (use analyzed student persona if auto selected)
@@ -595,6 +607,7 @@ class HermesAgent:
             cards=cards,
             evaluation_criteria=evaluation_criteria,
             student_persona=student_prompt,
+            transition_word=extracted_transition_word,
         )
 
         for index in range(1, 3):
@@ -603,7 +616,7 @@ class HermesAgent:
                 student_prompt,
                 index,
                 cards=cards,
-                transition_word=transition_word,
+                transition_word=extracted_transition_word,
             )
             evaluation = self.evaluator.evaluate(transcript, trainer_prompt)
             result.rounds.append(HarnessRound(index, trainer_prompt, student_prompt, transcript, evaluation, index > 1))
@@ -640,6 +653,7 @@ def result_to_dict(result: HarnessResult) -> dict[str, Any]:
         "cards": result.cards,
         "evaluation_criteria": result.evaluation_criteria,
         "student_persona": result.student_persona,
+        "transition_word": result.transition_word,
         "rounds": [
             {
                 "round_number": item.round_number,
