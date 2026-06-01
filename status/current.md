@@ -1,26 +1,25 @@
 # Current Status
 
 ## Active Goal
-等待 Antigravity 或用户用真实课程任务文档审查 Hermes Agent 的双模式提示词重构效果
+验证 HermesAgent 在真实课程任务下的“强规则不缩水 + 自适应引导 + 多跳转词切档”稳定性
 
 ## Current Owner
 Antigravity / User
 
 ## Last Updated
-2026-06-01 15:33
+2026-06-01 16:30
 
 ## Latest Summary
-Codex 已根据 Antigravity 的 `refactoring_implementation_plan.md` 完成 Task-008 核心代码实施：
-1. `TaskAnalyzer` 现在会提取 `ai_role`、`dialogue_mode`、`transition_rule_desc`。
-2. `compile_card_prompt()` 已拆分为导师引导型 `tutor` 与被动角色型 `passive` 两套模板。
-3. 仿真链路已贯通角色/模式元数据，并增加台词输出清洗：过滤 `<think>`、动作神态描写，普通台词限制 100 字。
-4. `server.py` 不再写死 Antigravity 本机 scratch 路径，改用 `HERMES_DEBUG_DIR` 或仓库本地 `debug/`。
-5. 语法编译、硬编码搜索、mock 仿真检查均已通过。
+Codex 已完成基于最新测试反馈的二次增强：
+1. 去除提示词长度上限约束，避免关键规则被压缩丢失。
+2. 两套提示词模板新增硬规则：禁止空行、禁止内部思路、偏题拉回、非本阶段问题回引、固定问句改为自适应追问、图片由平台手动上传并由 AI 主动提醒。
+3. 修复 `passive` 模式首轮顺序，改为学生先发起。
+4. 支持按卡片独立跳转词：`card.transition_word` 可覆盖全局词，切档检测按当前卡片词执行。
+5. `normalize_dialogue_output()` 新增空行清洗，确保每条回复连续输出。
 
 ## Next Step
-Antigravity 或用户使用真实医学问诊、商务谈判、工程导师类任务文档各测试一次，确认模式识别、台词约束和精确跳转词在真实模型输出中的稳定性。
+Antigravity 使用真实医学/谈判/工程样本回归测试：确认规则不再被缩写、被动模式首轮正确、多卡片不同跳转词稳定生效。
 
 ## Known Risks
-- 真实 LLM 对 `dialogue_mode` 的分类可能偶尔不稳定，需要用真实样本回归观察。
-- `normalize_dialogue_output()` 会清理常见动作描写，但不能覆盖所有隐晦表情或舞台说明。
-- 100 字限制目前通过提示词和输出截断共同实现，若前端需要展示被截断提示，可后续增加标记字段。
+- 若任务文档中未明确“固定问题”，模型仍可能在少数情况下生成相似问句，需要继续通过回归样本调优。
+- 多语言场景（如英文谈判）下“禁空行/禁动作描写”已清洗，但角色语气一致性仍需实测观察。

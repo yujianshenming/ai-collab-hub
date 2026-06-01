@@ -1,34 +1,38 @@
 # Handoff: Codex -> Antigravity
 
 ## Date
-2026-06-01 15:33
+2026-06-01 16:30
 
 ## Summary
-Codex 已完成 Task-008 的核心重构实施：Hermes Agent 现在支持动态角色、导师/被动角色双模式、严格台词输出约束，并移除了旧的体育教师硬编码和 Antigravity 本机路径硬编码。
+已根据你们最新测试反馈完成二次增强：去除提示词长度上限、增加强约束规则（不丢规则、不空行、自适应提问、偏题拉回、图片上传提醒、禁止内部思路）、修复被动模式首轮发言顺序，并支持按卡片独立跳转词。
 
 ## Implemented
-- `TaskAnalyzer.analyze_task()` 扩展了结构化元数据：`ai_role`、`dialogue_mode`、`transition_rule_desc`。
-- `compile_card_prompt()` 改为接收 metadata，并按 `dialogue_mode` 生成两套模板：
-  - `tutor`：导师/专家引导型，一次只问一个具体问题。
-  - `passive`：患者/客户/谈判对手型，问什么答什么，不主动透露答案。
-- 新增 `normalize_dialogue_output()`，用于清除 `<think>`、动作/神态描写，并限制普通台词长度。
-- `PromptGenerator`、`AgentSandbox`、`HermesAgent.run()` 已贯通角色与模式元数据。
-- `result_to_dict()` 增加返回 `ai_role`、`dialogue_mode`、`transition_rule_desc`，便于前端或调试查看分析结果。
-- `server.py` 的调试输入保存目录改为 `HERMES_DEBUG_DIR` 环境变量或仓库本地 `debug/`，不再写死 Antigravity scratch 路径。
-- mock fallback 和 mock transcript 已改为通用能力训练示例，避免残留“高中体育教师/体育教师”等固定场景。
+- `TaskAnalyzer` 的卡片 schema 增加可选 `card.transition_word`，缺省自动回退到根级 `transition_word`。
+- `AgentSandbox.simulate()` 切档检测改为按“当前卡片跳转词”判定，不再强依赖全局单词。
+- 被动模式 `passive` 首轮改为学生先发起，Trainer 被动应答，避免患者/对手主动引导。
+- `compile_card_prompt()` 两套模板新增硬规则：
+  - 规则不可弱化：不允许减少关键约束。
+  - 禁止空行，回复连续输出。
+  - 严禁内部思路与 `<think>`。
+  - 学生偏离角色时提醒回到角色与场景。
+  - 学生问非本阶段内容时引导回本阶段。
+  - 除非任务文档写死问题，否则不要固定问句模板，必须按学生回答自适应追问。
+  - 图片由平台人工上传，AI 需主动提示“请上传对应图片资源”并继续文字引导。
+- `normalize_dialogue_output()` 新增空行压缩与行清洗，确保输出连续。
+- 去除提示词长度上限相关限制：
+  - 移除 `create_trainer_prompt` 中“strictly under 300 characters”约束。
+  - 移除 `Optimizer.refine` 中 300 字精简要求。
+  - 系统提示返回截断阈值改为大上限（避免实际截断）。
 
 ## Verification
-- `python -m compileall hermes_agent.py server.py` 通过。
-- `rg -n "高中体育教师|高中体育|体育教师|学校体育学|体育学|P\\.E\\.|antigravity\\\\brain|7319f9a2|C:\\\\Users\\\\24391\\\\.gemini" hermes_agent.py server.py` 无匹配。
-- `HERMES_FORCE_MOCK=1` 下直接运行 `HermesAgent().run(...)`，结果：
-  - 返回 metadata：`ai_role=通用实训导师`、`dialogue_mode=tutor`、`transition_word=Next`。
-  - transcript 未发现超 100 字台词。
-  - transcript 未发现 `<think>`、`*...*`、括号动作描写。
-  - 跳转输出为精确 `Next`，无标点或附加文字。
+- `python -m compileall hermes_agent.py` 通过。
+- mock 验证：
+  - `passive` 模式首条发言为 `Student`。
+  - 卡片独立跳转词可被准确触发（示例：`准备就绪`、`现象确认`）。
+  - 对话中无 `<think>`，无空行插入。
 
 ## Changed Files
 - `hermes_agent.py`
-- `server.py`
 - `handoff/codex-to-antigravity.md`
 - `status/current.md`
 
@@ -36,4 +40,4 @@ Codex 已完成 Task-008 的核心重构实施：Hermes Agent 现在支持动态
 暂无。
 
 ## Requested Next Action
-请 Antigravity 拉取后用真实医学问诊、商务谈判、工程导师三类文档各测一次，重点审查 `dialogue_mode` 是否能被稳定识别为 `passive` 或 `tutor`，以及真实模型输出是否仍能保持 100 字以内和精确跳转词。
+请使用你们刚测试的同一批真实任务文档复测三点：1) 是否仍会出现“规则被缩写”现象；2) 被动模式首轮是否稳定由学生发起；3) 多卡片不同跳转词是否都能稳定切档。

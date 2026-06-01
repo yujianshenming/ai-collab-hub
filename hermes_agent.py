@@ -141,6 +141,7 @@ class TaskAnalyzer:
                         "stage_number": 1,
                         "name": "阶段一：任务理解",
                         "max_rounds": 6,
+                        "transition_word": transition_word,
                         "description": "引导学生明确任务背景与目标",
                         "opening": "你好，我们先明确任务背景。你认为当前最重要的问题是什么？",
                         "evaluation_points": "学生必须说明任务背景、核心问题和目标对象。",
@@ -150,6 +151,7 @@ class TaskAnalyzer:
                         "stage_number": 2,
                         "name": "阶段二：方案制定",
                         "max_rounds": 6,
+                        "transition_word": transition_word,
                         "description": "引导学生提出可执行方案",
                         "opening": "很好，接下来请提出一个可执行方案。你会先做哪一步？",
                         "evaluation_points": "学生必须给出步骤、依据和关键资源安排。",
@@ -159,6 +161,7 @@ class TaskAnalyzer:
                         "stage_number": 3,
                         "name": "阶段三：复盘总结",
                         "max_rounds": 6,
+                        "transition_word": transition_word,
                         "description": "引导学生总结成果与风险",
                         "opening": "最后请复盘你的方案。你认为成果和风险分别是什么？",
                         "evaluation_points": "学生必须总结成果、风险和后续改进方向。",
@@ -190,10 +193,11 @@ class TaskAnalyzer:
                   "stage_number": 1,
                   "name": "Card name in Chinese (e.g., 阶段一：体能恢复与评估)",
                   "max_rounds": <integer suggested rounds, between 4 and 6 depending on complexity>,
+                  "transition_word": "Optional per-card transition word. If omitted, fallback to root transition_word.",
                   "description": "Stage description in Chinese (under 40 chars)",
                   "opening": "First greeting question from the Trainer to start this stage in Chinese (under 50 chars)",
                   "evaluation_points": "Specific criteria for the student's answer in this stage (e.g., must list 3 games and grouping rules) in Chinese (under 60 chars)",
-                  "prompt": "Trainer guide system prompt for this stage in Chinese (under 120 chars) instructing how to guide and when to transition (output the exact transition_word specified at the root of the JSON)."
+                  "prompt": "Trainer guide system prompt for this stage in Chinese, instructing how to guide and when to transition (output the exact transition_word specified at the root of the JSON)."
                 }},
                 ...
               ],
@@ -232,6 +236,9 @@ class TaskAnalyzer:
             required_keys = {"school", "course", "task_type", "cards", "evaluation_criteria", "student_persona"}
             if not required_keys.issubset(data):
                 raise ValueError("Missing required JSON keys")
+            for card in data.get("cards", []):
+                if not card.get("transition_word"):
+                    card["transition_word"] = data["transition_word"]
             return data
         except Exception as exc:
             print(f"[API Warning] Dynamic task analysis failed: {exc}. Using default fallback.")
@@ -243,6 +250,8 @@ def normalize_dialogue_output(text: str, transition_word: str | None = None, lim
     cleaned = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE).strip()
     cleaned = re.sub(r"[*＊][^*＊]{0,40}[*＊]", "", cleaned).strip()
     cleaned = re.sub(r"[（(][^（）()]{0,30}(?:笑|微笑|点头|叹气|沉默|思考|皱眉|停顿|动作|表情)[^（）()]{0,30}[）)]", "", cleaned).strip()
+    cleaned = re.sub(r"\r?\n\s*\r?\n+", "\n", cleaned)
+    cleaned = "\n".join(line.strip() for line in cleaned.splitlines() if line.strip())
     if transition_word:
         compact = cleaned.strip().strip("。.!！?？；;：:，,、 \t\r\n")
         if compact == transition_word:
@@ -252,12 +261,18 @@ def normalize_dialogue_output(text: str, transition_word: str | None = None, lim
     return cleaned
 
 
+def get_card_transition_word(card_data: dict[str, Any], default_transition_word: str) -> str:
+    candidate = str(card_data.get("transition_word", "")).strip()
+    return candidate or default_transition_word
+
+
 def compile_card_prompt(card_data: dict[str, Any], transition_word: str, metadata: dict[str, Any] | None = None) -> str:
     name = card_data.get("name", "未命名阶段")
     description = card_data.get("description", "设计本阶段任务")
     max_rounds = card_data.get("max_rounds", 4)
     eval_points = card_data.get("evaluation_points", "设计合理的教学内容与方法")
     micro_prompt = card_data.get("prompt", "引导学生完成本阶段设计")
+    card_transition_word = get_card_transition_word(card_data, transition_word)
     metadata = metadata or {}
     ai_role = metadata.get("ai_role") or "通用实训导师"
     dialogue_mode = metadata.get("dialogue_mode") or "tutor"
@@ -283,9 +298,14 @@ def compile_card_prompt(card_data: dict[str, Any], transition_word: str, metadat
 5. 每次输出极其简短，字数控制在 100 字以内。
 6. 严禁输出任何内部思考逻辑或带有 <think> 的思维链。
 7. 普通回应中避免冒号、分号和括号。
+8. 禁止在回复中出现空行，每条回复内容连续输出，不得插入空白行。
+9. 图片资源由平台人工上传。你需要在需要图示时主动提示“请上传对应图片资源”，并继续文字引导，不得假装已看到图片。
+10. 学生偏离当前角色或任务边界时，先温和提醒其回到角色与场景，再继续本阶段互动。
+11. 学生提问非本阶段内容时，先简短承接，再明确引导回本阶段目标，不展开跨阶段讲解。
+12. 除非任务文档写死了固定问题，否则不要机械复读固定问句，应根据学生刚刚的回答做自适应回应。
 
 # 阶段跳转切档规则（极其重要）
-{transition_rule_desc}，你必须**仅输出“{transition_word}”**这几个字，绝对不要附加任何其他字句、解释、标点符号、换行或空格。
+{transition_rule_desc}，你必须**仅输出“{card_transition_word}”**这几个字，绝对不要附加任何其他字句、解释、标点符号、换行或空格。
 """
         return template.strip()
 
@@ -301,7 +321,7 @@ def compile_card_prompt(card_data: dict[str, Any], transition_word: str, metadat
 {micro_prompt}
 
 # 核心教学规范与约束
-1. 启发式教学：一次只能提一个具体问题，绝对不能一次性抛出多个要求。
+1. 启发式教学：每轮最多一个核心问题，避免机械的一问一答；根据学生回答动态追问和调整引导策略。
 2. 围绕核心要点引导学生：{eval_points}
 3. 严禁直接替学生给出标准答案。如果学生回答含糊或缺失关键点，必须追问细节。
 4. 如果学生偏离本阶段主题，温和引导其重回主线。
@@ -309,9 +329,14 @@ def compile_card_prompt(card_data: dict[str, Any], transition_word: str, metadat
 6. 每次输出极其简短，字数控制在 100 字以内。
 7. 严禁输出任何内部思考逻辑或带有 <think> 的思维链。
 8. 普通回应中避免冒号、分号和括号。
+9. 禁止在回复中出现空行，每条回复内容连续输出，不得插入空白行。
+10. 图片资源由平台人工上传。涉及图示或证据图时，明确提醒学生上传对应图片，并基于已知文本继续指导。
+11. 学生偏离角色或跑题时，先提醒角色定位与任务边界，再拉回当前阶段目标。
+12. 学生提问非本阶段内容时，先简短回应，再引导回本阶段，不提前透出后续阶段答案。
+13. 除非任务文档明确写死问题，否则不要使用固定问句模板；必须根据学生当前回答自适应出题与追问。
 
 # 阶段跳转切档规则（极其重要）
-{transition_rule_desc}，你必须**仅输出“{transition_word}”**这几个字，绝对不要附加任何其他字句、解释、标点符号、换行或空格。
+{transition_rule_desc}，你必须**仅输出“{card_transition_word}”**这几个字，绝对不要附加任何其他字句、解释、标点符号、换行或空格。
 """
     return template.strip()
 
@@ -328,7 +353,10 @@ class PromptGenerator:
         metadata: dict[str, Any] | None = None,
     ) -> str:
         truncated_doc = (task_document or "")[:4000]
-        stages_text = "\n".join(f"- 阶段 {c['stage_number']}（{c['name']}）：{c['description']}（上限轮次: {c['max_rounds']}）" for c in cards)
+        stages_text = "\n".join(
+            f"- 阶段 {c['stage_number']}（{c['name']}）：{c['description']}（上限轮次: {c['max_rounds']}，切档词: {get_card_transition_word(c, transition_word)}）"
+            for c in cards
+        )
         metadata = metadata or {}
         ai_role = metadata.get("ai_role") or "通用实训导师"
         dialogue_mode = metadata.get("dialogue_mode") or "tutor"
@@ -343,6 +371,7 @@ class PromptGenerator:
                 输出规范：
                 - 普通回应必须少于 100 字。
                 - 仅输出口头台词，严禁动作、神态、括号描写和 <think>。
+                - 禁止空行，回复必须连续输出。
                 - 普通回应避免冒号、分号和括号。
                 - 重要规则：当你确认学生已完全达成当前阶段的目标、可进入下一阶段时，你必须且只能输出“{transition_word}”，绝对不要附带其他任何标点或文字。
                 - 触发说明：{transition_rule_desc}。
@@ -350,7 +379,7 @@ class PromptGenerator:
             ).strip()
 
         system_msg = (
-            f"You are an expert prompt engineer. Your task is to write a concise System Prompt in Chinese (strictly under 300 characters) "
+            f"You are an expert prompt engineer. Your task is to write a complete System Prompt in Chinese "
             f"for an AI Trainer or roleplayer (called Hermes Trainer) based on the task document.\n"
             f"Role: {ai_role}\n"
             f"Dialogue mode: {dialogue_mode} ({mode_desc})\n"
@@ -360,17 +389,21 @@ class PromptGenerator:
             f"The prompt must instruct the Trainer to:\n"
             f"1. Follow the selected dialogue mode exactly: tutor mode asks one guiding question at a time; passive mode answers only what the student asks and never volunteers hidden information.\n"
             f"2. Keep every normal response under 100 Chinese characters.\n"
-            f"3. CRITICAL RULE: When the Trainer decides the student has achieved the current stage's objective and is ready to enter the next stage, "
+            f"3. CRITICAL RULE: The trainer should be adaptive, not rigid. Unless the task document has fixed required questions, do not repeat fixed question templates and instead respond based on the student's latest answer.\n"
+            f"4. CRITICAL RULE: When the Trainer decides the student has achieved the current stage's objective and is ready to enter the next stage, "
             f"the Trainer MUST output ONLY the transition word '{transition_word}' and absolutely nothing else (no punctuation, no other words).\n"
-            f"4. CRITICAL RULE: The Trainer must ONLY output dialogue, and strictly forbid including any actions, physical descriptions, or facial expressions (e.g., *点头*, (微笑)).\n"
-            f"5. CRITICAL RULE: The Trainer must never output internal thinking or <think> content, and should avoid colons, semicolons, and parentheses in normal responses.\n"
+            f"5. CRITICAL RULE: The Trainer must ONLY output dialogue, and strictly forbid including any actions, physical descriptions, or facial expressions (e.g., *点头*, (微笑)).\n"
+            f"6. CRITICAL RULE: The Trainer must never output internal thinking or <think> content, and should avoid colons, semicolons, and parentheses in normal responses.\n"
+            f"7. CRITICAL RULE: No blank lines in a single response.\n"
+            f"8. CRITICAL RULE: If student asks non-current-stage content, briefly acknowledge then guide back to the current stage objective.\n"
+            f"9. CRITICAL RULE: If image evidence is needed, explicitly ask the student to upload it on the platform, and continue guidance based on text context.\n"
             f"Respond ONLY with the prompt in Chinese. Do not include markdown block markers, intro, or outro."
         )
         result = self.llm.chat([
             {"role": "system", "content": system_msg},
             {"role": "user", "content": f"Task Document:\n{truncated_doc}"}
         ])
-        return normalize_dialogue_output(result.strip(), transition_word=None, limit=300)
+        return normalize_dialogue_output(result.strip(), transition_word=None, limit=20000)
 
 
 class AgentSandbox:
@@ -400,28 +433,39 @@ class AgentSandbox:
         metadata = metadata or {}
         dialogue_mode = metadata.get("dialogue_mode") or "tutor"
         ai_role = metadata.get("ai_role") or "通用实训导师"
+
+        def stage_word(card: dict[str, Any]) -> str:
+            return get_card_transition_word(card, transition_word)
+
         if self.llm.provider == "mock":
             # Detailed mock transcript to show realistic multi-stage dialogue flow
             turns = []
-            turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[0]["opening"], transition_word)))
+            first_word = stage_word(cards[0])
+            if dialogue_mode == "passive":
+                turns.append(ChatTurn("Student", "student", "你好，我想先了解当前情况。"))
+                turns.append(ChatTurn("Trainer", "trainer", "你好，请问你想先了解哪一部分。"))
+            else:
+                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[0]["opening"], first_word)))
             turns.append(ChatTurn("Student", "student", "我觉得要先看清任务目标。"))
             turns.append(ChatTurn("Trainer", "trainer", "请再说清楚目标对象和核心问题。"))
             turns.append(ChatTurn("Student", "student", "对象是学习者，问题是步骤不够清楚。"))
             turns.append(ChatTurn("Trainer", "trainer", "很好。你会用什么标准判断理解到位？"))
             turns.append(ChatTurn("Student", "student", "看能否说出背景、问题和目标。"))
-            turns.append(ChatTurn("Trainer", "trainer", transition_word))
-            turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
+            turns.append(ChatTurn("Trainer", "trainer", first_word))
+            turns.append(ChatTurn("System", "system", f"检测到跳转词“{first_word}”，即将自动进入下一阶段..."))
             
             if len(cards) > 1:
-                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[1]["opening"], transition_word)))
+                second_word = stage_word(cards[1])
+                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[1]["opening"], second_word)))
                 turns.append(ChatTurn("Student", "student", "我会先列步骤，再分配资源。"))
                 turns.append(ChatTurn("Trainer", "trainer", "步骤依据是什么？"))
                 turns.append(ChatTurn("Student", "student", "依据任务目标和已有材料。"))
-                turns.append(ChatTurn("Trainer", "trainer", transition_word))
-                turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一阶段..."))
+                turns.append(ChatTurn("Trainer", "trainer", second_word))
+                turns.append(ChatTurn("System", "system", f"检测到跳转词“{second_word}”，即将自动进入下一阶段..."))
             
             if len(cards) > 2:
-                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[2]["opening"], transition_word)))
+                third_word = stage_word(cards[2])
+                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[2]["opening"], third_word)))
                 turns.append(ChatTurn("Student", "student", "成果是方案清楚，风险是资料不足。"))
                 turns.append(ChatTurn("Trainer", "trainer", "很好，本次实训仿真结束。"))
             return turns
@@ -430,8 +474,14 @@ class AgentSandbox:
         current_stage_idx = 0
         stage_turns_count = 0
 
-        # Turn 1: Trainer greeting (Use the opening of the first card directly!)
-        turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(cards[0]["opening"], transition_word)))
+        first_stage = cards[0]
+        first_stage_word = stage_word(first_stage)
+        # Passive mode should let student initiate the dialogue first.
+        if dialogue_mode == "passive":
+            turns.append(ChatTurn("Student", "student", "你好，我想先了解当前情况。"))
+            turns.append(ChatTurn("Trainer", "trainer", "你好，请问你想先了解哪一部分。"))
+        else:
+            turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(first_stage["opening"], first_stage_word)))
 
         # We simulate a total of 30 speech turns maximum (exchanges * 2) as requested by the user
         max_exchanges = 15
@@ -441,6 +491,7 @@ class AgentSandbox:
                 break
                 
             current_stage = cards[current_stage_idx]
+            current_stage_word = stage_word(current_stage)
             current_card_prompt = compile_card_prompt(current_stage, transition_word, metadata=metadata)
             
             # Student response
@@ -489,32 +540,33 @@ class AgentSandbox:
             if stage_turns_count >= max_limit_for_this_stage - 1:
                 trainer_history.append({
                     "role": "user",
-                    "content": f"[系统提示：当前卡片（{current_stage['name']}）的对话轮次已到上限，如果你认为学生的设计已符合要求，请**仅输出**跳转词“{transition_word}”进入下一阶段。]"
+                    "content": f"[系统提示：当前卡片（{current_stage['name']}）的对话轮次已到上限，如果你认为学生的设计已符合要求，请**仅输出**跳转词“{current_stage_word}”进入下一阶段。]"
                 })
 
             trainer_msg = self.llm.chat([
                 {"role": "system", "content": current_card_prompt},
                 *trainer_history
             ])
-            trainer_msg = normalize_dialogue_output(trainer_msg, transition_word=transition_word)
+            trainer_msg = normalize_dialogue_output(trainer_msg, transition_word=current_stage_word)
             
             cleaned_trainer_msg = trainer_msg.strip()
             
-            if cleaned_trainer_msg == transition_word:
-                turns.append(ChatTurn("Trainer", "trainer", transition_word))
+            if cleaned_trainer_msg == current_stage_word:
+                turns.append(ChatTurn("Trainer", "trainer", current_stage_word))
                 
                 # Check if this was the last stage
                 if current_stage_idx == len(cards) - 1:
-                    turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，本次所有阶段训练已全部圆满结束！"))
+                    turns.append(ChatTurn("System", "system", f"检测到跳转词“{current_stage_word}”，本次所有阶段训练已全部圆满结束！"))
                     break
                     
                 next_stage = cards[current_stage_idx + 1]
-                turns.append(ChatTurn("System", "system", f"检测到跳转词“{transition_word}”，即将自动进入下一卡片：{next_stage['name']}..."))
+                turns.append(ChatTurn("System", "system", f"检测到跳转词“{current_stage_word}”，即将自动进入下一卡片：{next_stage['name']}..."))
                 current_stage_idx += 1
                 stage_turns_count = 0
                 
                 # Directly push the next card's opening!
-                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(next_stage["opening"], transition_word)))
+                next_stage_word = stage_word(next_stage)
+                turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(next_stage["opening"], next_stage_word)))
             else:
                 turns.append(ChatTurn("Trainer", "trainer", trainer_msg))
                 
@@ -531,7 +583,8 @@ class AgentSandbox:
                     stage_turns_count = 0
                     
                     # Directly push the next card's opening!
-                    turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(next_stage["opening"], transition_word)))
+                    next_stage_word = stage_word(next_stage)
+                    turns.append(ChatTurn("Trainer", "trainer", normalize_dialogue_output(next_stage["opening"], next_stage_word)))
 
         return turns
 
@@ -628,7 +681,7 @@ class Optimizer:
 
         system_msg = (
             "You are an expert prompt optimizer. Refine the given Trainer System Prompt in Chinese to address the recommendations provided. "
-            "The refined prompt must be concise (strictly under 300 characters). Ensure it retains the instruction to keep normal responses under 100 Chinese characters, only output dialogue, forbid physical/emotional descriptions (e.g. *点头*, (微笑)), never output <think>, and output the exact transition word with no punctuation when transitioning. "
+            "The refined prompt should be complete and explicit. Ensure it retains the instruction to keep normal responses under 100 Chinese characters, only output dialogue, forbid physical/emotional descriptions (e.g. *点头*, (微笑)), never output <think>, and output the exact transition word with no punctuation when transitioning. "
             "Output ONLY the refined prompt in Chinese. Do not include any intro, outro, or explanation."
         )
         user_content = f"Current Prompt:\n{trainer_prompt}\n\nRecommendations:\n" + "\n".join(evaluation.recommendations)
@@ -636,7 +689,7 @@ class Optimizer:
             {"role": "system", "content": system_msg},
             {"role": "user", "content": user_content}
         ], temperature=0.45)
-        return normalize_dialogue_output(result.strip(), transition_word=None, limit=300)
+        return normalize_dialogue_output(result.strip(), transition_word=None, limit=20000)
 
 
 class HermesAgent:
