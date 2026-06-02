@@ -134,7 +134,7 @@ function renderResult(result) {
               <span class="card-field-label">提示词 (System Prompt)</span>
               <button type="button" class="copy-btn" onclick="copyDirectText(this)">复制</button>
             </div>
-            <pre class="card-field-value text-to-copy">${escapeHtml(card.prompt)}</pre>
+            <pre class="card-field-value text-to-copy">${escapeHtml(card.compiled_prompt)}</pre>
           </div>
         </div>
       `;

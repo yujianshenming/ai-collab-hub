@@ -1,23 +1,25 @@
 # Current Status
 
 ## Active Goal
-等待用户部署到生产环境进行真实业务测试
+通过高质量微信文章沉淀知识库，并整合本地 UI/UX 设计决策工具提升开发质量。
 
 ## Current Owner
-User
+Antigravity (生活/工作电脑实例)
 
 ## Last Updated
-2026-06-01 16:40
+2026-06-02 14:20
 
 ## Latest Summary
-已由 Antigravity 配合公司 API（gpt-5.4）完成全部 Codex 改动后的端到端验证：
-1. **多模态测试通过**：脑卒中（被动患者模式）和电机控制（导师引导模式）均能正确识别，逻辑符合预期。
-2. **规则不缩水**：放开 300 字限制后，大模型生成的 System Prompt 完备且专业，包含了电机控制 Δn 精确计算公式等深度参数。
-3. **被动模式顺序修复**：脑卒中患者首轮成功由 Student 率先发言，AI 患者被动承接，消除了主动引导的 Bug。
-4. **强约束完美执行**：模拟对话中无空行、无 `<think>` 泄露、无括号/星号动作神态描写，多卡片独立跳转词 `下一阶段` 自动检测切档运行顺畅。
+1. **服务安装与连接**：成功安装 `notebooklm-mcp-server`，完成自动化 Chrome 会话授权，打通与云端 NotebookLM 笔记本的连接。
+2. **工作流整合**：
+   - 导入了 `wechat-article-to-markdown-skill` 微信抓取流程。已成功将《oh-my-codex工作流》、《WeSight开源控制台》和《ui-ux-pro-max-skill UI设计能力》这三篇极具工程指导意义的文章分类导入到云端 [微信文章归档](https://notebooklm.google.com/notebook/54261b3c-4085-4b53-842d-f91024a2471f) 知识库中。
+   - 成功全局安装 `uipro-cli`，并在项目根目录初始化了 [ui-ux-pro-max](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/.gemini/skills/ui-ux-pro-max) 技能。该技能通过反向 AVOID 规则库（161 条行业禁忌）和风格持久化机制（`MASTER.md`），规范 AI 的 UI 页面生成行为。
+3. **运行验证**：UI/UX 搜索脚本本地运行通过，能够稳定输出高水平的设计决策卡。
 
 ## Next Step
-用户部署代码并开启正式的教学平台功能测试。
+1. 在后续所有涉及网页界面、原型和 UI 设计的代码编写或方案策划中，全面启用并遵守 `ui-ux-pro-max` 规范及 AVOID 检查。
+2. 随时接收用户发来的新公众号文章并持续归档。
+3. 等待用户提供自定义卡片任务模板以进行进一步的功能适配。
 
 ## Known Risks
 - 暂无
