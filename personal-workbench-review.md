@@ -1,134 +1,292 @@
-# 个人定制工作台代码审查报告 (Final Code Review Report)
+# 个人定制工作台代码审查与设计报告 (第 3 轮)
 
-我已结合您的反馈和对 `codex/personal-workbench` 分支最新代码的深度审查，制定了这份最终的代码重构与设计报告。请将此报告提供给 Codex，它将指导 Codex 完成接下来的功能修复与体验优化。
+结合您的最新反馈（① 隐藏侧边栏按钮；② 地址栏“打开”替换为箭头 `→`；③ Chrome 插件的工具栏点击弹出交互；④ 侧边栏标签拖拽排序），我制定了这套详尽的设计重构方案。
 
----
-
-## 一、 核心问题诊断与修改方案
-
-### 1. 终端换回 CMD，并修复“无法退格删除输入”的问题
-* **现象**：当前终端使用 `spawn("powershell.exe")` 启动。因为没有配置 PTY，输入的字符和退格（Backspace）在标准流模式下无法在 xterm.js 屏幕上正确同步擦除，导致“写错字符无法删除”。
-* **解决方案**：
-  1. 将主进程 `main.js` 启动 Shell 切换为 `cmd.exe`。
-  2. 在前端 `renderer.js` 中使用**本地回显行编辑器（Local Echo Line Editor）**机制：在前端拦截按键输入，退格时在 xterm.js 屏幕上执行光标前移、擦除、光标后退（`\b \b`），等用户按下回车键时再将整行命令一次性发送给 `cmd.exe` 执行。
-* **修改指引**：
-  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)** 中修改终端生成命令：
-    ```javascript
-    function startTerminal() {
-      if (terminalProcess && !terminalProcess.killed) return;
-      terminalProcess = spawn("cmd.exe", [], {
-        cwd: os.homedir(),
-        env: { ...process.env },
-        windowsHide: true
-      });
-      // ... 保持 stdout/stderr 绑定不变 ...
-    }
-    ```
-  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)** 中修改终端初始化逻辑，实现本地回显与退格拦截：
-    ```javascript
-    let currentLine = ""; // 缓存当前输入行
-    
-    function initTerminal() {
-      // ... 保持 terminal 实例创建不变 ...
-      
-      // 拦截键盘输入并实现本地回显编辑
-      terminal.onData((data) => {
-        if (data === "\r") { // 回车键
-          terminal.write("\r\n");
-          window.workbench.sendTerminalInput(currentLine + "\r\n");
-          currentLine = "";
-        } else if (data === "\x7f" || data === "\x08") { // 退格/删除键
-          if (currentLine.length > 0) {
-            currentLine = currentLine.slice(0, -1);
-            terminal.write("\b \b"); // 在 xterm 屏幕上擦除前一个字符
-          }
-        } else { // 正常字符输入
-          currentLine += data;
-          terminal.write(data); // 本地实时回显
-        }
-      });
-      
-      window.workbench.onTerminalData((data) => {
-        // 由于前端实现了本地回显，为避免后端管道重复回显，可在此处过滤掉与输入命令完全相同的输出（cmd 管道默认不回显输入，所以直接写入即可）
-        terminal.write(data);
-      });
-    }
-    ```
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)** 结构修改：将底部终端栏标题从 "PowerShell 本地会话" 更改为 "命令提示符 (CMD) 本地会话"。
+请将本报告提供给 Codex，指导其完成新一轮重构。
 
 ---
 
-### 2. 标签页支持“上下移动”重新排序
-* **需求**：支持调整左侧工作空间标签页的位置。
-* **解决方案**：在“编辑标签页”的模态弹窗（Modal）中，增加 **“上移”** 和 **“下移”** 按钮。点击时，在 `tabs` 数组中调换位置并存入 LocalStorage。
+## 一、 新增功能详细设计方案
+
+### 1. 增加“收起/展开侧边栏”按钮（CSS 网格动画）
+* **视觉设计**：
+  在顶部导航栏最左侧，添加一个由 SVG 绘制的“双栏布局控制”按钮（与您截图中的图标一致）。点击后，侧边栏能够平滑地折叠（宽度归零且内容隐藏），主工作区自适应变宽。
 * **修改指引**：
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在 `<dialog id="tab-dialog">` 内的 `.modal-actions` 中添加移动按钮：
+  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在顶部栏 `.topbar` 头部（`.page-identity` 之前）添加侧边栏开关按钮：
     ```html
-    <div class="modal-actions">
-      <button id="delete-tab-button" class="danger-button" type="button">删除标签</button>
-      <button id="move-up-tab-button" class="secondary-button" type="button">↑ 上移</button>
-      <button id="move-down-tab-button" class="secondary-button" type="button">↓ 下移</button>
-      <span class="action-spacer"></span>
-      <button class="secondary-button dialog-close" type="button">取消</button>
-      <button class="primary-button" type="submit">保存标签</button>
-    </div>
+    <header class="topbar">
+      <button id="sidebar-toggle" class="icon-button sidebar-toggle-btn" type="button" aria-label="切换侧边栏" title="切换侧边栏">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
+      </button>
+      <div class="page-identity">
+        <!-- ... 保持原有内容不变 ... -->
+      </div>
+    </header>
     ```
-  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：在事件绑定中添加位置交换逻辑：
-    ```javascript
-    function moveTab(direction) {
-      const id = document.querySelector("#tab-id").value;
-      if (!id) return;
-      const index = tabs.findIndex(tab => tab.id === id);
-      if (index === -1) return;
-      
-      const targetIndex = direction === "up" ? index - 1 : index + 1;
-      // 边界越界判定
-      if (targetIndex < 0 || targetIndex >= tabs.length) return;
-      
-      // 交换数组元素
-      const temp = tabs[index];
-      tabs[index] = tabs[targetIndex];
-      tabs[targetIndex] = temp;
-      
-      saveTabs();
-      elements.tabDialog.close();
-      renderTabs();
-      activateTab(id);
+  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：让外层 Grid 容器支持宽度平滑过渡，并在折叠时隐藏边框与内边距：
+    ```css
+    .app-shell {
+      display: grid;
+      grid-template-columns: var(--sidebar-width) 1fr;
+      height: 100vh;
+      transition: grid-template-columns 220ms cubic-bezier(0.4, 0, 0.2, 1); /* 侧边栏过渡 */
     }
     
-    document.querySelector("#move-up-tab-button").addEventListener("click", () => moveTab("up"));
-    document.querySelector("#move-down-tab-button").addEventListener("click", () => moveTab("down"));
+    .app-shell.sidebar-collapsed {
+      grid-template-columns: 0px 1fr; /* 折叠后宽度为 0 */
+    }
+    
+    .sidebar {
+      /* ... 保持原有样式不变 ... */
+      transition: padding 220ms ease, opacity 220ms ease;
+      overflow: hidden; /* 防止折叠时内容溢出 */
+    }
+    
+    .app-shell.sidebar-collapsed .sidebar {
+      padding-inline: 0px;
+      border-right-width: 0px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    
+    .sidebar-toggle-btn {
+      margin-right: 8px;
+    }
     ```
-
----
-
-### 3. 浏览器扩展插件（Chrome Extensions）使用及激活状态提示
-* **机制说明**：Electron 的 Chrome 扩展加载（`session.defaultSession.loadExtension`）是**全局且静默生效**的。例如：您加载了广告拦截（AdBlock）或翻译插件，它们会自动且静默地应用于所有的 `webview` 标签页，在后台拦截广告或处理翻译，您不需要手动在某个地方“点击打开它”。
-* **问题**：用户无法直观得知扩展是否成功加载。
-* **解决方案**：在“本地扩展设置”中增加“已加载的扩展列表”可视化反馈。当您输入 ID 保存并加载后，下方将显示该扩展的**正式名称、版本号与绿色“已成功启用”**的标记，让您明确知道插件正在工作。
-* **修改指引**：
-  - 在 **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)** 的配置保存回调中，当后台返回加载结果时，生成带有加载成功图标的提示卡片：
+  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：绑定按钮事件：
     ```javascript
-    document.querySelector("#settings-form").addEventListener("submit", async (event) => {
-      // ... 保持原有获取 entries 逻辑不变 ...
-      const results = await window.workbench.saveExtensions(entries);
-      document.querySelector("#extension-result").innerHTML = results.length
-        ? results.map((result) => `
-            <div class="extension-status-card ${result.ok ? 'success' : 'error'}">
-              <span>●</span>
-              <strong>${escapeHtml(result.name || result.id)}</strong>
-              <span>- ${escapeHtml(result.message)}</span>
-            </div>
-          `).join("")
-        : "<span>配置已保存。</span>";
+    document.querySelector("#sidebar-toggle").addEventListener("click", () => {
+      document.querySelector(".app-shell").classList.toggle("sidebar-collapsed");
     });
     ```
 
 ---
 
-## 二、 UX 与安全细节补强（我为您增加的建议项）
+### 2. 地址栏“打开”替换为箭头图标
+- **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)** 中修改 `go-button` 的按钮文本：
+  ```html
+  <button id="go-button" class="go-button" type="button" aria-label="打开" title="打开">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+  </button>
+  ```
+- 并在 **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)** 中将 `.go-button` 调整为正方形的图标按钮：
+  ```css
+  .go-button {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border-radius: 8px;
+    color: white;
+    background: var(--accent-gradient);
+    border: 0;
+    box-shadow: 0 5px 13px rgba(59, 130, 246, 0.18);
+  }
+  ```
 
-1. **终端滑出不遮挡网页（Flex 布局自适应）**：
-   - 建议在 **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)** 中将 `.workspace` 设置为 Flex 纵向布局（`display: flex; flex-direction: column`），并将 `.webview-stack` 的高度设为自动拉伸（`flex: 1`）。这样终端开启时，网页会自动缩放腾出空间，绝不会遮挡任何网页底部的内容。
-2. **万能网页内嵌增强**：
-   - 建议在 **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)** 中注册响应头过滤，确保将来您添加任何例如 GitHub 或其他安全性较高的企业网站时，都不会因为 iframe 被拒绝嵌套而报错。
+---
+
+### 3. 实现拖拽排序（Drag & Drop HTML5 排序）
+* **目标**：不依赖任何第三方库，在左侧侧边栏中直接通过拖拽调整标签的位置。
+* **修改指引**：
+  - 在 **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)** 的 `renderTabs()` 函数中，为动态生成的 `.tab-item` 增加 `draggable="true"`，并绑定 HTML5 原生拖拽事件：
+    ```javascript
+    function renderTabs() {
+      elements.tabList.replaceChildren();
+    
+      tabs.forEach((tab, index) => {
+        const item = document.createElement("div");
+        item.className = `tab-item${tab.id === activeTabId ? " active" : ""}`;
+        item.dataset.id = tab.id;
+        item.setAttribute("draggable", "true"); // 开启可拖拽属性
+        
+        item.innerHTML = `
+          <button class="tab-main" type="button">
+            <span class="tab-icon">${iconForTab(tab.name)}</span>
+            <span>${tab.name}</span>
+          </button>
+          <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
+        `;
+        
+        // 拖拽开始：记录拖拽源 ID
+        item.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", tab.id);
+          item.classList.add("dragging");
+        });
+        
+        // 拖拽结束：清理样式
+        item.addEventListener("dragend", () => {
+          item.classList.remove("dragging");
+          document.querySelectorAll(".tab-item").forEach(i => i.classList.remove("drag-over"));
+        });
+        
+        // 允许在其上方悬停
+        item.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          item.classList.add("drag-over");
+        });
+        
+        item.addEventListener("dragleave", () => {
+          item.classList.remove("drag-over");
+        });
+        
+        // 放置处理：交换数组位置
+        item.addEventListener("drop", (e) => {
+          e.preventDefault();
+          item.classList.remove("drag-over");
+          
+          const draggedId = e.dataTransfer.getData("text/plain");
+          if (draggedId === tab.id) return;
+          
+          const draggedIndex = tabs.findIndex(t => t.id === draggedId);
+          const targetIndex = index;
+          
+          // 重新排序 tabs 数组
+          const [removed] = tabs.splice(draggedIndex, 1);
+          tabs.splice(targetIndex, 0, removed);
+          
+          saveTabs();
+          renderTabs();
+          activateTab(activeTabId);
+        });
+    
+        item.querySelector(".tab-main").addEventListener("click", () => activateTab(tab.id));
+        item.querySelector(".tab-menu").addEventListener("click", () => openTabDialog(tab));
+        elements.tabList.append(item);
+        
+        // ... 保持原有 webview 创建逻辑不变 ...
+      });
+    }
+    ```
+  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)** 中增加拖拽状态反馈样式：
+    ```css
+    .tab-item.dragging {
+      opacity: 0.4;
+      background: var(--bg-tertiary);
+    }
+    .tab-item.drag-over {
+      border: 2px dashed var(--accent-color);
+      transform: scale(0.98);
+    }
+    ```
+
+---
+
+### 4. 真正像浏览器一样的 Chrome 扩展（点击弹出扩展 Popup）
+* **原理解析**：
+  Electron 在加载了 Chrome 扩展（如翻译插件、密码管理器）之后，会在后台静默为所有 webview 生效。但因为缺少顶部工具栏按钮，当用户需要点击它呼出交互弹窗（Popup 页）时无从下手。
+* **解决方案**：
+  在主进程读取插件配置时，通过解析插件的 `manifest.json` 导出其定义的 `default_popup` 页面路径（如 `popup.html`），并在顶部导航栏为每个启用的扩展生成一个图标按钮。点击图标时，在弹出的悬浮对话框（带有 `<webview>`）中加载对应的 `chrome-extension://<id>/<popup_page>`，完成和常规浏览器一模一样的交互。
+* **修改指引**：
+  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)** 中读取 manifest 元数据并返回给前端：
+    ```javascript
+    async function loadConfiguredExtensions(entries = readExtensionConfig()) {
+      const results = [];
+      for (const entry of entries.filter((item) => item && item.enabled !== false)) {
+        const extensionPath = resolveExtensionPath(entry);
+        if (!extensionPath || !fs.existsSync(extensionPath)) continue;
+        try {
+          // 读取 manifest.json
+          const manifestPath = path.join(extensionPath, "manifest.json");
+          let popupPage = "";
+          let defaultIcon = "";
+          if (fs.existsSync(manifestPath)) {
+            const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+            const action = manifest.action || manifest.browser_action || {};
+            popupPage = action.default_popup || "";
+            const icons = manifest.icons || {};
+            defaultIcon = action.default_icon || icons["16"] || icons["32"] || icons["48"] || "";
+          }
+          
+          const extension = await session.defaultSession.extensions.loadExtension(extensionPath, {
+            allowFileAccess: true
+          });
+          
+          results.push({
+            ...entry,
+            ok: true,
+            name: extension.name,
+            version: extension.version,
+            path: extensionPath,
+            popupPage: popupPage, // 返回弹窗路径
+            defaultIcon: defaultIcon, // 返回图标相对路径
+            message: "已成功启用"
+          });
+        } catch (error) {
+          results.push({ ...entry, ok: false, message: error.message });
+        }
+      }
+      return results;
+    }
+    ```
+  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在顶栏的 `terminal-toggle` 按钮左侧，增加一个用于渲染扩展图标的容器 `#extensions-bar`，并新增一个悬浮的 `<dialog id="extension-popover-dialog">` 用以展示扩展 Popup 页面：
+    ```html
+    <!-- topbar 内 -->
+    <div class="topbar-actions">
+      <!-- 扩展图标挂载容器 -->
+      <div id="extensions-bar" class="extensions-bar"></div>
+      <button id="terminal-toggle" class="terminal-toggle" type="button">
+        <!-- ... -->
+      </button>
+    </div>
+    
+    <!-- 在 body 底部添加独立 Popup 对话框 -->
+    <dialog id="extension-popover-dialog" class="extension-popover-modal">
+      <webview id="extension-popover-webview" partition="persist:personal-workbench"></webview>
+    </dialog>
+    ```
+  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：在读取和保存完扩展后，在顶栏挂载按钮。点击时弹窗加载 `chrome-extension://`：
+    ```javascript
+    function renderExtensionsInTopbar(results) {
+      const bar = document.querySelector("#extensions-bar");
+      bar.replaceChildren();
+      
+      results.filter(r => r.ok && r.popupPage).forEach(ext => {
+        const btn = document.createElement("button");
+        btn.className = "icon-button ext-trigger-btn";
+        btn.title = ext.name;
+        
+        // 使用扩展程序内的图标，若无则使用首字母
+        const iconSrc = ext.defaultIcon ? `chrome-extension://${ext.id}/${ext.defaultIcon}` : "";
+        btn.innerHTML = iconSrc 
+          ? `<img src="${iconSrc}" style="width:16px; height:16px; object-fit:contain;" />`
+          : `<span style="font-size:10px; font-weight:700;">${ext.name[0]}</span>`;
+        
+        btn.addEventListener("click", (e) => {
+          const dialog = document.querySelector("#extension-popover-dialog");
+          const webview = document.querySelector("#extension-popover-webview");
+          webview.src = `chrome-extension://${ext.id}/${ext.popupPage}`;
+          
+          // 定位弹窗在点击按钮正下方
+          const rect = btn.getBoundingClientRect();
+          dialog.style.position = "absolute";
+          dialog.style.top = `${rect.bottom + 10}px`;
+          dialog.style.left = `${rect.left - 150}px`; // 居中微调
+          
+          dialog.showModal();
+        });
+        bar.append(btn);
+      });
+    }
+    
+    // 在 openSettings 读取结果、和配置保存结果后，均调用此函数渲染顶栏图标
+    // 例：const { entries, results } = await window.workbench.getExtensions(); renderExtensionsInTopbar(results);
+    ```
+  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：设置扩展弹窗在顶栏下方的气泡式悬浮效果：
+    ```css
+    .extensions-bar { display: flex; gap: 4px; align-items: center; }
+    .extension-popover-modal {
+      width: 320px;
+      height: 480px;
+      margin: 0; /* 依靠 js 坐标绝对定位 */
+      padding: 0;
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: var(--shadow-lg);
+      background: white;
+      overflow: hidden;
+    }
+    .extension-popover-modal::backdrop { background: transparent; } /* 去掉遮罩层 */
+    #extension-popover-webview { width: 100%; height: 100%; border: none; }
+    ```
