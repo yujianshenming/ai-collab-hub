@@ -1,292 +1,231 @@
-# 个人定制工作台代码审查与设计报告 (第 3 轮)
+# 个人定制工作台缺陷审查与优化报告 (极客挑刺版)
 
-结合您的最新反馈（① 隐藏侧边栏按钮；② 地址栏“打开”替换为箭头 `→`；③ Chrome 插件的工具栏点击弹出交互；④ 侧边栏标签拖拽排序），我制定了这套详尽的设计重构方案。
+本报告深入挖掘了当前 `codex/personal-workbench` 分支下的代码缺陷，并针对您的新需求（① 扩展程序右侧边栏弹性折叠；② 修复鼠标拖拽失效 Bug）给出了精确的技术改造指引。
 
-请将本报告提供给 Codex，指导其完成新一轮重构。
+请将本报告提供给 Codex，让其按照以下步骤进行彻底重构。
 
 ---
 
-## 一、 新增功能详细设计方案
+## 一、 当前代码的硬伤与缺陷分析 (挑刺)
 
-### 1. 增加“收起/展开侧边栏”按钮（CSS 网格动画）
-* **视觉设计**：
-  在顶部导航栏最左侧，添加一个由 SVG 绘制的“双栏布局控制”按钮（与您截图中的图标一致）。点击后，侧边栏能够平滑地折叠（宽度归零且内容隐藏），主工作区自适应变宽。
+### 1. 拖拽重排在 Webview 上失效的致命 Bug
+* **缺陷表现**：
+  Codex 使用了 `pointerdown/move/up` 事件来实现侧边栏拖拽排序。但在 Electron 中，网页是通过独立的 `<webview>` 进程渲染的。当用户开始拖拽标签页时，一旦鼠标指针向右偏移移动到了 `<webview>` 区域，主窗口的 `pointermove` 侦听就会**瞬间被 webview 阻断并吞噬**，导致拖拽卡死、丢失或无法释放。
+* **技术根源**：
+  拖拽时未进行全局鼠标捕获，且 webview 的 `pointer-events` 未做临时屏蔽。
+* **整改方案**：
+  1. 在 `pointerdown` 触发时，对被拖拽的 `.tab-item` 显式调用 `item.setPointerCapture(event.pointerId)`，确保所有后续指针事件在全局（即使划过 webview）都强制发送给当前元素。
+  2. 拖拽开始时，将所有 `<webview>` 元素的 CSS 设置为 `pointer-events: none`，拖拽结束后恢复，防止 webview 吞噬鼠标拖拽轨迹。
+
+### 2. 终端调整大小时 Webview 阻挡拖拽
+* **缺陷表现**：
+  与拖拽排序同理，当用户按住终端面板上边缘的 `#terminal-resizer` 往上拖拽以改变终端高度时，一旦鼠标移动到上方 webview 区域，拖拽动作也会因为 webview 捕获指针事件而中断。
+* **整改方案**：
+  在 `#terminal-resizer` 的 `pointerdown` 事件中，对 resizer 自身调用 `setPointerCapture`，防止 webview 劫持高度拉伸手势。
+
+---
+
+## 二、 核心重构设计方案
+
+### 1. 右侧扩展侧边栏 (Right Sidebar) 代替悬浮气泡
+* **目标**：
+  点击顶栏的扩展图标后，扩展不再以浮空弹窗形式显示，而是作为**右侧侧边栏**从窗口右侧展开，且**中间的网页主体部分会自动向左收缩并自适应宽度**。
 * **修改指引**：
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在顶部栏 `.topbar` 头部（`.page-identity` 之前）添加侧边栏开关按钮：
+  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：删除原有的 `<dialog id="extension-popover-dialog">`，新增右侧边栏 `<aside id="right-sidebar">` 结构：
     ```html
-    <header class="topbar">
-      <button id="sidebar-toggle" class="icon-button sidebar-toggle-btn" type="button" aria-label="切换侧边栏" title="切换侧边栏">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
-      </button>
-      <div class="page-identity">
-        <!-- ... 保持原有内容不变 ... -->
+    <!-- 放置在 </main> 之后，作为 .app-shell 的第三个直属子元素 -->
+    <aside id="right-sidebar" class="right-sidebar">
+      <header class="right-sidebar-header">
+        <strong id="right-sidebar-title">扩展程序</strong>
+        <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭侧边栏" title="关闭侧边栏">×</button>
+      </header>
+      <div class="right-sidebar-body">
+        <webview id="right-sidebar-webview" partition="persist:personal-workbench"></webview>
       </div>
-    </header>
+    </aside>
     ```
-  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：让外层 Grid 容器支持宽度平滑过渡，并在折叠时隐藏边框与内边距：
+  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：定义右侧边栏样式与动画，改写外层 `.app-shell` 布局使其支持三栏自适应：
     ```css
+    :root {
+      /* ... 其他变量 ... */
+      --right-sidebar-width: 320px;
+    }
+    
+    /* 核心三栏布局 */
     .app-shell {
       display: grid;
-      grid-template-columns: var(--sidebar-width) 1fr;
+      grid-template-columns: var(--sidebar-width) 1fr 0px; /* 右侧栏默认宽度为 0 */
       height: 100vh;
-      transition: grid-template-columns 220ms cubic-bezier(0.4, 0, 0.2, 1); /* 侧边栏过渡 */
+      transition: grid-template-columns 220ms cubic-bezier(0.4, 0, 0.2, 1);
     }
     
+    /* 各种折叠组合状态下的网格列宽定义 */
+    .app-shell.right-sidebar-open {
+      grid-template-columns: var(--sidebar-width) 1fr var(--right-sidebar-width);
+    }
     .app-shell.sidebar-collapsed {
-      grid-template-columns: 0px 1fr; /* 折叠后宽度为 0 */
+      grid-template-columns: 0px 1fr 0px;
+    }
+    .app-shell.sidebar-collapsed.right-sidebar-open {
+      grid-template-columns: 0px 1fr var(--right-sidebar-width);
     }
     
-    .sidebar {
-      /* ... 保持原有样式不变 ... */
-      transition: padding 220ms ease, opacity 220ms ease;
-      overflow: hidden; /* 防止折叠时内容溢出 */
+    /* 右侧栏样式 */
+    .right-sidebar {
+      display: flex;
+      flex-direction: column;
+      background: rgba(255, 255, 255, 0.96);
+      border-left: 1px solid var(--border-color);
+      height: 100vh;
+      min-width: 0;
+      overflow: hidden;
+      transition: opacity 220ms ease;
+      z-index: 3;
     }
     
-    .app-shell.sidebar-collapsed .sidebar {
-      padding-inline: 0px;
-      border-right-width: 0px;
+    .app-shell:not(.right-sidebar-open) .right-sidebar {
       opacity: 0;
       pointer-events: none;
     }
     
-    .sidebar-toggle-btn {
-      margin-right: 8px;
+    .right-sidebar-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: var(--topbar-height);
+      padding: 0 16px;
+      border-bottom: 1px solid var(--border-color);
+      flex: 0 0 var(--topbar-height);
     }
-    ```
-  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：绑定按钮事件：
-    ```javascript
-    document.querySelector("#sidebar-toggle").addEventListener("click", () => {
-      document.querySelector(".app-shell").classList.toggle("sidebar-collapsed");
-    });
-    ```
-
----
-
-### 2. 地址栏“打开”替换为箭头图标
-- **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)** 中修改 `go-button` 的按钮文本：
-  ```html
-  <button id="go-button" class="go-button" type="button" aria-label="打开" title="打开">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-  </button>
-  ```
-- 并在 **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)** 中将 `.go-button` 调整为正方形的图标按钮：
-  ```css
-  .go-button {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    border-radius: 8px;
-    color: white;
-    background: var(--accent-gradient);
-    border: 0;
-    box-shadow: 0 5px 13px rgba(59, 130, 246, 0.18);
-  }
-  ```
-
----
-
-### 3. 实现拖拽排序（Drag & Drop HTML5 排序）
-* **目标**：不依赖任何第三方库，在左侧侧边栏中直接通过拖拽调整标签的位置。
-* **修改指引**：
-  - 在 **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)** 的 `renderTabs()` 函数中，为动态生成的 `.tab-item` 增加 `draggable="true"`，并绑定 HTML5 原生拖拽事件：
-    ```javascript
-    function renderTabs() {
-      elements.tabList.replaceChildren();
     
-      tabs.forEach((tab, index) => {
-        const item = document.createElement("div");
-        item.className = `tab-item${tab.id === activeTabId ? " active" : ""}`;
-        item.dataset.id = tab.id;
-        item.setAttribute("draggable", "true"); // 开启可拖拽属性
-        
-        item.innerHTML = `
-          <button class="tab-main" type="button">
-            <span class="tab-icon">${iconForTab(tab.name)}</span>
-            <span>${tab.name}</span>
-          </button>
-          <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
-        `;
-        
-        // 拖拽开始：记录拖拽源 ID
-        item.addEventListener("dragstart", (e) => {
-          e.dataTransfer.setData("text/plain", tab.id);
-          item.classList.add("dragging");
-        });
-        
-        // 拖拽结束：清理样式
-        item.addEventListener("dragend", () => {
-          item.classList.remove("dragging");
-          document.querySelectorAll(".tab-item").forEach(i => i.classList.remove("drag-over"));
-        });
-        
-        // 允许在其上方悬停
-        item.addEventListener("dragover", (e) => {
-          e.preventDefault();
-          item.classList.add("drag-over");
-        });
-        
-        item.addEventListener("dragleave", () => {
-          item.classList.remove("drag-over");
-        });
-        
-        // 放置处理：交换数组位置
-        item.addEventListener("drop", (e) => {
-          e.preventDefault();
-          item.classList.remove("drag-over");
-          
-          const draggedId = e.dataTransfer.getData("text/plain");
-          if (draggedId === tab.id) return;
-          
-          const draggedIndex = tabs.findIndex(t => t.id === draggedId);
-          const targetIndex = index;
-          
-          // 重新排序 tabs 数组
-          const [removed] = tabs.splice(draggedIndex, 1);
-          tabs.splice(targetIndex, 0, removed);
-          
-          saveTabs();
-          renderTabs();
-          activateTab(activeTabId);
-        });
+    .right-sidebar-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      position: relative;
+    }
     
-        item.querySelector(".tab-main").addEventListener("click", () => activateTab(tab.id));
-        item.querySelector(".tab-menu").addEventListener("click", () => openTabDialog(tab));
-        elements.tabList.append(item);
-        
-        // ... 保持原有 webview 创建逻辑不变 ...
-      });
+    #right-sidebar-webview {
+      width: 100%;
+      height: 100%;
+      border: none;
     }
     ```
-  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)** 中增加拖拽状态反馈样式：
-    ```css
-    .tab-item.dragging {
-      opacity: 0.4;
-      background: var(--bg-tertiary);
-    }
-    .tab-item.drag-over {
-      border: 2px dashed var(--accent-color);
-      transform: scale(0.98);
-    }
-    ```
-
----
-
-### 4. 真正像浏览器一样的 Chrome 扩展（点击弹出扩展 Popup）
-* **原理解析**：
-  Electron 在加载了 Chrome 扩展（如翻译插件、密码管理器）之后，会在后台静默为所有 webview 生效。但因为缺少顶部工具栏按钮，当用户需要点击它呼出交互弹窗（Popup 页）时无从下手。
-* **解决方案**：
-  在主进程读取插件配置时，通过解析插件的 `manifest.json` 导出其定义的 `default_popup` 页面路径（如 `popup.html`），并在顶部导航栏为每个启用的扩展生成一个图标按钮。点击图标时，在弹出的悬浮对话框（带有 `<webview>`）中加载对应的 `chrome-extension://<id>/<popup_page>`，完成和常规浏览器一模一样的交互。
-* **修改指引**：
-  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)** 中读取 manifest 元数据并返回给前端：
+  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：编写展开折叠控制逻辑：
     ```javascript
-    async function loadConfiguredExtensions(entries = readExtensionConfig()) {
-      const results = [];
-      for (const entry of entries.filter((item) => item && item.enabled !== false)) {
-        const extensionPath = resolveExtensionPath(entry);
-        if (!extensionPath || !fs.existsSync(extensionPath)) continue;
-        try {
-          // 读取 manifest.json
-          const manifestPath = path.join(extensionPath, "manifest.json");
-          let popupPage = "";
-          let defaultIcon = "";
-          if (fs.existsSync(manifestPath)) {
-            const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-            const action = manifest.action || manifest.browser_action || {};
-            popupPage = action.default_popup || "";
-            const icons = manifest.icons || {};
-            defaultIcon = action.default_icon || icons["16"] || icons["32"] || icons["48"] || "";
-          }
-          
-          const extension = await session.defaultSession.extensions.loadExtension(extensionPath, {
-            allowFileAccess: true
-          });
-          
-          results.push({
-            ...entry,
-            ok: true,
-            name: extension.name,
-            version: extension.version,
-            path: extensionPath,
-            popupPage: popupPage, // 返回弹窗路径
-            defaultIcon: defaultIcon, // 返回图标相对路径
-            message: "已成功启用"
-          });
-        } catch (error) {
-          results.push({ ...entry, ok: false, message: error.message });
-        }
+    // 增加 DOM 元素引用
+    elements.rightSidebar = document.querySelector("#right-sidebar");
+    elements.rightSidebarWebview = document.querySelector("#right-sidebar-webview");
+    elements.rightSidebarClose = document.querySelector("#right-sidebar-close");
+    elements.rightSidebarTitle = document.querySelector("#right-sidebar-title");
+    
+    function toggleRightSidebar(open, url = "", title = "") {
+      if (open) {
+        elements.rightSidebarWebview.src = url;
+        elements.rightSidebarTitle.textContent = title;
+        elements.appShell.classList.add("right-sidebar-open");
+      } else {
+        elements.appShell.classList.remove("right-sidebar-open");
+        elements.rightSidebarWebview.src = "about:blank";
       }
-      return results;
     }
-    ```
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在顶栏的 `terminal-toggle` 按钮左侧，增加一个用于渲染扩展图标的容器 `#extensions-bar`，并新增一个悬浮的 `<dialog id="extension-popover-dialog">` 用以展示扩展 Popup 页面：
-    ```html
-    <!-- topbar 内 -->
-    <div class="topbar-actions">
-      <!-- 扩展图标挂载容器 -->
-      <div id="extensions-bar" class="extensions-bar"></div>
-      <button id="terminal-toggle" class="terminal-toggle" type="button">
-        <!-- ... -->
-      </button>
-    </div>
     
-    <!-- 在 body 底部添加独立 Popup 对话框 -->
-    <dialog id="extension-popover-dialog" class="extension-popover-modal">
-      <webview id="extension-popover-webview" partition="persist:personal-workbench"></webview>
-    </dialog>
-    ```
-  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：在读取和保存完扩展后，在顶栏挂载按钮。点击时弹窗加载 `chrome-extension://`：
-    ```javascript
+    // 修改顶栏扩展按钮的点击逻辑
     function renderExtensionsInTopbar(results) {
-      const bar = document.querySelector("#extensions-bar");
-      bar.replaceChildren();
-      
-      results.filter(r => r.ok && r.popupPage).forEach(ext => {
-        const btn = document.createElement("button");
-        btn.className = "icon-button ext-trigger-btn";
-        btn.title = ext.name;
-        
-        // 使用扩展程序内的图标，若无则使用首字母
-        const iconSrc = ext.defaultIcon ? `chrome-extension://${ext.id}/${ext.defaultIcon}` : "";
-        btn.innerHTML = iconSrc 
-          ? `<img src="${iconSrc}" style="width:16px; height:16px; object-fit:contain;" />`
-          : `<span style="font-size:10px; font-weight:700;">${ext.name[0]}</span>`;
-        
-        btn.addEventListener("click", (e) => {
-          const dialog = document.querySelector("#extension-popover-dialog");
-          const webview = document.querySelector("#extension-popover-webview");
-          webview.src = `chrome-extension://${ext.id}/${ext.popupPage}`;
+      elements.extensionsBar.replaceChildren();
+      for (const extension of results.filter((result) => result.ok && result.popupPage)) {
+        // ... 创建按钮逻辑保持不变 ...
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const popupUrl = `chrome-extension://${extension.id}/${extension.popupPage.replace(/^\/+/, "")}`;
+          const isOpened = elements.appShell.classList.contains("right-sidebar-open") && elements.rightSidebarWebview.src === popupUrl;
           
-          // 定位弹窗在点击按钮正下方
-          const rect = btn.getBoundingClientRect();
-          dialog.style.position = "absolute";
-          dialog.style.top = `${rect.bottom + 10}px`;
-          dialog.style.left = `${rect.left - 150}px`; // 居中微调
-          
-          dialog.showModal();
+          toggleRightSidebar(!isOpened, popupUrl, extension.name);
         });
-        bar.append(btn);
-      });
+        elements.extensionsBar.append(button);
+      }
     }
     
-    // 在 openSettings 读取结果、和配置保存结果后，均调用此函数渲染顶栏图标
-    // 例：const { entries, results } = await window.workbench.getExtensions(); renderExtensionsInTopbar(results);
+    // 绑定关闭按钮
+    elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
     ```
-  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：设置扩展弹窗在顶栏下方的气泡式悬浮效果：
-    ```css
-    .extensions-bar { display: flex; gap: 4px; align-items: center; }
-    .extension-popover-modal {
-      width: 320px;
-      height: 480px;
-      margin: 0; /* 依靠 js 坐标绝对定位 */
-      padding: 0;
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      box-shadow: var(--shadow-lg);
-      background: white;
-      overflow: hidden;
+
+---
+
+### 2. 完美的全局拖动排序 (PointerCapture 修复)
+- **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
+  在 `pointerdown` 中，锁定输入指针，并临时禁用网页堆栈的鼠标响应，确保拖拽流畅：
+  ```javascript
+  item.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest(".tab-menu")) return;
+    
+    // 关键修复 1：捕获全局指针，防止 webview 吞噬 move 事件
+    item.setPointerCapture(event.pointerId);
+    
+    // 关键修复 2：将所有 webview 屏蔽鼠标穿透，保证拖拽流畅
+    document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "none");
+    
+    pointerDrag = { 
+      id: tab.id, 
+      pointerId: event.pointerId, // 保存当前指针 ID
+      startX: event.clientX, 
+      startY: event.clientY, 
+      active: false 
+    };
+  });
+  ```
+  在全局 `pointerup` 监听中释放指针捕获，并还原鼠标穿透：
+  ```javascript
+  document.addEventListener("pointerup", (event) => {
+    if (!pointerDrag) return;
+    
+    const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+    if (dragItem) {
+      try {
+        // 释放指针捕获
+        dragItem.releasePointerCapture(pointerDrag.pointerId);
+      } catch (e) {}
     }
-    .extension-popover-modal::backdrop { background: transparent; } /* 去掉遮罩层 */
-    #extension-popover-webview { width: 100%; height: 100%; border: none; }
-    ```
+    
+    // 恢复 webview 的鼠标穿透
+    document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "auto");
+    
+    if (pointerDrag.active) {
+      const targetId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.dataset.id;
+      if (targetId && reorderTab(pointerDrag.id, targetId)) renderTabs();
+      suppressTabClickUntil = Date.now() + 250;
+    }
+    pointerDrag = null;
+    clearDragState();
+  });
+  ```
+
+---
+
+### 3. 完美的终端拉伸 (PointerCapture 修复)
+- **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
+  修改终端 resizer 事件绑定，防止向上拖拽时进入 webview 导致卡死：
+  ```javascript
+  resizer.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    resizer.setPointerCapture(event.pointerId); // 捕获指针
+    document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "none"); // 禁用 webview 鼠标穿透
+    
+    const startY = event.clientY;
+    const startHeight = elements.terminalPanel.getBoundingClientRect().height;
+    
+    const onMove = (moveEvent) => {
+      const height = Math.max(180, Math.min(window.innerHeight * 0.7, startHeight + startY - moveEvent.clientY));
+      document.documentElement.style.setProperty("--terminal-height", `${height}px`);
+      fitAddon.fit();
+    };
+    
+    const onUp = () => {
+      resizer.removeEventListener("pointermove", onMove);
+      resizer.removeEventListener("pointerup", onUp);
+      document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "auto"); // 恢复
+    };
+    
+    resizer.addEventListener("pointermove", onMove);
+    resizer.addEventListener("pointerup", onUp);
+  });
+  ```
