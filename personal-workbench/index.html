@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src https: http:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>个人工作台</title>
+    <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <header class="brand">
+          <div class="brand-mark">W</div>
+          <div>
+            <strong>个人工作台</strong>
+            <span>Personal Workbench</span>
+          </div>
+        </header>
+
+        <div class="sidebar-label">
+          <span>工作空间</span>
+          <button id="add-tab-button" class="icon-button" type="button" aria-label="添加标签页" title="添加标签页">+</button>
+        </div>
+        <nav id="tab-list" class="tab-list" aria-label="工作台标签"></nav>
+
+        <footer class="sidebar-footer">
+          <button id="settings-button" class="quiet-button" type="button">
+            <span class="button-icon">⚙</span>
+            扩展设置
+          </button>
+          <div class="connection-status">
+            <span class="status-dot"></span>
+            本地工作台已就绪
+          </div>
+        </footer>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div class="page-identity">
+            <span class="eyebrow">正在浏览</span>
+            <strong id="active-title">评估</strong>
+          </div>
+          <div class="address-bar">
+            <button id="back-button" class="icon-button" type="button" aria-label="后退" title="后退">←</button>
+            <button id="forward-button" class="icon-button" type="button" aria-label="前进" title="前进">→</button>
+            <button id="reload-button" class="icon-button" type="button" aria-label="刷新" title="刷新">↻</button>
+            <input id="address-input" type="url" aria-label="网址" />
+            <button id="go-button" class="go-button" type="button">打开</button>
+          </div>
+          <button id="terminal-toggle" class="terminal-toggle" type="button" aria-expanded="false">
+            <span>&gt;_</span>
+            终端
+          </button>
+        </header>
+
+        <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
+
+        <section id="terminal-panel" class="terminal-panel" aria-label="PowerShell 终端">
+          <div id="terminal-resizer" class="terminal-resizer" title="拖动调整终端高度"></div>
+          <header class="terminal-header">
+            <div>
+              <span class="terminal-indicator"></span>
+              <strong>PowerShell</strong>
+              <span>本地会话</span>
+            </div>
+            <button id="terminal-close" class="icon-button" type="button" aria-label="关闭终端">×</button>
+          </header>
+          <div id="terminal-container"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="tab-dialog" class="modal">
+      <form id="tab-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">工作空间</span>
+            <h2 id="tab-dialog-title">添加标签页</h2>
+          </div>
+          <button class="icon-button dialog-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <input id="tab-id" type="hidden" />
+        <label>
+          显示名称
+          <input id="tab-name" type="text" maxlength="24" placeholder="例如：NotebookLM" required />
+        </label>
+        <label>
+          网页地址
+          <input id="tab-url" type="text" placeholder="https://example.com" required />
+        </label>
+        <div class="modal-actions">
+          <button id="delete-tab-button" class="danger-button" type="button">删除标签</button>
+          <span class="action-spacer"></span>
+          <button class="secondary-button dialog-close" type="button">取消</button>
+          <button class="primary-button" type="submit">保存标签</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="modal wide-modal">
+      <form id="settings-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Chrome Extensions</span>
+            <h2>本地扩展设置</h2>
+          </div>
+          <button class="icon-button settings-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <p class="helper-text">填写 Chrome 扩展 ID，工作台会从 Default / Profile 目录中查找最新版；也可以直接填写已解压扩展目录。</p>
+        <div id="extension-list" class="extension-list"></div>
+        <button id="add-extension-button" class="secondary-button full-button" type="button">+ 添加扩展</button>
+        <div id="extension-result" class="extension-result" aria-live="polite"></div>
+        <div class="modal-actions">
+          <button class="secondary-button settings-close" type="button">取消</button>
+          <button class="primary-button" type="submit">保存并加载</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
