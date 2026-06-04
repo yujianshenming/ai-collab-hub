@@ -88,6 +88,16 @@
           <div id="terminal-container"></div>
         </section>
       </main>
+
+      <aside id="right-sidebar" class="right-sidebar">
+        <header class="right-sidebar-header">
+          <strong id="right-sidebar-title">扩展程序</strong>
+          <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭扩展侧边栏" title="关闭扩展侧边栏">×</button>
+        </header>
+        <div class="right-sidebar-body">
+          <webview id="right-sidebar-webview" partition="persist:personal-workbench"></webview>
+        </div>
+      </aside>
     </div>
 
     <dialog id="tab-dialog" class="modal">
@@ -137,10 +147,6 @@
           <button class="primary-button" type="submit">保存并加载</button>
         </div>
       </form>
-    </dialog>
-
-    <dialog id="extension-popover-dialog" class="extension-popover-dialog">
-      <webview id="extension-popover-webview" partition="persist:personal-workbench"></webview>
     </dialog>
 
     <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>

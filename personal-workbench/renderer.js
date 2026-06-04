@@ -25,8 +25,10 @@ const elements = {
   terminalToggle: document.querySelector("#terminal-toggle"),
   appShell: document.querySelector(".app-shell"),
   extensionsBar: document.querySelector("#extensions-bar"),
-  extensionPopover: document.querySelector("#extension-popover-dialog"),
-  extensionPopoverWebview: document.querySelector("#extension-popover-webview")
+  rightSidebar: document.querySelector("#right-sidebar"),
+  rightSidebarTitle: document.querySelector("#right-sidebar-title"),
+  rightSidebarClose: document.querySelector("#right-sidebar-close"),
+  rightSidebarWebview: document.querySelector("#right-sidebar-webview")
 };
 
 function readTabs() {
@@ -72,7 +74,9 @@ function renderTabs() {
     item.querySelector(".tab-menu").addEventListener("click", () => openTabDialog(tab));
     item.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || event.target.closest(".tab-menu")) return;
-      pointerDrag = { id: tab.id, startX: event.clientX, startY: event.clientY, active: false };
+      item.setPointerCapture(event.pointerId);
+      setWebviewPointerEvents(false);
+      pointerDrag = { id: tab.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false };
     });
     elements.tabList.append(item);
 
@@ -90,6 +94,12 @@ function renderTabs() {
 
 function clearDragState() {
   document.querySelectorAll(".tab-item").forEach((item) => item.classList.remove("dragging", "drag-over"));
+}
+
+function setWebviewPointerEvents(enabled) {
+  document.querySelectorAll("webview").forEach((webview) => {
+    webview.style.pointerEvents = enabled ? "auto" : "none";
+  });
 }
 
 function reorderTab(draggedId, targetId) {
@@ -296,15 +306,23 @@ function renderExtensionsInTopbar(results) {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       const popupUrl = `chrome-extension://${extension.id}/${extension.popupPage.replace(/^\/+/, "")}`;
-      if (elements.extensionPopover.open && elements.extensionPopoverWebview.src === popupUrl) {
-        elements.extensionPopover.close();
-        return;
-      }
-      elements.extensionPopoverWebview.src = popupUrl;
-      elements.extensionPopover.showModal();
+      const isOpen = elements.appShell.classList.contains("right-sidebar-open")
+        && elements.rightSidebarWebview.src === popupUrl;
+      toggleRightSidebar(!isOpen, popupUrl, extension.name);
     });
     elements.extensionsBar.append(button);
   }
+}
+
+function toggleRightSidebar(open, url = "", title = "") {
+  elements.appShell.classList.toggle("right-sidebar-open", open);
+  if (open) {
+    elements.rightSidebarTitle.textContent = title || "扩展程序";
+    elements.rightSidebarWebview.src = url;
+  } else {
+    elements.rightSidebarWebview.src = "about:blank";
+  }
+  setTimeout(() => fitAddon?.fit(), 230);
 }
 
 function setSidebarCollapsed(collapsed) {
@@ -343,6 +361,7 @@ document.querySelector("#reload-button").addEventListener("click", () => {
 });
 elements.terminalToggle.addEventListener("click", () => toggleTerminal());
 document.querySelector("#terminal-close").addEventListener("click", () => toggleTerminal(false));
+elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
@@ -395,9 +414,14 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
 });
 
 const resizer = document.querySelector("#terminal-resizer");
-resizer.addEventListener("pointerdown", (event) => {
+const terminalHeader = document.querySelector(".terminal-header");
+
+function beginTerminalResize(event) {
+  if (event.button !== 0 || event.target.closest("button")) return;
   event.preventDefault();
-  resizer.setPointerCapture(event.pointerId);
+  const handle = event.currentTarget;
+  handle.setPointerCapture(event.pointerId);
+  setWebviewPointerEvents(false);
   const startY = event.clientY;
   const startHeight = elements.terminalPanel.getBoundingClientRect().height;
   const onMove = (moveEvent) => {
@@ -406,17 +430,21 @@ resizer.addEventListener("pointerdown", (event) => {
     fitAddon.fit();
   };
   const onUp = () => {
-    resizer.removeEventListener("pointermove", onMove);
-    resizer.removeEventListener("pointerup", onUp);
+    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    setWebviewPointerEvents(true);
+    handle.removeEventListener("pointermove", onMove);
+    handle.removeEventListener("pointerup", onUp);
+    handle.removeEventListener("pointercancel", onUp);
   };
-  resizer.addEventListener("pointermove", onMove);
-  resizer.addEventListener("pointerup", onUp);
-});
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", onUp);
+  handle.addEventListener("pointercancel", onUp);
+}
+
+resizer.addEventListener("pointerdown", beginTerminalResize);
+terminalHeader.addEventListener("pointerdown", beginTerminalResize);
 
 window.addEventListener("resize", () => fitAddon?.fit());
-elements.extensionPopover.addEventListener("click", (event) => {
-  if (event.target === elements.extensionPopover) elements.extensionPopover.close();
-});
 document.addEventListener("pointermove", (event) => {
   if (!pointerDrag) return;
   if (!pointerDrag.active && Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
@@ -427,11 +455,19 @@ document.addEventListener("pointermove", (event) => {
 });
 document.addEventListener("pointerup", (event) => {
   if (!pointerDrag) return;
+  const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+  if (dragItem?.hasPointerCapture(pointerDrag.pointerId)) dragItem.releasePointerCapture(pointerDrag.pointerId);
+  setWebviewPointerEvents(true);
   if (pointerDrag.active) {
     const targetId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.dataset.id;
     if (targetId && reorderTab(pointerDrag.id, targetId)) renderTabs();
     suppressTabClickUntil = Date.now() + 250;
   }
+  pointerDrag = null;
+  clearDragState();
+});
+document.addEventListener("pointercancel", () => {
+  setWebviewPointerEvents(true);
   pointerDrag = null;
   clearDragState();
 });
