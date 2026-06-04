@@ -7,6 +7,7 @@ let tabs = readTabs();
 let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
 let terminal;
 let fitAddon;
+let currentLine = "";
 
 const elements = {
   tabList: document.querySelector("#tab-list"),
@@ -129,6 +130,9 @@ function openTabDialog(tab = null) {
   document.querySelector("#tab-name").value = tab?.name || "";
   document.querySelector("#tab-url").value = tab?.url || "";
   document.querySelector("#delete-tab-button").hidden = !tab;
+  const index = tab ? tabs.findIndex((candidate) => candidate.id === tab.id) : -1;
+  document.querySelector("#move-up-tab-button").hidden = index <= 0;
+  document.querySelector("#move-down-tab-button").hidden = index < 0 || index >= tabs.length - 1;
   elements.tabDialog.showModal();
   document.querySelector("#tab-name").focus();
 }
@@ -158,7 +162,28 @@ function initTerminal() {
   fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(document.querySelector("#terminal-container"));
-  terminal.onData((data) => window.workbench.sendTerminalInput(data));
+  terminal.onData((data) => {
+    if (data.startsWith("\x1b")) return;
+    for (const character of data.replace(/\r\n/g, "\r")) {
+      if (character === "\r" || character === "\n") {
+        terminal.write("\r\n");
+        window.workbench.sendTerminalInput(`${currentLine}\r\n`);
+        currentLine = "";
+      } else if (character === "\x7f" || character === "\x08") {
+        if (currentLine.length > 0) {
+          currentLine = currentLine.slice(0, -1);
+          terminal.write("\b \b");
+        }
+      } else if (character === "\x03") {
+        currentLine = "";
+        terminal.write("^C\r\n");
+        window.workbench.sendTerminalInput(character);
+      } else {
+        currentLine += character;
+        terminal.write(character);
+      }
+    }
+  });
   window.workbench.onTerminalData((data) => terminal.write(data));
 }
 
@@ -200,11 +225,36 @@ function escapeHtml(value) {
 
 async function openSettings() {
   elements.extensionList.replaceChildren();
-  const entries = await window.workbench.getExtensions();
+  const { entries, results } = await window.workbench.getExtensions();
   if (entries.length) entries.forEach(extensionRow);
   else extensionRow();
-  document.querySelector("#extension-result").textContent = "";
+  renderExtensionResults(results);
   elements.settingsDialog.showModal();
+}
+
+function renderExtensionResults(results) {
+  document.querySelector("#extension-result").innerHTML = results.length
+    ? results.map((result) => `
+        <div class="extension-status-card ${result.ok ? "success" : "error"}">
+          <span class="extension-status-dot"></span>
+          <strong>${escapeHtml(result.name || result.id || result.path)}</strong>
+          ${result.version ? `<span>v${escapeHtml(result.version)}</span>` : ""}
+          <span>${escapeHtml(result.message)}</span>
+        </div>
+      `).join("")
+    : "<span class=\"extension-empty\">尚未加载扩展。</span>";
+}
+
+function moveTab(direction) {
+  const id = document.querySelector("#tab-id").value;
+  const index = tabs.findIndex((tab) => tab.id === id);
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || targetIndex < 0 || targetIndex >= tabs.length) return;
+  [tabs[index], tabs[targetIndex]] = [tabs[targetIndex], tabs[index]];
+  saveTabs();
+  elements.tabDialog.close();
+  renderTabs();
+  activateTab(id);
 }
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
@@ -257,6 +307,8 @@ document.querySelector("#delete-tab-button").addEventListener("click", () => {
   elements.tabDialog.close();
   renderTabs();
 });
+document.querySelector("#move-up-tab-button").addEventListener("click", () => moveTab("up"));
+document.querySelector("#move-down-tab-button").addEventListener("click", () => moveTab("down"));
 
 document.querySelector("#add-extension-button").addEventListener("click", () => extensionRow());
 document.querySelector("#settings-form").addEventListener("submit", async (event) => {
@@ -267,9 +319,7 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
     path: row.querySelector(".extension-path").value.trim()
   })).filter((entry) => entry.id || entry.path);
   const results = await window.workbench.saveExtensions(entries);
-  document.querySelector("#extension-result").innerHTML = results.length
-    ? results.map((result) => `<span class="${result.ok ? "success" : "error"}">${escapeHtml(result.name || result.id || result.path)}：${escapeHtml(result.message)}</span>`).join("")
-    : "<span>配置已保存。</span>";
+  renderExtensionResults(results);
 });
 
 const resizer = document.querySelector("#terminal-resizer");

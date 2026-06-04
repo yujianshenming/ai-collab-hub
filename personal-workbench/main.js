@@ -6,6 +6,7 @@ const os = require("node:os");
 
 let mainWindow;
 let terminalProcess;
+let extensionResults = [];
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -41,24 +42,20 @@ function sendToRenderer(channel, payload) {
 function startTerminal() {
   if (terminalProcess && !terminalProcess.killed) return;
 
-  terminalProcess = spawn(
-    "powershell.exe",
-    ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass"],
-    {
-      cwd: os.homedir(),
-      env: { ...process.env, TERM: "xterm-256color" },
-      windowsHide: true
-    }
-  );
+  terminalProcess = spawn("cmd.exe", ["/D", "/Q", "/K", "chcp 65001>nul"], {
+    cwd: os.homedir(),
+    env: { ...process.env },
+    windowsHide: true
+  });
 
   terminalProcess.stdout.on("data", (data) => sendToRenderer("terminal:data", data.toString()));
   terminalProcess.stderr.on("data", (data) => sendToRenderer("terminal:data", data.toString()));
   terminalProcess.on("exit", (code) => {
     terminalProcess = null;
-    sendToRenderer("terminal:data", `\r\n[PowerShell 已退出，代码 ${code ?? "未知"}]\r\n`);
+    sendToRenderer("terminal:data", `\r\n[命令提示符已退出，代码 ${code ?? "未知"}]\r\n`);
   });
   terminalProcess.on("error", (error) => {
-    sendToRenderer("terminal:data", `\r\n[无法启动 PowerShell: ${error.message}]\r\n`);
+    sendToRenderer("terminal:data", `\r\n[无法启动命令提示符: ${error.message}]\r\n`);
   });
 }
 
@@ -122,21 +119,38 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
       continue;
     }
     try {
-      const extension = await session.defaultSession.loadExtension(extensionPath, {
+      const extension = await session.defaultSession.extensions.loadExtension(extensionPath, {
         allowFileAccess: true
       });
       results.push({
         ...entry,
         ok: true,
         name: extension.name,
+        version: extension.version,
         path: extensionPath,
-        message: "已加载"
+        message: "已成功启用"
       });
     } catch (error) {
       results.push({ ...entry, ok: false, path: extensionPath, message: error.message });
     }
   }
   return results;
+}
+
+function installEmbedHeaderFilter() {
+  session.defaultSession.webRequest.onHeadersReceived(
+    { urls: ["http://*/*", "https://*/*"], types: ["subFrame"] },
+    (details, callback) => {
+      const responseHeaders = { ...details.responseHeaders };
+      for (const name of Object.keys(responseHeaders)) {
+        const normalized = name.toLowerCase();
+        if (normalized === "x-frame-options" || normalized === "content-security-policy") {
+          delete responseHeaders[name];
+        }
+      }
+      callback({ cancel: false, responseHeaders });
+    }
+  );
 }
 
 function registerIpc() {
@@ -146,7 +160,10 @@ function registerIpc() {
     terminalProcess?.stdin.write(data);
   });
 
-  ipcMain.handle("extensions:get", () => readExtensionConfig());
+  ipcMain.handle("extensions:get", () => ({
+    entries: readExtensionConfig(),
+    results: extensionResults
+  }));
   ipcMain.handle("extensions:save", async (_event, entries) => {
     const safeEntries = Array.isArray(entries)
       ? entries.map(({ id = "", path: extensionPath = "", enabled = true }) => ({
@@ -157,12 +174,14 @@ function registerIpc() {
       : [];
     fs.mkdirSync(path.dirname(extensionConfigPath()), { recursive: true });
     fs.writeFileSync(extensionConfigPath(), JSON.stringify(safeEntries, null, 2), "utf8");
-    return loadConfiguredExtensions(safeEntries);
+    extensionResults = await loadConfiguredExtensions(safeEntries);
+    return extensionResults;
   });
 }
 
 app.whenReady().then(async () => {
   registerIpc();
+  installEmbedHeaderFilter();
 
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
@@ -173,7 +192,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  await loadConfiguredExtensions();
+  extensionResults = await loadConfiguredExtensions();
   createWindow();
 
   app.on("activate", () => {

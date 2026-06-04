@@ -61,12 +61,12 @@
 
         <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
 
-        <section id="terminal-panel" class="terminal-panel" aria-label="PowerShell 终端">
+        <section id="terminal-panel" class="terminal-panel" aria-label="命令提示符终端">
           <div id="terminal-resizer" class="terminal-resizer" title="拖动调整终端高度"></div>
           <header class="terminal-header">
             <div>
               <span class="terminal-indicator"></span>
-              <strong>PowerShell</strong>
+              <strong>命令提示符 (CMD)</strong>
               <span>本地会话</span>
             </div>
             <button id="terminal-close" class="icon-button" type="button" aria-label="关闭终端">×</button>
@@ -96,6 +96,8 @@
         </label>
         <div class="modal-actions">
           <button id="delete-tab-button" class="danger-button" type="button">删除标签</button>
+          <button id="move-up-tab-button" class="secondary-button" type="button">↑ 上移</button>
+          <button id="move-down-tab-button" class="secondary-button" type="button">↓ 下移</button>
           <span class="action-spacer"></span>
           <button class="secondary-button dialog-close" type="button">取消</button>
           <button class="primary-button" type="submit">保存标签</button>
