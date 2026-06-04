@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src https: http:;"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: chrome-extension:; frame-src https: http: chrome-extension:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>个人工作台</title>
@@ -42,6 +42,12 @@
 
       <main class="workspace">
         <header class="topbar">
+          <button id="sidebar-toggle" class="icon-button sidebar-toggle-button" type="button" aria-label="切换侧边栏" title="切换侧边栏" aria-expanded="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+          </button>
           <div class="page-identity">
             <span class="eyebrow">正在浏览</span>
             <strong id="active-title">评估</strong>
@@ -51,12 +57,20 @@
             <button id="forward-button" class="icon-button" type="button" aria-label="前进" title="前进">→</button>
             <button id="reload-button" class="icon-button" type="button" aria-label="刷新" title="刷新">↻</button>
             <input id="address-input" type="url" aria-label="网址" />
-            <button id="go-button" class="go-button" type="button">打开</button>
+            <button id="go-button" class="go-button" type="button" aria-label="打开" title="打开">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </button>
           </div>
-          <button id="terminal-toggle" class="terminal-toggle" type="button" aria-expanded="false">
-            <span>&gt;_</span>
-            终端
-          </button>
+          <div class="topbar-actions">
+            <div id="extensions-bar" class="extensions-bar" aria-label="扩展工具栏"></div>
+            <button id="terminal-toggle" class="terminal-toggle" type="button" aria-expanded="false">
+              <span>&gt;_</span>
+              终端
+            </button>
+          </div>
         </header>
 
         <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
@@ -123,6 +137,10 @@
           <button class="primary-button" type="submit">保存并加载</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="extension-popover-dialog" class="extension-popover-dialog">
+      <webview id="extension-popover-webview" partition="persist:personal-workbench"></webview>
     </dialog>
 
     <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>

@@ -7,6 +7,11 @@ const os = require("node:os");
 let mainWindow;
 let terminalProcess;
 let extensionResults = [];
+const workbenchPartition = "persist:personal-workbench";
+
+function workbenchSession() {
+  return session.fromPartition(workbenchPartition);
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -110,6 +115,21 @@ function resolveExtensionPath(entry) {
   return null;
 }
 
+function readExtensionIcon(extensionPath, iconPath) {
+  if (!iconPath) return "";
+  const fullPath = path.resolve(extensionPath, iconPath);
+  if (!fullPath.startsWith(`${path.resolve(extensionPath)}${path.sep}`) || !fs.existsSync(fullPath)) return "";
+  const mimeType = {
+    ".gif": "image/gif",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp"
+  }[path.extname(fullPath).toLowerCase()];
+  return mimeType ? `data:${mimeType};base64,${fs.readFileSync(fullPath).toString("base64")}` : "";
+}
+
 async function loadConfiguredExtensions(entries = readExtensionConfig()) {
   const results = [];
   for (const entry of entries.filter((item) => item && item.enabled !== false)) {
@@ -119,15 +139,28 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
       continue;
     }
     try {
-      const extension = await session.defaultSession.extensions.loadExtension(extensionPath, {
+      const manifestPath = path.join(extensionPath, "manifest.json");
+      const manifest = fs.existsSync(manifestPath)
+        ? JSON.parse(fs.readFileSync(manifestPath, "utf8"))
+        : {};
+      const action = manifest.action || manifest.browser_action || {};
+      const defaultIcon = typeof action.default_icon === "string"
+        ? action.default_icon
+        : action.default_icon?.["16"] || action.default_icon?.["32"] || manifest.icons?.["16"] || manifest.icons?.["32"] || "";
+
+      const extension = await workbenchSession().extensions.loadExtension(extensionPath, {
         allowFileAccess: true
       });
       results.push({
         ...entry,
+        id: extension.id,
         ok: true,
         name: extension.name,
         version: extension.version,
         path: extensionPath,
+        popupPage: action.default_popup || manifest.side_panel?.default_path || manifest.options_page || manifest.options_ui?.page || "",
+        defaultIcon,
+        iconDataUrl: readExtensionIcon(extensionPath, defaultIcon),
         message: "已成功启用"
       });
     } catch (error) {
@@ -138,7 +171,7 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
 }
 
 function installEmbedHeaderFilter() {
-  session.defaultSession.webRequest.onHeadersReceived(
+  workbenchSession().webRequest.onHeadersReceived(
     { urls: ["http://*/*", "https://*/*"], types: ["subFrame"] },
     (details, callback) => {
       const responseHeaders = { ...details.responseHeaders };

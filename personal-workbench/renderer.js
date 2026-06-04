@@ -3,11 +3,14 @@ const DEFAULT_TABS = [
 ];
 
 const storageKey = "personal_workbench_tabs";
+const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
 let tabs = readTabs();
 let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
 let terminal;
 let fitAddon;
 let currentLine = "";
+let pointerDrag = null;
+let suppressTabClickUntil = 0;
 
 const elements = {
   tabList: document.querySelector("#tab-list"),
@@ -19,7 +22,11 @@ const elements = {
   settingsDialog: document.querySelector("#settings-dialog"),
   extensionList: document.querySelector("#extension-list"),
   terminalPanel: document.querySelector("#terminal-panel"),
-  terminalToggle: document.querySelector("#terminal-toggle")
+  terminalToggle: document.querySelector("#terminal-toggle"),
+  appShell: document.querySelector(".app-shell"),
+  extensionsBar: document.querySelector("#extensions-bar"),
+  extensionPopover: document.querySelector("#extension-popover-dialog"),
+  extensionPopoverWebview: document.querySelector("#extension-popover-webview")
 };
 
 function readTabs() {
@@ -59,8 +66,14 @@ function renderTabs() {
       </button>
       <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
     `;
-    item.querySelector(".tab-main").addEventListener("click", () => activateTab(tab.id));
+    item.querySelector(".tab-main").addEventListener("click", () => {
+      if (Date.now() >= suppressTabClickUntil) activateTab(tab.id);
+    });
     item.querySelector(".tab-menu").addEventListener("click", () => openTabDialog(tab));
+    item.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || event.target.closest(".tab-menu")) return;
+      pointerDrag = { id: tab.id, startX: event.clientX, startY: event.clientY, active: false };
+    });
     elements.tabList.append(item);
 
     if (!document.querySelector(`webview[data-id="${tab.id}"]`)) {
@@ -73,6 +86,20 @@ function renderTabs() {
   });
 
   activateTab(tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0].id);
+}
+
+function clearDragState() {
+  document.querySelectorAll(".tab-item").forEach((item) => item.classList.remove("dragging", "drag-over"));
+}
+
+function reorderTab(draggedId, targetId) {
+  const draggedIndex = tabs.findIndex((tab) => tab.id === draggedId);
+  const targetIndex = tabs.findIndex((tab) => tab.id === targetId);
+  if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return false;
+  const [draggedTab] = tabs.splice(draggedIndex, 1);
+  tabs.splice(targetIndex, 0, draggedTab);
+  saveTabs();
+  return true;
 }
 
 function createWebview(tab) {
@@ -229,6 +256,7 @@ async function openSettings() {
   if (entries.length) entries.forEach(extensionRow);
   else extensionRow();
   renderExtensionResults(results);
+  renderExtensionsInTopbar(results);
   elements.settingsDialog.showModal();
 }
 
@@ -245,6 +273,46 @@ function renderExtensionResults(results) {
     : "<span class=\"extension-empty\">尚未加载扩展。</span>";
 }
 
+function renderExtensionsInTopbar(results) {
+  elements.extensionsBar.replaceChildren();
+  for (const extension of results.filter((result) => result.ok && result.popupPage)) {
+    const button = document.createElement("button");
+    button.className = "icon-button extension-trigger-button";
+    button.type = "button";
+    button.title = extension.name;
+    button.setAttribute("aria-label", `打开扩展 ${extension.name}`);
+
+    if (extension.iconDataUrl) {
+      const image = document.createElement("img");
+      image.src = extension.iconDataUrl;
+      image.alt = "";
+      button.append(image);
+    } else {
+      const initial = document.createElement("span");
+      initial.textContent = extension.name?.[0] || "E";
+      button.append(initial);
+    }
+
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const popupUrl = `chrome-extension://${extension.id}/${extension.popupPage.replace(/^\/+/, "")}`;
+      if (elements.extensionPopover.open && elements.extensionPopoverWebview.src === popupUrl) {
+        elements.extensionPopover.close();
+        return;
+      }
+      elements.extensionPopoverWebview.src = popupUrl;
+      elements.extensionPopover.showModal();
+    });
+    elements.extensionsBar.append(button);
+  }
+}
+
+function setSidebarCollapsed(collapsed) {
+  elements.appShell.classList.toggle("sidebar-collapsed", collapsed);
+  document.querySelector("#sidebar-toggle").setAttribute("aria-expanded", String(!collapsed));
+  localStorage.setItem(sidebarStorageKey, String(collapsed));
+}
+
 function moveTab(direction) {
   const id = document.querySelector("#tab-id").value;
   const index = tabs.findIndex((tab) => tab.id === id);
@@ -259,6 +327,9 @@ function moveTab(direction) {
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
 document.querySelector("#settings-button").addEventListener("click", openSettings);
+document.querySelector("#sidebar-toggle").addEventListener("click", () => {
+  setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
+});
 document.querySelector("#go-button").addEventListener("click", navigateToAddress);
 elements.addressInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") navigateToAddress();
@@ -320,6 +391,7 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
   })).filter((entry) => entry.id || entry.path);
   const results = await window.workbench.saveExtensions(entries);
   renderExtensionResults(results);
+  renderExtensionsInTopbar(results);
 });
 
 const resizer = document.querySelector("#terminal-resizer");
@@ -342,5 +414,28 @@ resizer.addEventListener("pointerdown", (event) => {
 });
 
 window.addEventListener("resize", () => fitAddon?.fit());
+elements.extensionPopover.addEventListener("click", (event) => {
+  if (event.target === elements.extensionPopover) elements.extensionPopover.close();
+});
+document.addEventListener("pointermove", (event) => {
+  if (!pointerDrag) return;
+  if (!pointerDrag.active && Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
+  pointerDrag.active = true;
+  document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`)?.classList.add("dragging");
+  document.querySelectorAll(".tab-item.drag-over").forEach((item) => item.classList.remove("drag-over"));
+  document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.classList.add("drag-over");
+});
+document.addEventListener("pointerup", (event) => {
+  if (!pointerDrag) return;
+  if (pointerDrag.active) {
+    const targetId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.dataset.id;
+    if (targetId && reorderTab(pointerDrag.id, targetId)) renderTabs();
+    suppressTabClickUntil = Date.now() + 250;
+  }
+  pointerDrag = null;
+  clearDragState();
+});
 initTerminal();
 renderTabs();
+setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
+window.workbench.getExtensions().then(({ results }) => renderExtensionsInTopbar(results));
