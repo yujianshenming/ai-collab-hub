@@ -157,6 +157,7 @@ function createTabViewport(tab) {
   `;
   extPanel.querySelector(".tab-extension-close").addEventListener("click", () => {
     extPanel.classList.remove("open");
+    extPanel.style.removeProperty("--tab-ext-width");
     const extWebview = extPanel.querySelector("webview");
     if (extWebview) extWebview.src = "about:blank";
   });
@@ -441,6 +442,7 @@ function toggleTabExtension(tabId, name, url) {
   if (isOpen) {
     // Close it
     extPanel.classList.remove("open");
+    extPanel.style.removeProperty("--tab-ext-width");
     if (existingWebview) existingWebview.src = "about:blank";
   } else {
     // Open it
