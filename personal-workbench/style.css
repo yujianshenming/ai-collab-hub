@@ -139,14 +139,30 @@ button { cursor: pointer; }
   flex-direction: column;
   background: var(--bg-panel);
   transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1), border-width 220ms ease;
-  overflow: hidden;
+  overflow: visible;
   flex-shrink: 0;
   z-index: 5;
+  position: relative;
 }
 .tab-extension-panel.open {
-  width: 320px;
+  width: var(--tab-ext-width, 320px);
   border-left-width: 1px;
   box-shadow: -8px 0 25px rgba(15, 23, 42, 0.04);
+}
+.tab-extension-resizer {
+  width: 6px;
+  cursor: ew-resize;
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  background: transparent;
+  transition: background 150ms ease;
+}
+.tab-extension-resizer:hover, .tab-extension-panel.resizing .tab-extension-resizer {
+  background: rgba(59, 130, 246, 0.2) !important;
+  border-left: 2px solid var(--accent-color);
 }
 .tab-extension-header {
   display: flex;

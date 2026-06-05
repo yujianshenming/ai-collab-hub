@@ -148,6 +148,7 @@ function createTabViewport(tab) {
   const extPanel = document.createElement("div");
   extPanel.className = "tab-extension-panel";
   extPanel.innerHTML = `
+    <div class="tab-extension-resizer" title="拖动调整扩展宽度"></div>
     <div class="tab-extension-header">
       <span class="tab-extension-title">扩展程序</span>
       <button class="icon-button tab-extension-close" type="button" aria-label="关闭扩展">×</button>
@@ -158,6 +159,41 @@ function createTabViewport(tab) {
     extPanel.classList.remove("open");
     const extWebview = extPanel.querySelector("webview");
     if (extWebview) extWebview.src = "about:blank";
+  });
+
+  const resizer = extPanel.querySelector(".tab-extension-resizer");
+  resizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizer.setPointerCapture(event.pointerId);
+    elements.appShell.classList.add("resizing");
+    extPanel.classList.add("resizing");
+    setWebviewPointerEvents(false);
+    
+    const startX = event.clientX;
+    const startWidth = extPanel.getBoundingClientRect().width || 320;
+    
+    const onMove = (moveEvent) => {
+      const deltaX = startX - moveEvent.clientX;
+      const width = Math.max(240, Math.min(window.innerWidth * 0.6, startWidth + deltaX));
+      extPanel.style.setProperty("--tab-ext-width", `${width}px`);
+    };
+    
+    const onUp = () => {
+      if (resizer.hasPointerCapture(event.pointerId)) {
+        resizer.releasePointerCapture(event.pointerId);
+      }
+      elements.appShell.classList.remove("resizing");
+      extPanel.classList.remove("resizing");
+      setWebviewPointerEvents(true);
+      resizer.removeEventListener("pointermove", onMove);
+      resizer.removeEventListener("pointerup", onUp);
+      resizer.removeEventListener("pointercancel", onUp);
+    };
+    
+    resizer.addEventListener("pointermove", onMove);
+    resizer.addEventListener("pointerup", onUp);
+    resizer.addEventListener("pointercancel", onUp);
   });
 
   viewport.append(webview);
@@ -713,10 +749,28 @@ window.addEventListener("resize", () => {
 });
 document.addEventListener("pointermove", (event) => {
   if (!pointerDrag) return;
-  if (!pointerDrag.active && Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
   
-  pointerDrag.active = true;
-  const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+  if (!pointerDrag.active) {
+    if (Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
+    
+    // Initialize drag parameters on first movement
+    pointerDrag.active = true;
+    const items = [...elements.tabList.querySelectorAll(".tab-item")];
+    const dragItem = elements.tabList.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+    const draggedIndex = items.indexOf(dragItem);
+    const itemRects = items.map(item => item.getBoundingClientRect());
+    const itemHeights = itemRects.map(r => r.height);
+    const itemGaps = 4; // flex gap in stylesheet
+    const shiftY = (itemHeights[draggedIndex] || 44) + itemGaps;
+    
+    pointerDrag.items = items;
+    pointerDrag.draggedIndex = draggedIndex;
+    pointerDrag.itemRects = itemRects;
+    pointerDrag.shiftY = shiftY;
+    pointerDrag.insertIndex = draggedIndex;
+  }
+  
+  const dragItem = pointerDrag.items[pointerDrag.draggedIndex];
   if (dragItem) {
     dragItem.classList.add("dragging");
     // Translate the item relative to mouse movement delta
@@ -727,22 +781,41 @@ document.addEventListener("pointermove", (event) => {
   const overlay = document.querySelector("#split-drag-overlay");
   
   if (isRightSide) {
-    // Show split overlay, hide swap highlights
+    // Show split overlay, clear shifts
     overlay?.classList.add("show");
-    document.querySelectorAll(".tab-item").forEach((item) => item.classList.remove("swap-target"));
+    pointerDrag.items.forEach((item) => {
+      if (item.dataset.id !== pointerDrag.id) {
+        item.style.transform = "";
+      }
+    });
   } else {
     overlay?.classList.remove("show");
     
-    // Find hovered sidebar tab using bounding box coordinates
-    const items = document.querySelectorAll(".tab-item");
-    for (const item of items) {
+    // Calculate current insertion index
+    let insertIndex = 0;
+    for (let i = 0; i < pointerDrag.itemRects.length; i++) {
+      const rect = pointerDrag.itemRects[i];
+      const middle = rect.top + rect.height / 2;
+      if (event.clientY > middle) {
+        insertIndex = i;
+      }
+    }
+    pointerDrag.insertIndex = insertIndex;
+    
+    // Apply smooth shift translations
+    for (let i = 0; i < pointerDrag.items.length; i++) {
+      const item = pointerDrag.items[i];
       if (item.dataset.id === pointerDrag.id) continue;
-      const rect = item.getBoundingClientRect();
-      if (event.clientX >= rect.left && event.clientX <= rect.right &&
-          event.clientY >= rect.top && event.clientY <= rect.bottom) {
-        item.classList.add("swap-target");
+      
+      if (pointerDrag.draggedIndex < i && i <= insertIndex) {
+        // Shift UP
+        item.style.transform = `translateY(-${pointerDrag.shiftY}px)`;
+      } else if (insertIndex <= i && i < pointerDrag.draggedIndex) {
+        // Shift DOWN
+        item.style.transform = `translateY(${pointerDrag.shiftY}px)`;
       } else {
-        item.classList.remove("swap-target");
+        // Reset
+        item.style.transform = "";
       }
     }
   }
@@ -760,9 +833,12 @@ document.addEventListener("pointerup", (event) => {
       if (isRightSide) {
         toggleRightSidebar(true, pointerDrag.id);
       } else {
-        const targetItem = document.querySelector(".tab-item.swap-target");
-        const targetId = targetItem?.dataset.id;
-        if (targetId && swapTabs(pointerDrag.id, targetId)) {
+        const draggedIndex = pointerDrag.draggedIndex;
+        const insertIndex = pointerDrag.insertIndex;
+        if (typeof draggedIndex === "number" && typeof insertIndex === "number" && draggedIndex !== insertIndex) {
+          const [movedTab] = tabs.splice(draggedIndex, 1);
+          tabs.splice(insertIndex, 0, movedTab);
+          saveTabs();
           renderTabs();
         }
       }
