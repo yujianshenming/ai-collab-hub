@@ -1,7 +1,7 @@
-# Handoff: Antigravity -> Codex
+# Handoff: Antigravity -> Codex (第2轮 - 菜单栏原生化与任务系统重构)
 
 ## Date
-2026-06-05 15:53
+2026-06-05 16:34
 
 ## From
 Antigravity
@@ -10,33 +10,28 @@ Antigravity
 Codex
 
 ## Summary
-制定了定制工作台“测试-评估-分析”自动化流水线和顶部栏本周任务列表的设计方案，现将编码实现和集成验证交给 Codex 执行。
+移交最新的个人工作台重构方案：任务和终端切换功能收进左上角原生菜单；任务管理弹窗修改为列表优先（拆分为列表视图和新增/编辑表单视图），更新五种具体任务类型并移除关联文档路径。
 
 ## Current State
-1. 梳理了自动化拦截与注入的完整流程，包括：
-   - 主进程拦截 `will-download`，静默归类保存文件至 `temp/chats/` 和 `temp/reports/`。
-   - WebView 启用（`webviewTag: true`）与 X-Frame-Options 解除。
-   - WebView 拦截 `select-file-dialog` 事件，实现静默注入上传本地文件路径，彻底避免文件选择框。
-   - WebView 注入脚本（`executeJavaScript`）自动点击、上传并提交。
-2. 设计了基于 Git 共享的任务列表系统，并在本地初始化了数据结构 [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json)。
-3. 在本地已切出 `codex/personal-workbench` 开发分支。
+1. 已在协作仓库中起草了最新的第二轮设计方案 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
+2. 先前制定的后台一键 Git 同步、可视化进度条等后续扩展建议已全部舍弃，不予采纳。
+3. 修正了任务数据格式，初始化在 [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json) 中。
 
 ## Important Files
-- **[Plan Spec] [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)**: 详细实现规格与具体文件修改指引（包含 main.js, renderer.js, index.html, style.css）。
-- **[Tasks JSON] [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json)**: 用于存放本周任务，包含学校、课程、状态、负责人、关联文件路径等。
-- **[Workbench Codebase] [personal-workbench](file:///C:/Users/24391/.gemini/antigravity/scratch/personal-workbench)**: 包含 Electron 运行的主进程、渲染进程和样式文件。
+- **[Plan Spec] [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)**: 包含了 `main.js`、`index.html`、`renderer.js` 和 `style.css` 的具体修改规格。
+- **[Tasks JSON] [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json)**: 更新后的任务数据底板。
 
 ## Decisions Made
-- **WebView 替换 IFrame**：为使用 `select-file-dialog` 和 `executeJavaScript` 绕过沙箱拦截上传文件，所有工作台面板必须用 `<webview>` 代替 `<iframe>`。
-- **任务 Git 共享**：任务列表不仅存在 `localStorage`，而必须持久化在协作仓库的 `tasks/weekly_tasks.json` 中，以便多 AI 跨电脑协作。
-- **顶部栏入口**：为不挤占侧边栏空间，任务列表界面通过顶部工具栏的新增按钮触发模态框显示。
-
-## Open Questions
-- 各大网页（测试页面、评估页面、Hermes页面）的具体 DOM 结构，如输入框、文件上传 input、提交按钮的 CSS 选择器（selector），Codex 在编写时需要通过运行程序、打开开发者工具（DevTools）或注入调试脚本来确认，以确保 CSS 选择器 100% 正确。
+- **原生菜单栏实现**：不再使用 HTML 绘制的顶部栏 Tasks 和 >_ 按钮，而是完全通过 Electron 提供的应用级 Menu API，将操作选项融入 Windows 窗口左上角的菜单系统（工作台 -> 本周任务/本地终端/扩展设置），使用原生快捷键触发。
+- **列表优先的双视图弹窗**：任务管理器弹窗初次打开时只渲染任务表格（如果无数据展示“暂无任务”的提示）。点击最下方的“添加任务”或操作列的“编辑”后，弹窗内容平滑切换为表单输入界面；保存或取消后再切换回列表展示。
+- **重新界定任务类型**：移除 docPath，只维护 5 种业务类型的映射（能力训练搭建、能力训练修改、能力训练验收、作业批阅搭建、作业批阅验收）。
 
 ## Requested Next Action for Codex
 请 Codex 按照以下步骤进行：
-1. 检出本地的 `codex/personal-workbench` 分支，并将当前方案提交推送到 GitHub。
-2. 根据 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 指引，开始对 [personal-workbench](file:///C:/Users/24391/.gemini/antigravity/scratch/personal-workbench) 进行代码修改。
-3. 修改完成后，启动 Electron 实例进行实际测试（可结合内置终端），确保拦截下载、静默上传和自动分析流水线全部打通。
-4. 验证任务系统的增删改查及 IPC 读写 `weekly_tasks.json` 正确无误。
+1. 本地拉取本分支（`codex/personal-workbench`）的最新更改。
+2. 按照 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 指引对 [personal-workbench](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench) 下的文件进行重构。
+3. 完成重构后，再次启动工作台，并手动测试：
+   - 验证原生菜单栏及其快捷键（Ctrl+T / Ctrl+`）可正常打开任务管理器和切换终端。
+   - 验证打开任务弹窗时只展示任务列表，只有点击“添加任务”才渲染表单，且操作流程闭环。
+   - 验证任务类型与 weekly_tasks.json 读写无误。
+4. 将最新的代码提交并推送到 GitHub 仓库。
