@@ -13,6 +13,8 @@ let extensionResults = [];
 let localServer;
 const workbenchPartition = "persist:personal-workbench";
 const localServerPort = 38924;
+const downloadRoot = path.join(__dirname, "temp");
+const weeklyTasksPath = path.join(__dirname, "..", "tasks", "weekly_tasks.json");
 
 function workbenchSession() {
   return session.fromPartition(workbenchPartition);
@@ -142,6 +144,66 @@ function stopTerminal() {
     terminalProcess.kill();
   }
   terminalProcess = null;
+}
+
+function ensureJsonArrayFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "[]", "utf8");
+  }
+}
+
+function readWeeklyTasks() {
+  ensureJsonArrayFile(weeklyTasksPath);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(weeklyTasksPath, "utf8"));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeWeeklyTasks(tasks) {
+  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  fs.mkdirSync(path.dirname(weeklyTasksPath), { recursive: true });
+  fs.writeFileSync(weeklyTasksPath, JSON.stringify(safeTasks, null, 2), "utf8");
+  return safeTasks;
+}
+
+function safeDownloadName(filename) {
+  const fallback = "download.bin";
+  return path.basename(filename || fallback).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") || fallback;
+}
+
+function classifyDownload(filename) {
+  const lowerName = filename.toLowerCase();
+  if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
+    return { type: "chat", folder: "chats" };
+  }
+  if (/\.(pdf|html?)$/i.test(filename) || lowerName.includes("report") || lowerName.includes("eval")) {
+    return { type: "report", folder: "reports" };
+  }
+  return { type: "generic", folder: "downloads" };
+}
+
+function installDownloadHandler() {
+  workbenchSession().on("will-download", (_event, item) => {
+    const filename = safeDownloadName(item.getFilename());
+    const classification = classifyDownload(filename);
+    const saveDir = path.join(downloadRoot, classification.folder);
+    fs.mkdirSync(saveDir, { recursive: true });
+    const savePath = path.join(saveDir, `${Date.now()}_${filename}`);
+    item.setSavePath(savePath);
+
+    item.once("done", (_doneEvent, state) => {
+      if (state !== "completed") return;
+      sendToRenderer("download-completed", {
+        type: classification.type,
+        path: savePath,
+        filename
+      });
+    });
+  });
 }
 
 function extensionConfigPath() {
@@ -280,6 +342,8 @@ function registerIpc() {
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
     return getWorkbenchCookies(details);
   });
+  ipcMain.handle("tasks:read-weekly", () => readWeeklyTasks());
+  ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
 
   ipcMain.handle("extensions:get", () => ({
     entries: readExtensionConfig(),
@@ -312,6 +376,7 @@ function registerIpc() {
 app.whenReady().then(async () => {
   registerIpc();
   installEmbedHeaderFilter();
+  installDownloadHandler();
 
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {

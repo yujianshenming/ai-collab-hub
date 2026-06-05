@@ -10,6 +10,8 @@ let splitTabId = null;
 let terminal;
 let fitAddon;
 let pointerDrag = null;
+let weeklyTasks = [];
+let pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", docPath: "", uploadQueue: [] };
 
 const elements = {
   tabList: document.querySelector("#tab-list"),
@@ -27,7 +29,11 @@ const elements = {
   rightSidebar: document.querySelector("#right-sidebar"),
   rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
-  rightSidebarClose: document.querySelector("#right-sidebar-close")
+  rightSidebarClose: document.querySelector("#right-sidebar-close"),
+  taskToggle: document.querySelector("#btn-toggle-tasks"),
+  taskModal: document.querySelector("#task-manager-modal"),
+  taskForm: document.querySelector("#task-form"),
+  taskTableBody: document.querySelector("#task-table-body")
 };
 
 function readTabs() {
@@ -128,6 +134,7 @@ function createTabViewport(tab) {
   webview.src = tab.url;
   webview.partition = "persist:personal-workbench";
   webview.setAttribute("allowpopups", "false");
+  webview.setAttribute("webpreferences", "contextIsolation=no");
 
   webview.addEventListener("did-start-loading", () => {
     if (tab.id === activeTabId) document.querySelector("#reload-button").textContent = "×";
@@ -141,6 +148,7 @@ function createTabViewport(tab) {
   webview.addEventListener("did-navigate", () => updateAddressFromWebview(webview));
   webview.addEventListener("did-navigate-in-page", () => updateAddressFromWebview(webview));
   webview.addEventListener("dom-ready", () => fitWebviewZoom());
+  setupWebviewUploadInterceptor(webview);
   webview.addEventListener("page-title-updated", (event) => {
     if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
   });
@@ -366,13 +374,261 @@ function extensionRow(entry = {}) {
 }
 
 function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (character) => ({
+  return String(value || "").replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
     '"': "&quot;",
     "'": "&#039;"
   })[character]);
+}
+
+function taskTypeLabel(type) {
+  return {
+    "prompt-design": "提示词设计",
+    "simulation-test": "仿真测试",
+    evaluation: "智能评估",
+    analysis: "优化分析"
+  }[type] || type || "未分类";
+}
+
+function taskStatusLabel(status) {
+  return {
+    pending: "待处理",
+    running: "进行中",
+    evaluating: "评估中",
+    completed: "已完成"
+  }[status] || "待处理";
+}
+
+function resetTaskForm() {
+  elements.taskForm?.reset();
+  document.querySelector("#task-id").value = "";
+  document.querySelector("#task-quantity").value = "1";
+}
+
+async function persistWeeklyTasks() {
+  weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks);
+  renderWeeklyTasks();
+}
+
+async function loadWeeklyTasks() {
+  try {
+    weeklyTasks = await window.workbench.readWeeklyTasks();
+  } catch (error) {
+    console.error("读取任务列表失败:", error);
+    weeklyTasks = [];
+    showToast("读取任务列表失败", "error");
+  }
+  renderWeeklyTasks();
+}
+
+function renderWeeklyTasks() {
+  if (!elements.taskTableBody) return;
+  elements.taskTableBody.replaceChildren();
+
+  if (!weeklyTasks.length) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td class="task-empty" colspan="7">暂无任务，先添加一个本周目标。</td>`;
+    elements.taskTableBody.append(row);
+    return;
+  }
+
+  for (const task of weeklyTasks) {
+    const row = document.createElement("tr");
+    row.dataset.id = task.id;
+    row.innerHTML = `
+      <td>
+        <strong>${escapeHtml(task.school)}</strong>
+        <span>${escapeHtml(task.course)}</span>
+      </td>
+      <td>${escapeHtml(taskTypeLabel(task.taskType))}</td>
+      <td>${Number(task.quantity) || 1}</td>
+      <td><span class="task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span></td>
+      <td>${escapeHtml(task.owner)}</td>
+      <td><span class="task-path" title="${escapeHtml(task.docPath)}">${escapeHtml(task.docPath || "-")}</span></td>
+      <td>
+        <div class="task-actions">
+          <button class="secondary-button task-run" type="button">执行</button>
+          <button class="secondary-button task-edit" type="button">编辑</button>
+          <button class="danger-button task-delete" type="button">删除</button>
+        </div>
+      </td>
+    `;
+    row.querySelector(".task-run").addEventListener("click", () => startTaskAutomation(task.id));
+    row.querySelector(".task-edit").addEventListener("click", () => editWeeklyTask(task.id));
+    row.querySelector(".task-delete").addEventListener("click", () => deleteWeeklyTask(task.id));
+    elements.taskTableBody.append(row);
+  }
+}
+
+function taskFromForm() {
+  const id = document.querySelector("#task-id").value || `task-${Date.now()}`;
+  return {
+    id,
+    school: document.querySelector("#task-school").value.trim(),
+    course: document.querySelector("#task-course").value.trim(),
+    taskType: document.querySelector("#task-type").value,
+    quantity: Math.max(1, Number(document.querySelector("#task-quantity").value) || 1),
+    status: weeklyTasks.find((task) => task.id === id)?.status || "pending",
+    owner: document.querySelector("#task-owner").value.trim(),
+    docPath: document.querySelector("#task-doc-path").value.trim(),
+    chatLogPath: weeklyTasks.find((task) => task.id === id)?.chatLogPath || "",
+    reportPath: weeklyTasks.find((task) => task.id === id)?.reportPath || ""
+  };
+}
+
+async function upsertWeeklyTask(task) {
+  const index = weeklyTasks.findIndex((candidate) => candidate.id === task.id);
+  if (index >= 0) weeklyTasks[index] = task;
+  else weeklyTasks.push(task);
+  await persistWeeklyTasks();
+}
+
+function editWeeklyTask(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return;
+  document.querySelector("#task-id").value = task.id;
+  document.querySelector("#task-school").value = task.school || "";
+  document.querySelector("#task-course").value = task.course || "";
+  document.querySelector("#task-type").value = task.taskType || "simulation-test";
+  document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
+  document.querySelector("#task-owner").value = task.owner || "";
+  document.querySelector("#task-doc-path").value = task.docPath || "";
+}
+
+async function deleteWeeklyTask(id) {
+  weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
+  if (pipelineState.taskId === id) pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", docPath: "", uploadQueue: [] };
+  await persistWeeklyTasks();
+}
+
+async function updateTaskFields(id, fields) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return null;
+  Object.assign(task, fields);
+  await persistWeeklyTasks();
+  return task;
+}
+
+function setupWebviewUploadInterceptor(webview) {
+  webview.addEventListener("select-file-dialog", (event) => {
+    if (!pipelineState.active || !pipelineState.uploadQueue.length) return;
+    const nextPath = pipelineState.uploadQueue.shift();
+    if (!nextPath) return;
+    event.preventDefault();
+    event.callback([nextPath]);
+  });
+}
+
+function findTabByUrlPart(part) {
+  return tabs.find((tab) => tab.url.toLowerCase().includes(part));
+}
+
+function activateOrCreateTab(id, name, url) {
+  const existing = tabs.find((tab) => tab.id === id) || tabs.find((tab) => tab.url === url);
+  if (existing) {
+    activateTab(existing.id);
+    return;
+  }
+  tabs.push({ id, name, url });
+  saveTabs();
+  activeTabId = id;
+  renderTabs();
+}
+
+async function startTaskAutomation(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return;
+  pipelineState = {
+    active: true,
+    taskId: id,
+    step: "testing",
+    chatPath: task.chatLogPath || "",
+    reportPath: task.reportPath || "",
+    docPath: task.docPath || "",
+    uploadQueue: []
+  };
+  await updateTaskFields(id, { status: "running" });
+  elements.taskModal?.close();
+  showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
+}
+
+async function handleDownloadCompleted(download) {
+  if (!pipelineState.active || !pipelineState.taskId) return;
+
+  if (download.type === "chat") {
+    pipelineState.chatPath = download.path;
+    pipelineState.step = "evaluating";
+    await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path });
+    activateOrCreateTab("evaluation", "评估", "https://www.wl363eval.top/");
+    setTimeout(() => runEvaluationUpload(), 1200);
+    return;
+  }
+
+  if (download.type === "report") {
+    pipelineState.reportPath = download.path;
+    pipelineState.step = "analysis";
+    await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path });
+    runHermesPrompt();
+  }
+}
+
+function runEvaluationUpload() {
+  const webview = activeWebview();
+  if (!webview || !pipelineState.chatPath) return;
+  pipelineState.uploadQueue = [pipelineState.docPath, pipelineState.chatPath].filter(Boolean);
+  webview.executeJavaScript(`
+    (() => {
+      const inputs = [...document.querySelectorAll('input[type="file"]')];
+      inputs[0]?.click();
+      if (inputs[1]) setTimeout(() => inputs[1].click(), 500);
+      const submit = document.querySelector('button[type="submit"], input[type="submit"], .submit, .send-btn');
+      if (submit) setTimeout(() => submit.click(), inputs[1] ? 1100 : 600);
+      return { fileInputs: inputs.length, submitted: Boolean(submit) };
+    })();
+  `).then((result) => {
+    if (!result?.fileInputs) showToast("评估页没有检测到文件上传控件，请手动上传后继续。", "error");
+  }).catch((error) => {
+    console.error("自动上传评估文件失败:", error);
+    showToast("自动上传评估文件失败，请检查页面是否已加载完成。", "error");
+  });
+}
+
+function runHermesPrompt() {
+  const hermesTab = findTabByUrlPart("hermes");
+  if (!hermesTab) {
+    showToast("报告已记录。未找到 Hermes 标签页，请打开后粘贴自动分析提示。", "success");
+    return;
+  }
+  activateTab(hermesTab.id);
+  const promptText = [
+    "系统自动指令：请帮我分析以下测试与评估结果。",
+    `测试对话本地路径：${pipelineState.chatPath || ""}`,
+    `评估报告本地路径：${pipelineState.reportPath || ""}`,
+    "请根据上述文件内容诊断当前提示词表现，并给出具体迭代建议。"
+  ].join("\\n");
+  setTimeout(() => {
+    const webview = activeWebview();
+    webview?.executeJavaScript(`
+      (() => {
+        const text = ${JSON.stringify(promptText)};
+        const input = document.querySelector('textarea, [contenteditable="true"], #prompt-input');
+        if (!input) return false;
+        if (input.isContentEditable) input.textContent = text;
+        else input.value = text;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const send = document.querySelector('button[type="submit"], .send-btn, [aria-label*="send" i], [aria-label*="发送"]');
+        send?.click();
+        return true;
+      })();
+    `).then((ok) => {
+      if (!ok) showToast("Hermes 页面未检测到输入框，请手动粘贴分析提示。", "error");
+    }).catch((error) => {
+      console.error("Hermes 自动填充失败:", error);
+      showToast("Hermes 自动填充失败，请手动粘贴分析提示。", "error");
+    });
+  }, 900);
 }
 
 async function openSettings() {
@@ -513,6 +769,10 @@ function moveTab(direction) {
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
 document.querySelector("#settings-button").addEventListener("click", openSettings);
+elements.taskToggle?.addEventListener("click", async () => {
+  await loadWeeklyTasks();
+  elements.taskModal?.showModal();
+});
 document.querySelector("#sidebar-toggle").addEventListener("click", () => {
   setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
 });
@@ -597,6 +857,21 @@ elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(fa
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
+document.querySelectorAll(".task-close").forEach((button) => button.addEventListener("click", () => elements.taskModal?.close()));
+
+elements.taskForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const task = taskFromForm();
+  if (!task.school || !task.course) {
+    showToast("请填写学校和课程", "error");
+    return;
+  }
+  await upsertWeeklyTask(task);
+  resetTaskForm();
+  showToast("任务已保存", "success");
+});
+
+document.querySelector("#task-reset-button")?.addEventListener("click", resetTaskForm);
 
 elements.tabForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -872,4 +1147,6 @@ document.addEventListener("pointercancel", () => {
 initTerminal();
 renderTabs();
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
+loadWeeklyTasks();
+window.workbench.onDownloadCompleted(handleDownloadCompleted);
 window.workbench.getExtensions().then(({ results }) => renderExtensionsInTopbar(results));

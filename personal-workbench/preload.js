@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld("workbench", {
     return () => ipcRenderer.removeListener("terminal:data", listener);
   },
   updateActiveTabInfo: (info) => ipcRenderer.send("tab:active-update", info),
+  readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
+  writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
+  onDownloadCompleted: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("download-completed", listener);
+    return () => ipcRenderer.removeListener("download-completed", listener);
+  },
   getExtensions: () => ipcRenderer.invoke("extensions:get"),
   saveExtensions: (entries) => ipcRenderer.invoke("extensions:save", entries),
   refreshExtensions: () => ipcRenderer.invoke("extensions:refresh")
