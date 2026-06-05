@@ -367,6 +367,47 @@ document.querySelector("#reload-button").addEventListener("click", () => {
   if (!webview) return;
   webview.isLoading() ? webview.stop() : webview.reload();
 });
+
+document.querySelector("#get-task-id-button").addEventListener("click", () => {
+  const url = elements.addressInput.value || activeWebview()?.getURL?.() || "";
+  if (!url) {
+    showToast("当前没有打开的网页网址", "error");
+    return;
+  }
+  try {
+    const parsed = new URL(url);
+    const id = parsed.searchParams.get("trainTaskId") || parsed.searchParams.get("train_task_id");
+    if (id) {
+      navigator.clipboard.writeText(id).then(() => {
+        showToast(`已复制 trainTaskId: ${id}`, "success");
+      }).catch(() => {
+        showToast("复制到剪贴板失败，请重试", "error");
+      });
+    } else {
+      showToast("当前网址中未包含 trainTaskId 参数", "error");
+    }
+  } catch {
+    showToast("无法解析当前网址，请确认网址格式是否正确", "error");
+  }
+});
+
+function showToast(message, type = "success") {
+  let container = document.querySelector(".toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.className = "toast-container";
+    document.body.append(container);
+  }
+  const toast = document.createElement("div");
+  toast.className = `toast-message ${type}`;
+  toast.textContent = message;
+  container.append(toast);
+  setTimeout(() => toast.classList.add("show"), 10);
+  setTimeout(() => {
+    toast.classList.remove("show");
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
 elements.terminalToggle.addEventListener("click", () => toggleTerminal());
 document.querySelector("#terminal-close").addEventListener("click", () => toggleTerminal(false));
 elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
