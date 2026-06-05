@@ -1,231 +1,102 @@
-# 个人定制工作台缺陷审查与优化报告 (极客挑刺版)
+# 个人定制工作台缺陷审查与评估报告 (第 5 轮 - 挑刺版)
 
-本报告深入挖掘了当前 `codex/personal-workbench` 分支下的代码缺陷，并针对您的新需求（① 扩展程序右侧边栏弹性折叠；② 修复鼠标拖拽失效 Bug）给出了精确的技术改造指引。
+我已拉取并对 Codex 最新提交的代码（针对 `a9a1063` 提交）进行了深度审查与评估。
 
-请将本报告提供给 Codex，让其按照以下步骤进行彻底重构。
+本轮重构完成了**右侧扩展栏 (Right Sidebar) 联动伸缩**以及**全局指针捕获拖拽 (PointerCapture)** 逻辑，成功解决了拖拽排序被 webview 进程劫持卡死的底层 Bug。但在细节与体验方面，我依然挑出了以下三点明显的“刺”（缺陷），需要 Codex 进行最后一轮精细化修剪：
 
 ---
 
-## 一、 当前代码的硬伤与缺陷分析 (挑刺)
+## 一、 当前代码中发现的三个细节缺陷 (挑刺)
 
-### 1. 拖拽重排在 Webview 上失效的致命 Bug
+### 1. 地址栏缺少“搜索引擎跳转”能力（输入体验缺陷）
 * **缺陷表现**：
-  Codex 使用了 `pointerdown/move/up` 事件来实现侧边栏拖拽排序。但在 Electron 中，网页是通过独立的 `<webview>` 进程渲染的。当用户开始拖拽标签页时，一旦鼠标指针向右偏移移动到了 `<webview>` 区域，主窗口的 `pointermove` 侦听就会**瞬间被 webview 阻断并吞噬**，导致拖拽卡死、丢失或无法释放。
-* **技术根源**：
-  拖拽时未进行全局鼠标捕获，且 webview 的 `pointer-events` 未做临时屏蔽。
-* **整改方案**：
-  1. 在 `pointerdown` 触发时，对被拖拽的 `.tab-item` 显式调用 `item.setPointerCapture(event.pointerId)`，确保所有后续指针事件在全局（即使划过 webview）都强制发送给当前元素。
-  2. 拖拽开始时，将所有 `<webview>` 元素的 CSS 设置为 `pointer-events: none`，拖拽结束后恢复，防止 webview 吞噬鼠标拖拽轨迹。
-
-### 2. 终端调整大小时 Webview 阻挡拖拽
-* **缺陷表现**：
-  与拖拽排序同理，当用户按住终端面板上边缘的 `#terminal-resizer` 往上拖拽以改变终端高度时，一旦鼠标移动到上方 webview 区域，拖拽动作也会因为 webview 捕获指针事件而中断。
-* **整改方案**：
-  在 `#terminal-resizer` 的 `pointerdown` 事件中，对 resizer 自身调用 `setPointerCapture`，防止 webview 劫持高度拉伸手势。
-
----
-
-## 二、 核心重构设计方案
-
-### 1. 右侧扩展侧边栏 (Right Sidebar) 代替悬浮气泡
-* **目标**：
-  点击顶栏的扩展图标后，扩展不再以浮空弹窗形式显示，而是作为**右侧侧边栏**从窗口右侧展开，且**中间的网页主体部分会自动向左收缩并自适应宽度**。
-* **修改指引**：
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：删除原有的 `<dialog id="extension-popover-dialog">`，新增右侧边栏 `<aside id="right-sidebar">` 结构：
-    ```html
-    <!-- 放置在 </main> 之后，作为 .app-shell 的第三个直属子元素 -->
-    <aside id="right-sidebar" class="right-sidebar">
-      <header class="right-sidebar-header">
-        <strong id="right-sidebar-title">扩展程序</strong>
-        <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭侧边栏" title="关闭侧边栏">×</button>
-      </header>
-      <div class="right-sidebar-body">
-        <webview id="right-sidebar-webview" partition="persist:personal-workbench"></webview>
-      </div>
-    </aside>
-    ```
-  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：定义右侧边栏样式与动画，改写外层 `.app-shell` 布局使其支持三栏自适应：
-    ```css
-    :root {
-      /* ... 其他变量 ... */
-      --right-sidebar-width: 320px;
-    }
-    
-    /* 核心三栏布局 */
-    .app-shell {
-      display: grid;
-      grid-template-columns: var(--sidebar-width) 1fr 0px; /* 右侧栏默认宽度为 0 */
-      height: 100vh;
-      transition: grid-template-columns 220ms cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    
-    /* 各种折叠组合状态下的网格列宽定义 */
-    .app-shell.right-sidebar-open {
-      grid-template-columns: var(--sidebar-width) 1fr var(--right-sidebar-width);
-    }
-    .app-shell.sidebar-collapsed {
-      grid-template-columns: 0px 1fr 0px;
-    }
-    .app-shell.sidebar-collapsed.right-sidebar-open {
-      grid-template-columns: 0px 1fr var(--right-sidebar-width);
-    }
-    
-    /* 右侧栏样式 */
-    .right-sidebar {
-      display: flex;
-      flex-direction: column;
-      background: rgba(255, 255, 255, 0.96);
-      border-left: 1px solid var(--border-color);
-      height: 100vh;
-      min-width: 0;
-      overflow: hidden;
-      transition: opacity 220ms ease;
-      z-index: 3;
-    }
-    
-    .app-shell:not(.right-sidebar-open) .right-sidebar {
-      opacity: 0;
-      pointer-events: none;
-    }
-    
-    .right-sidebar-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      height: var(--topbar-height);
-      padding: 0 16px;
-      border-bottom: 1px solid var(--border-color);
-      flex: 0 0 var(--topbar-height);
-    }
-    
-    .right-sidebar-body {
-      flex: 1 1 auto;
-      min-height: 0;
-      position: relative;
-    }
-    
-    #right-sidebar-webview {
-      width: 100%;
-      height: 100%;
-      border: none;
-    }
-    ```
-  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：编写展开折叠控制逻辑：
-    ```javascript
-    // 增加 DOM 元素引用
-    elements.rightSidebar = document.querySelector("#right-sidebar");
-    elements.rightSidebarWebview = document.querySelector("#right-sidebar-webview");
-    elements.rightSidebarClose = document.querySelector("#right-sidebar-close");
-    elements.rightSidebarTitle = document.querySelector("#right-sidebar-title");
-    
-    function toggleRightSidebar(open, url = "", title = "") {
-      if (open) {
-        elements.rightSidebarWebview.src = url;
-        elements.rightSidebarTitle.textContent = title;
-        elements.appShell.classList.add("right-sidebar-open");
-      } else {
-        elements.appShell.classList.remove("right-sidebar-open");
-        elements.rightSidebarWebview.src = "about:blank";
-      }
-    }
-    
-    // 修改顶栏扩展按钮的点击逻辑
-    function renderExtensionsInTopbar(results) {
-      elements.extensionsBar.replaceChildren();
-      for (const extension of results.filter((result) => result.ok && result.popupPage)) {
-        // ... 创建按钮逻辑保持不变 ...
-        button.addEventListener("click", (event) => {
-          event.stopPropagation();
-          const popupUrl = `chrome-extension://${extension.id}/${extension.popupPage.replace(/^\/+/, "")}`;
-          const isOpened = elements.appShell.classList.contains("right-sidebar-open") && elements.rightSidebarWebview.src === popupUrl;
-          
-          toggleRightSidebar(!isOpened, popupUrl, extension.name);
-        });
-        elements.extensionsBar.append(button);
-      }
-    }
-    
-    // 绑定关闭按钮
-    elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
-    ```
-
----
-
-### 2. 完美的全局拖动排序 (PointerCapture 修复)
-- **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
-  在 `pointerdown` 中，锁定输入指针，并临时禁用网页堆栈的鼠标响应，确保拖拽流畅：
+  目前的 `normalizeUrl` 过于死板：
   ```javascript
-  item.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".tab-menu")) return;
-    
-    // 关键修复 1：捕获全局指针，防止 webview 吞噬 move 事件
-    item.setPointerCapture(event.pointerId);
-    
-    // 关键修复 2：将所有 webview 屏蔽鼠标穿透，保证拖拽流畅
-    document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "none");
-    
-    pointerDrag = { 
-      id: tab.id, 
-      pointerId: event.pointerId, // 保存当前指针 ID
-      startX: event.clientX, 
-      startY: event.clientY, 
-      active: false 
-    };
-  });
+  function normalizeUrl(value) {
+    const trimmed = value.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed}`;
+  }
   ```
-  在全局 `pointerup` 监听中释放指针捕获，并还原鼠标穿透：
-  ```javascript
-  document.addEventListener("pointerup", (event) => {
-    if (!pointerDrag) return;
-    
-    const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
-    if (dragItem) {
-      try {
-        // 释放指针捕获
-        dragItem.releasePointerCapture(pointerDrag.pointerId);
-      } catch (e) {}
-    }
-    
-    // 恢复 webview 的鼠标穿透
-    document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "auto");
-    
-    if (pointerDrag.active) {
-      const targetId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.dataset.id;
-      if (targetId && reorderTab(pointerDrag.id, targetId)) renderTabs();
-      suppressTabClickUntil = Date.now() + 250;
-    }
-    pointerDrag = null;
-    clearDragState();
-  });
+  这导致当用户在顶部地址栏输入“百度翻译”或“图片生成”这种中文词汇或带空格的搜索词时，系统会强行拼装成 `https://百度翻译` 并试图加载，直接导致内嵌窗口白屏或加载失败报错。
+* **整改方案**：
+  智能识别输入内容，当不包含 `.` 或是包含空格的普通文本时，自动拼接跳转至 Bing/Google 搜索引擎（例如：`https://cn.bing.com/search?q=搜索词`）。
+
+### 2. 终端折叠后底部多出一条“灰色虚线边框”（视觉缺陷）
+* **缺陷表现**：
+  在 `.terminal-panel` 处于关闭状态（`height: 0`）时，由于其自身带有 `border-top: 1px solid var(--border-color)`，界面最底部依然会常驻一条灰色的细线，破坏了应用底部的极简一致性。
+* **整改方案**：
+  利用 CSS 过渡动画让边框宽度随面板高度一起动画化（关闭时 border-top-width 为 0，展开时为 1px）。
+  ```css
+  .terminal-panel {
+    /* ... */
+    border-top: 0 solid var(--border-color); /* 默认无边框 */
+    transition: height 220ms ease, border-width 220ms ease;
+  }
+  .terminal-panel.open {
+    height: var(--terminal-height);
+    border-top-width: 1px; /* 开启时才显示 1px */
+  }
   ```
 
+### 3. 关闭扩展侧边栏后，Webview 内核未停用 (内存与性能缺陷)
+* **缺陷表现**：
+  在 `toggleRightSidebar(false)` 关闭右侧扩展栏时，虽然通过 CSS 将其宽度缩减为 0 且设置了 `opacity: 0` 和 `pointer-events: none`，但在 `renderer.js` 中没有清空右侧 `<webview>` 的 src。
+  这会导致关闭侧边栏后，刚才打开的扩展程序网页依然在后台**静默运行、执行 JavaScript 并持续占用 CPU 和内存资源**。
+* **整改方案**：
+  当关闭右侧栏时，显式将右侧 webview 的 `src` 属性重置为 `about:blank` 以彻底停用其内核，释放内存资源。
+
 ---
 
-### 3. 完美的终端拉伸 (PointerCapture 修复)
-- **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
-  修改终端 resizer 事件绑定，防止向上拖拽时进入 webview 导致卡死：
+## 二、 核心重构与代码修改建议 (供 Codex 直接使用)
+
+### 1. `renderer.js` 性能与搜索重构
+请对 [renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js) 进行如下修复：
+
+* **地址栏支持搜索识别**：
   ```javascript
-  resizer.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    resizer.setPointerCapture(event.pointerId); // 捕获指针
-    document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "none"); // 禁用 webview 鼠标穿透
-    
-    const startY = event.clientY;
-    const startHeight = elements.terminalPanel.getBoundingClientRect().height;
-    
-    const onMove = (moveEvent) => {
-      const height = Math.max(180, Math.min(window.innerHeight * 0.7, startHeight + startY - moveEvent.clientY));
-      document.documentElement.style.setProperty("--terminal-height", `${height}px`);
-      fitAddon.fit();
-    };
-    
-    const onUp = () => {
-      resizer.removeEventListener("pointermove", onMove);
-      resizer.removeEventListener("pointerup", onUp);
-      document.querySelectorAll("webview").forEach(w => w.style.pointerEvents = "auto"); // 恢复
-    };
-    
-    resizer.addEventListener("pointermove", onMove);
-    resizer.addEventListener("pointerup", onUp);
-  });
+  function normalizeUrl(value) {
+    const trimmed = value.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    // 智能检测：包含 "." 且不包含空格视为网址，否则视为搜索引擎查询词
+    if (trimmed.includes(".") && !trimmed.includes(" ")) {
+      return `https://${trimmed}`;
+    }
+    return `https://cn.bing.com/search?q=${encodeURIComponent(trimmed)}`;
+  }
+  ```
+* **关闭侧边栏时释放 Webview 内核**：
+  ```javascript
+  function toggleRightSidebar(open, url = "", title = "") {
+    elements.appShell.classList.toggle("right-sidebar-open", open);
+    if (open) {
+      elements.rightSidebarTitle.textContent = title || "扩展程序";
+      elements.rightSidebarWebview.src = url;
+    } else {
+      // 关键修复：重置为 about:blank 释放 webview 内存
+      elements.rightSidebarWebview.src = "about:blank";
+    }
+    setTimeout(() => fitAddon?.fit(), 230);
+  }
+  ```
+
+### 2. `style.css` 视觉过渡修复
+请对 [style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css) 进行如下修复：
+
+* **动态边框过渡**：
+  ```css
+  .terminal-panel {
+    height: 0;
+    flex: 0 0 auto;
+    overflow: hidden;
+    background: white;
+    border-top: 0 solid var(--border-color); /* 默认关闭边框 */
+    box-shadow: 0 -16px 45px rgba(15, 23, 42, 0.08);
+    position: relative;
+    transition: height 220ms ease, border-width 220ms ease; /* 边框宽度过渡 */
+  }
+  .terminal-panel.open {
+    height: var(--terminal-height);
+    border-top-width: 1px; /* 展开时激活 1px */
+  }
   ```
