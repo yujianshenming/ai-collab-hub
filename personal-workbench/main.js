@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, shell } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
+const http = require("node:http");
 const path = require("node:path");
 const os = require("node:os");
 
@@ -9,7 +10,9 @@ let terminalProcess;
 let lastTerminalSize = { cols: 80, rows: 24 };
 let activeTabInfo = { url: "", title: "" };
 let extensionResults = [];
+let localServer;
 const workbenchPartition = "persist:personal-workbench";
+const localServerPort = 38924;
 
 function workbenchSession() {
   return session.fromPartition(workbenchPartition);
@@ -73,6 +76,65 @@ function updateTerminalSize(size = {}) {
 
 function canLoadInWebview(url) {
   return /^(https?|file|chrome-extension):\/\//i.test(url);
+}
+
+async function getWorkbenchCookies(details = {}) {
+  const filter = { ...details };
+  if (!filter.url && /^https?:\/\//i.test(activeTabInfo.url)) filter.url = activeTabInfo.url;
+  try {
+    return await workbenchSession().cookies.get(filter);
+  } catch {
+    return [];
+  }
+}
+
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(payload));
+}
+
+function startLocalServer() {
+  if (localServer) return;
+
+  localServer = http.createServer(async (req, res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const parsedUrl = new URL(req.url, `http://127.0.0.1:${localServerPort}`);
+    if (parsedUrl.pathname === "/active-tab") {
+      sendJson(res, 200, activeTabInfo);
+      return;
+    }
+
+    if (parsedUrl.pathname === "/cookies") {
+      const filter = {};
+      const url = parsedUrl.searchParams.get("url");
+      const name = parsedUrl.searchParams.get("name");
+      if (url) filter.url = url;
+      if (name) filter.name = name;
+      sendJson(res, 200, await getWorkbenchCookies(filter));
+      return;
+    }
+
+    sendJson(res, 404, { error: "Not found" });
+  });
+
+  localServer.on("error", () => {
+    localServer = null;
+  });
+  localServer.listen(localServerPort, "127.0.0.1");
+}
+
+function stopLocalServer() {
+  if (!localServer) return;
+  localServer.close();
+  localServer = null;
 }
 
 function stopTerminal() {
@@ -216,11 +278,7 @@ function registerIpc() {
   });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
-    try {
-      return await workbenchSession().cookies.get(details);
-    } catch {
-      return [];
-    }
+    return getWorkbenchCookies(details);
   });
 
   ipcMain.handle("extensions:get", () => ({
@@ -268,6 +326,7 @@ app.whenReady().then(async () => {
     }
   });
 
+  startLocalServer();
   extensionResults = await loadConfiguredExtensions();
   createWindow();
 
@@ -278,5 +337,6 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   stopTerminal();
+  stopLocalServer();
   if (process.platform !== "darwin") app.quit();
 });
