@@ -15,6 +15,7 @@ const workbenchPartition = "persist:personal-workbench";
 const localServerPort = 38924;
 const downloadRoot = path.join(__dirname, "temp");
 const weeklyTasksPath = path.join(__dirname, "..", "tasks", "weekly_tasks.json");
+const activeTaskMenuItemId = "active-task-menu-item";
 
 function workbenchSession() {
   return session.fromPartition(workbenchPartition);
@@ -56,22 +57,27 @@ function setAppMenu() {
       label: "工作台",
       submenu: [
         {
-          label: "本周任务",
-          accelerator: "CmdOrCtrl+T",
-          click: () => sendToRenderer("menu:toggle-tasks")
-        },
-        {
-          label: "本地终端",
-          accelerator: "CmdOrCtrl+`",
-          click: () => sendToRenderer("menu:toggle-terminal")
-        },
-        {
           label: "扩展设置",
           click: () => sendToRenderer("menu:open-settings")
         },
         { type: "separator" },
         { label: "退出", role: "quit" }
       ]
+    },
+    {
+      label: "任务",
+      accelerator: "CmdOrCtrl+T",
+      click: () => sendToRenderer("menu:toggle-tasks")
+    },
+    {
+      label: "终端",
+      accelerator: "CmdOrCtrl+`",
+      click: () => sendToRenderer("menu:toggle-terminal")
+    },
+    {
+      id: activeTaskMenuItemId,
+      label: "正在进行任务: 无",
+      enabled: false
     },
     {
       label: "编辑",
@@ -98,6 +104,20 @@ function setAppMenu() {
     }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function updateActiveTaskMenuLabel(info = {}) {
+  const menu = Menu.getApplicationMenu();
+  const item = menu?.getMenuItemById(activeTaskMenuItemId);
+  if (!item) return;
+
+  const school = String(info.school || "").trim();
+  const course = String(info.course || "").trim();
+  const taskType = String(info.taskTypeLabel || info.taskType || "").trim();
+  const hasTask = Boolean(school || course || taskType);
+  item.label = hasTask
+    ? "正在进行任务: " + [school, course].filter(Boolean).join(" - ") + (taskType ? " (" + taskType + ")" : "")
+    : "正在进行任务: 无";
 }
 
 function startTerminal(size = {}) {
@@ -386,6 +406,9 @@ function registerIpc() {
       url: String(info.url || ""),
       title: String(info.title || "")
     };
+  });
+  ipcMain.on("task:active-update", (_event, info = {}) => {
+    updateActiveTaskMenuLabel(info);
   });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {

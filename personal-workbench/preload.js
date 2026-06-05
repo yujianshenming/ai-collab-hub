@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("workbench", {
     return () => ipcRenderer.removeListener("terminal:data", listener);
   },
   updateActiveTabInfo: (info) => ipcRenderer.send("tab:active-update", info),
+  updateActiveTaskInfo: (info) => ipcRenderer.send("task:active-update", info),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

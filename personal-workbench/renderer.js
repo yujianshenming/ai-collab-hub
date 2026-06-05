@@ -160,11 +160,13 @@ function createTabViewport(tab) {
   extPanel.className = "tab-extension-panel";
   extPanel.innerHTML = `
     <div class="tab-extension-resizer" title="拖动调整扩展宽度"></div>
-    <div class="tab-extension-header">
-      <span class="tab-extension-title">扩展程序</span>
-      <button class="icon-button tab-extension-close" type="button" aria-label="关闭扩展">×</button>
+    <div class="tab-extension-content">
+      <div class="tab-extension-header">
+        <span class="tab-extension-title">扩展程序</span>
+        <button class="icon-button tab-extension-close" type="button" aria-label="关闭扩展">×</button>
+      </div>
+      <div class="tab-extension-body"></div>
     </div>
-    <div class="tab-extension-body"></div>
   `;
   extPanel.querySelector(".tab-extension-close").addEventListener("click", () => {
     extPanel.classList.remove("open");
@@ -395,6 +397,19 @@ function taskTypeLabel(type) {
   }[type] || type || "未分类";
 }
 
+function updateActiveTaskMenu(task = null) {
+  if (!task) {
+    window.workbench.updateActiveTaskInfo({});
+    return;
+  }
+  window.workbench.updateActiveTaskInfo({
+    school: task.school || "",
+    course: task.course || "",
+    taskType: task.taskType || "",
+    taskTypeLabel: taskTypeLabel(task.taskType)
+  });
+}
+
 function taskStatusLabel(status) {
   return {
     pending: "待处理",
@@ -542,7 +557,10 @@ function editWeeklyTask(id) {
 
 async function deleteWeeklyTask(id) {
   weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
-  if (pipelineState.taskId === id) pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", uploadQueue: [] };
+  if (pipelineState.taskId === id) {
+    pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", uploadQueue: [] };
+    updateActiveTaskMenu(null);
+  }
   await persistWeeklyTasks();
 }
 
@@ -592,6 +610,7 @@ async function startTaskAutomation(id) {
     uploadQueue: []
   };
   await updateTaskFields(id, { status: "running" });
+  updateActiveTaskMenu(task);
   elements.taskModal?.close();
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
 }
@@ -612,6 +631,7 @@ async function handleDownloadCompleted(download) {
     pipelineState.reportPath = download.path;
     pipelineState.step = "analysis";
     await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path });
+    updateActiveTaskMenu(null);
     runHermesPrompt();
   }
 }
