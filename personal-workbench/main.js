@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -7,6 +7,7 @@ const os = require("node:os");
 let mainWindow;
 let terminalProcess;
 let lastTerminalSize = { cols: 80, rows: 24 };
+let activeTabInfo = { url: "", title: "" };
 let extensionResults = [];
 const workbenchPartition = "persist:personal-workbench";
 
@@ -71,7 +72,7 @@ function updateTerminalSize(size = {}) {
 }
 
 function canLoadInWebview(url) {
-  return /^(https?|chrome-extension):\/\//i.test(url);
+  return /^(https?|file|chrome-extension):\/\//i.test(url);
 }
 
 function stopTerminal() {
@@ -207,6 +208,13 @@ function registerIpc() {
     if (!terminalProcess) return;
     terminalProcess.resize(lastTerminalSize.cols, lastTerminalSize.rows);
   });
+  ipcMain.on("tab:active-update", (_event, info = {}) => {
+    activeTabInfo = {
+      url: String(info.url || ""),
+      title: String(info.title || "")
+    };
+  });
+  ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
 
   ipcMain.handle("extensions:get", () => ({
     entries: readExtensionConfig(),
@@ -225,6 +233,15 @@ function registerIpc() {
     extensionResults = await loadConfiguredExtensions(safeEntries);
     return extensionResults;
   });
+  ipcMain.handle("extensions:refresh", async () => {
+    for (const extension of workbenchSession().extensions.getAllExtensions()) {
+      try {
+        await workbenchSession().extensions.removeExtension(extension.id);
+      } catch {}
+    }
+    extensionResults = await loadConfiguredExtensions();
+    return extensionResults;
+  });
 }
 
 app.whenReady().then(async () => {
@@ -234,7 +251,11 @@ app.whenReady().then(async () => {
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
       contents.setWindowOpenHandler(({ url }) => {
-        if (canLoadInWebview(url)) contents.loadURL(url).catch(() => {});
+        if (canLoadInWebview(url)) {
+          contents.loadURL(url).catch(() => {});
+        } else {
+          shell.openExternal(url).catch(() => {});
+        }
         return { action: "deny" };
       });
     }

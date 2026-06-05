@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: chrome-extension:; frame-src https: http: chrome-extension:;"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: chrome-extension:; frame-src https: http: file: chrome-extension:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>个人工作台</title>
@@ -89,12 +89,13 @@
       </main>
 
       <aside id="right-sidebar" class="right-sidebar">
+        <div id="right-sidebar-resizer" class="right-sidebar-resizer" title="拖动调整侧边栏宽度"></div>
         <header class="right-sidebar-header">
           <strong id="right-sidebar-title">扩展程序</strong>
           <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭扩展侧边栏" title="关闭扩展侧边栏">×</button>
         </header>
         <div class="right-sidebar-body">
-          <webview id="right-sidebar-webview" partition="persist:personal-workbench"></webview>
+          <webview id="right-sidebar-webview" partition="persist:personal-workbench" preload="./preload-popup.js" webpreferences="contextIsolation=no"></webview>
         </div>
       </aside>
     </div>
@@ -133,7 +134,7 @@
         <div class="modal-heading">
           <div>
             <span class="eyebrow">Chrome Extensions</span>
-            <h2>本地扩展设置</h2>
+            <h2 class="inline-heading">本地扩展设置 <button id="refresh-extensions-button" class="icon-button inline-refresh" type="button" title="刷新并重新加载扩展" aria-label="刷新并重新加载扩展">↻</button></h2>
           </div>
           <button class="icon-button settings-close" type="button" aria-label="关闭">×</button>
         </div>

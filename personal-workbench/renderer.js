@@ -24,6 +24,7 @@ const elements = {
   appShell: document.querySelector(".app-shell"),
   extensionsBar: document.querySelector("#extensions-bar"),
   rightSidebar: document.querySelector("#right-sidebar"),
+  rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
   rightSidebarClose: document.querySelector("#right-sidebar-close"),
   rightSidebarWebview: document.querySelector("#right-sidebar-webview")
@@ -44,7 +45,7 @@ function saveTabs() {
 
 function normalizeUrl(value) {
   const trimmed = value.trim();
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^(https?|file):\/\//i.test(trimmed)) return trimmed;
   if (/^localhost(:\d+)?(\/.*)?$/i.test(trimmed)) return `http://${trimmed}`;
   if (/^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/.test(trimmed)) return `http://${trimmed}`;
   if (/^([a-z0-9-]+\.)+[a-z0-9-]+(:\d+)?(\/.*)?$/i.test(trimmed) && !/\s/.test(trimmed)) {
@@ -152,6 +153,7 @@ function activateTab(id) {
   document.querySelectorAll("webview[data-id]").forEach((webview) => webview.classList.toggle("active", webview.dataset.id === id));
   elements.activeTitle.textContent = tab.name;
   elements.addressInput.value = activeWebview()?.getURL?.() || tab.url;
+  updateActiveTabInfo();
   fitWebviewZoom();
 }
 
@@ -165,7 +167,18 @@ function fitWebviewZoom() {
 }
 
 function updateAddressFromWebview(webview) {
-  if (webview.dataset.id === activeTabId) elements.addressInput.value = webview.getURL();
+  if (webview.dataset.id === activeTabId) {
+    elements.addressInput.value = webview.getURL();
+    updateActiveTabInfo();
+  }
+}
+
+function updateActiveTabInfo() {
+  const tab = tabs.find((candidate) => candidate.id === activeTabId);
+  window.workbench.updateActiveTabInfo({
+    url: activeWebview()?.getURL?.() || tab?.url || "",
+    title: tab?.name || ""
+  });
 }
 
 function navigateToAddress() {
@@ -407,6 +420,12 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
   renderExtensionsInTopbar(results);
 });
 
+document.querySelector("#refresh-extensions-button").addEventListener("click", async () => {
+  const results = await window.workbench.refreshExtensions();
+  renderExtensionResults(results);
+  renderExtensionsInTopbar(results);
+});
+
 const resizer = document.querySelector("#terminal-resizer");
 const terminalHeader = document.querySelector(".terminal-header");
 
@@ -438,6 +457,34 @@ function beginTerminalResize(event) {
 
 resizer.addEventListener("pointerdown", beginTerminalResize);
 terminalHeader.addEventListener("pointerdown", beginTerminalResize);
+
+function beginRightSidebarResize(event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  elements.rightSidebarResizer.setPointerCapture(event.pointerId);
+  setWebviewPointerEvents(false);
+  const startX = event.clientX;
+  const startWidth = elements.rightSidebar.getBoundingClientRect().width;
+  const onMove = (moveEvent) => {
+    const width = Math.max(280, Math.min(window.innerWidth * 0.6, startWidth + startX - moveEvent.clientX));
+    document.documentElement.style.setProperty("--right-sidebar-width", `${width}px`);
+    fitWebviewZoom();
+  };
+  const onUp = () => {
+    if (elements.rightSidebarResizer.hasPointerCapture(event.pointerId)) {
+      elements.rightSidebarResizer.releasePointerCapture(event.pointerId);
+    }
+    setWebviewPointerEvents(true);
+    elements.rightSidebarResizer.removeEventListener("pointermove", onMove);
+    elements.rightSidebarResizer.removeEventListener("pointerup", onUp);
+    elements.rightSidebarResizer.removeEventListener("pointercancel", onUp);
+  };
+  elements.rightSidebarResizer.addEventListener("pointermove", onMove);
+  elements.rightSidebarResizer.addEventListener("pointerup", onUp);
+  elements.rightSidebarResizer.addEventListener("pointercancel", onUp);
+}
+
+elements.rightSidebarResizer.addEventListener("pointerdown", beginRightSidebarResize);
 
 window.addEventListener("resize", () => {
   fitAddon?.fit();

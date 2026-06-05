@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld("workbench", {
     ipcRenderer.on("terminal:data", listener);
     return () => ipcRenderer.removeListener("terminal:data", listener);
   },
+  updateActiveTabInfo: (info) => ipcRenderer.send("tab:active-update", info),
   getExtensions: () => ipcRenderer.invoke("extensions:get"),
-  saveExtensions: (entries) => ipcRenderer.invoke("extensions:save", entries)
+  saveExtensions: (entries) => ipcRenderer.invoke("extensions:save", entries),
+  refreshExtensions: () => ipcRenderer.invoke("extensions:refresh")
 });
