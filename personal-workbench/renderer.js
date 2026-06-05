@@ -11,7 +11,8 @@ let terminal;
 let fitAddon;
 let pointerDrag = null;
 let weeklyTasks = [];
-let pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", docPath: "", uploadQueue: [] };
+let taskViewMode = "list";
+let pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", uploadQueue: [] };
 
 const elements = {
   tabList: document.querySelector("#tab-list"),
@@ -23,17 +24,19 @@ const elements = {
   settingsDialog: document.querySelector("#settings-dialog"),
   extensionList: document.querySelector("#extension-list"),
   terminalPanel: document.querySelector("#terminal-panel"),
-  terminalToggle: document.querySelector("#terminal-toggle"),
   appShell: document.querySelector(".app-shell"),
   extensionsBar: document.querySelector("#extensions-bar"),
   rightSidebar: document.querySelector("#right-sidebar"),
   rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
   rightSidebarClose: document.querySelector("#right-sidebar-close"),
-  taskToggle: document.querySelector("#btn-toggle-tasks"),
   taskModal: document.querySelector("#task-manager-modal"),
+  taskListView: document.querySelector("#task-list-view"),
+  taskFormView: document.querySelector("#task-form"),
+  taskFormTitle: document.querySelector("#task-form-title"),
   taskForm: document.querySelector("#task-form"),
-  taskTableBody: document.querySelector("#task-table-body")
+  taskTableBody: document.querySelector("#task-table-body"),
+  addNewTask: document.querySelector("#btn-add-new-task")
 };
 
 function readTabs() {
@@ -350,7 +353,6 @@ function initTerminal() {
 function toggleTerminal(force) {
   const open = typeof force === "boolean" ? force : !elements.terminalPanel.classList.contains("open");
   elements.terminalPanel.classList.toggle("open", open);
-  elements.terminalToggle.setAttribute("aria-expanded", String(open));
   if (open) {
     setTimeout(() => {
       fitAddon.fit();
@@ -385,10 +387,11 @@ function escapeHtml(value) {
 
 function taskTypeLabel(type) {
   return {
-    "prompt-design": "提示词设计",
-    "simulation-test": "仿真测试",
-    evaluation: "智能评估",
-    analysis: "优化分析"
+    "capability-setup": "能力训练搭建",
+    "capability-edit": "能力训练修改",
+    "capability-acceptance": "能力训练验收",
+    "grading-setup": "作业批阅搭建",
+    "grading-acceptance": "作业批阅验收"
   }[type] || type || "未分类";
 }
 
@@ -401,20 +404,52 @@ function taskStatusLabel(status) {
   }[status] || "待处理";
 }
 
+function switchTaskModalView(mode) {
+  taskViewMode = mode === "form" ? "form" : "list";
+  elements.taskListView?.classList.toggle("hidden", taskViewMode !== "list");
+  elements.taskFormView?.classList.toggle("hidden", taskViewMode !== "form");
+}
+
+async function openTaskModal() {
+  if (elements.taskModal?.open) {
+    elements.taskModal.close();
+    return;
+  }
+  await loadWeeklyTasks();
+  switchTaskModalView("list");
+  elements.taskModal?.showModal();
+}
+
 function resetTaskForm() {
   elements.taskForm?.reset();
   document.querySelector("#task-id").value = "";
   document.querySelector("#task-quantity").value = "1";
+  document.querySelector("#task-type").value = "capability-setup";
+  if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
+}
+
+function normalizeWeeklyTask(task = {}) {
+  return {
+    id: task.id || `task-${Date.now()}`,
+    school: task.school || "",
+    course: task.course || "",
+    taskType: task.taskType || "capability-setup",
+    quantity: Math.max(1, Number(task.quantity) || 1),
+    status: task.status || "pending",
+    owner: task.owner || "",
+    chatLogPath: task.chatLogPath || "",
+    reportPath: task.reportPath || ""
+  };
 }
 
 async function persistWeeklyTasks() {
-  weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks);
+  weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks.map(normalizeWeeklyTask));
   renderWeeklyTasks();
 }
 
 async function loadWeeklyTasks() {
   try {
-    weeklyTasks = await window.workbench.readWeeklyTasks();
+    weeklyTasks = (await window.workbench.readWeeklyTasks()).map(normalizeWeeklyTask);
   } catch (error) {
     console.error("读取任务列表失败:", error);
     weeklyTasks = [];
@@ -423,13 +458,20 @@ async function loadWeeklyTasks() {
   renderWeeklyTasks();
 }
 
+function taskArtifactSummary(task) {
+  const parts = [];
+  if (task.chatLogPath) parts.push("对话");
+  if (task.reportPath) parts.push("报告");
+  return parts.join(" / ") || "-";
+}
+
 function renderWeeklyTasks() {
   if (!elements.taskTableBody) return;
   elements.taskTableBody.replaceChildren();
 
   if (!weeklyTasks.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td class="task-empty" colspan="7">暂无任务，先添加一个本周目标。</td>`;
+    row.innerHTML = `<td class="task-empty" colspan="7">暂无任务。点击下方按钮添加本周任务。</td>`;
     elements.taskTableBody.append(row);
     return;
   }
@@ -446,7 +488,7 @@ function renderWeeklyTasks() {
       <td>${Number(task.quantity) || 1}</td>
       <td><span class="task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span></td>
       <td>${escapeHtml(task.owner)}</td>
-      <td><span class="task-path" title="${escapeHtml(task.docPath)}">${escapeHtml(task.docPath || "-")}</span></td>
+      <td><span class="task-path" title="${escapeHtml([task.chatLogPath, task.reportPath].filter(Boolean).join("\\n"))}">${escapeHtml(taskArtifactSummary(task))}</span></td>
       <td>
         <div class="task-actions">
           <button class="secondary-button task-run" type="button">执行</button>
@@ -464,17 +506,17 @@ function renderWeeklyTasks() {
 
 function taskFromForm() {
   const id = document.querySelector("#task-id").value || `task-${Date.now()}`;
+  const existing = weeklyTasks.find((task) => task.id === id) || {};
   return {
     id,
     school: document.querySelector("#task-school").value.trim(),
     course: document.querySelector("#task-course").value.trim(),
     taskType: document.querySelector("#task-type").value,
     quantity: Math.max(1, Number(document.querySelector("#task-quantity").value) || 1),
-    status: weeklyTasks.find((task) => task.id === id)?.status || "pending",
+    status: existing.status || "pending",
     owner: document.querySelector("#task-owner").value.trim(),
-    docPath: document.querySelector("#task-doc-path").value.trim(),
-    chatLogPath: weeklyTasks.find((task) => task.id === id)?.chatLogPath || "",
-    reportPath: weeklyTasks.find((task) => task.id === id)?.reportPath || ""
+    chatLogPath: existing.chatLogPath || "",
+    reportPath: existing.reportPath || ""
   };
 }
 
@@ -491,15 +533,16 @@ function editWeeklyTask(id) {
   document.querySelector("#task-id").value = task.id;
   document.querySelector("#task-school").value = task.school || "";
   document.querySelector("#task-course").value = task.course || "";
-  document.querySelector("#task-type").value = task.taskType || "simulation-test";
+  document.querySelector("#task-type").value = task.taskType || "capability-setup";
   document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
   document.querySelector("#task-owner").value = task.owner || "";
-  document.querySelector("#task-doc-path").value = task.docPath || "";
+  if (elements.taskFormTitle) elements.taskFormTitle.textContent = "编辑任务";
+  switchTaskModalView("form");
 }
 
 async function deleteWeeklyTask(id) {
   weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
-  if (pipelineState.taskId === id) pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", docPath: "", uploadQueue: [] };
+  if (pipelineState.taskId === id) pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", uploadQueue: [] };
   await persistWeeklyTasks();
 }
 
@@ -546,7 +589,6 @@ async function startTaskAutomation(id) {
     step: "testing",
     chatPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
-    docPath: task.docPath || "",
     uploadQueue: []
   };
   await updateTaskFields(id, { status: "running" });
@@ -577,15 +619,14 @@ async function handleDownloadCompleted(download) {
 function runEvaluationUpload() {
   const webview = activeWebview();
   if (!webview || !pipelineState.chatPath) return;
-  pipelineState.uploadQueue = [pipelineState.docPath, pipelineState.chatPath].filter(Boolean);
+  pipelineState.uploadQueue = [pipelineState.chatPath];
   webview.executeJavaScript(`
     (() => {
-      const inputs = [...document.querySelectorAll('input[type="file"]')];
-      inputs[0]?.click();
-      if (inputs[1]) setTimeout(() => inputs[1].click(), 500);
+      const input = document.querySelector('input[type="file"]');
+      input?.click();
       const submit = document.querySelector('button[type="submit"], input[type="submit"], .submit, .send-btn');
-      if (submit) setTimeout(() => submit.click(), inputs[1] ? 1100 : 600);
-      return { fileInputs: inputs.length, submitted: Boolean(submit) };
+      if (submit) setTimeout(() => submit.click(), 700);
+      return { fileInputs: input ? 1 : 0, submitted: Boolean(submit) };
     })();
   `).then((result) => {
     if (!result?.fileInputs) showToast("评估页没有检测到文件上传控件，请手动上传后继续。", "error");
@@ -769,9 +810,12 @@ function moveTab(direction) {
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
 document.querySelector("#settings-button").addEventListener("click", openSettings);
-elements.taskToggle?.addEventListener("click", async () => {
-  await loadWeeklyTasks();
-  elements.taskModal?.showModal();
+window.workbench.onMenuToggleTasks(openTaskModal);
+window.workbench.onMenuToggleTerminal(() => toggleTerminal());
+window.workbench.onMenuOpenSettings(openSettings);
+elements.addNewTask?.addEventListener("click", () => {
+  resetTaskForm();
+  switchTaskModalView("form");
 });
 document.querySelector("#sidebar-toggle").addEventListener("click", () => {
   setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
@@ -851,13 +895,16 @@ function showToast(message, type = "success") {
     setTimeout(() => toast.remove(), 300);
   }, 2500);
 }
-elements.terminalToggle.addEventListener("click", () => toggleTerminal());
 document.querySelector("#terminal-close").addEventListener("click", () => toggleTerminal(false));
 elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
 document.querySelectorAll(".task-close").forEach((button) => button.addEventListener("click", () => elements.taskModal?.close()));
+document.querySelectorAll(".task-cancel").forEach((button) => button.addEventListener("click", () => {
+  resetTaskForm();
+  switchTaskModalView("list");
+}));
 
 elements.taskForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -869,6 +916,7 @@ elements.taskForm?.addEventListener("submit", async (event) => {
   await upsertWeeklyTask(task);
   resetTaskForm();
   showToast("任务已保存", "success");
+  switchTaskModalView("list");
 });
 
 document.querySelector("#task-reset-button")?.addEventListener("click", resetTaskForm);

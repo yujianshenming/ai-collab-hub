@@ -116,16 +116,13 @@ button { cursor: pointer; }
 .address-bar:focus-within { border-color: rgba(59, 130, 246, 0.5); box-shadow: 0 0 0 3px var(--accent-light); }
 .icon-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--text-secondary); background: transparent; border: 0; border-radius: 8px; }
 .icon-button:hover { color: var(--accent-strong); background: var(--accent-light); }
-.go-button, .primary-button, .terminal-toggle, .task-toggle { color: white; background: var(--accent-gradient); border: 0; box-shadow: 0 5px 13px rgba(59, 130, 246, 0.18); }
+.go-button, .primary-button { color: white; background: var(--accent-gradient); border: 0; box-shadow: 0 5px 13px rgba(59, 130, 246, 0.18); }
 .go-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border-radius: 8px; }
 .topbar-actions, .extensions-bar { display: flex; gap: 5px; align-items: center; }
 .extension-trigger-button { border: 1px solid var(--border-color); background: white; box-shadow: var(--shadow-sm); }
 .extension-trigger-button img { width: 17px; height: 17px; object-fit: contain; }
 .extension-trigger-button span { font-size: 10px; font-weight: 800; }
-.terminal-toggle { display: grid; place-items: center; width: 42px; height: 34px; padding: 0; border-radius: 11px; font-size: 12px; font-weight: 700; }
-.terminal-toggle span { font-family: Consolas, monospace; }
-.task-toggle { display: grid; place-items: center; height: 34px; padding: 0 12px; border-radius: 11px; font-size: 11px; font-weight: 800; letter-spacing: 0.02em; }
-.terminal-toggle:hover, .go-button:hover, .primary-button:hover, .task-toggle:hover { filter: brightness(0.97); transform: translateY(-1px); }
+.go-button:hover, .primary-button:hover { filter: brightness(0.97); transform: translateY(-1px); }
 .webview-stack { flex: 1 1 auto; min-height: 0; position: relative; }
 .tab-viewport { display: none; width: 100%; height: 100%; position: relative; overflow: hidden; flex-direction: row; }
 .tab-viewport.active { display: flex; }
@@ -247,11 +244,15 @@ button { cursor: pointer; }
 .extension-status-card.error { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
 .extension-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .extension-empty { color: var(--text-muted); }
+.hidden { display: none !important; }
 .task-modal { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: hidden; }
-.task-modal form { padding-bottom: 16px; border-bottom: 1px solid var(--border-color); }
+.task-modal-view { padding: 22px; }
+.task-modal form.task-modal-view { gap: 17px; }
+.task-modal-heading { padding: 22px 22px 14px; }
 .task-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.task-field-wide { grid-column: span 2; }
-.task-table-wrap { max-height: min(420px, calc(100vh - 390px)); overflow: auto; padding: 0 18px 18px; }
+.task-table-wrap { max-height: min(520px, calc(100vh - 220px)); overflow: auto; padding: 0 22px; }
+.task-list-footer { display: flex; justify-content: center; padding: 16px 22px 22px; border-top: 1px solid var(--border-color); }
+.task-list-footer .primary-button { min-width: 140px; }
 .task-table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .task-table th { position: sticky; top: 0; z-index: 1; padding: 10px 9px; color: var(--text-muted); background: #f8fafc; border-bottom: 1px solid var(--border-color); text-align: left; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
 .task-table td { padding: 11px 9px; border-bottom: 1px solid #edf2f7; color: var(--text-secondary); vertical-align: middle; }
@@ -370,14 +371,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 @media (max-width: 1100px) {
   :root { --sidebar-width: 200px; }
   .topbar { grid-template-columns: auto minmax(100px, .4fr) minmax(300px, 2fr) auto; gap: 10px; padding-inline: 12px; }
-  .terminal-toggle span { font-size: 12px; }
   .task-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .task-field-wide { grid-column: span 2; }
 }
 @media (max-width: 760px) {
   .task-form-grid { grid-template-columns: 1fr; }
-  .task-field-wide { grid-column: auto; }
-  .task-toggle { width: 34px; padding: 0; }
-  .task-toggle span { font-size: 0; }
-  .task-toggle span::before { content: "T"; font-size: 11px; }
 }

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -28,7 +28,6 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: "#f6f8fc",
     title: "个人工作台",
-    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -49,6 +48,56 @@ function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
+}
+
+function setAppMenu() {
+  const template = [
+    {
+      label: "工作台",
+      submenu: [
+        {
+          label: "本周任务",
+          accelerator: "CmdOrCtrl+T",
+          click: () => sendToRenderer("menu:toggle-tasks")
+        },
+        {
+          label: "本地终端",
+          accelerator: "CmdOrCtrl+`",
+          click: () => sendToRenderer("menu:toggle-terminal")
+        },
+        {
+          label: "扩展设置",
+          click: () => sendToRenderer("menu:open-settings")
+        },
+        { type: "separator" },
+        { label: "退出", role: "quit" }
+      ]
+    },
+    {
+      label: "编辑",
+      submenu: [
+        { label: "撤销", role: "undo" },
+        { label: "重做", role: "redo" },
+        { type: "separator" },
+        { label: "剪切", role: "cut" },
+        { label: "复制", role: "copy" },
+        { label: "粘贴", role: "paste" },
+        { label: "全选", role: "selectAll" }
+      ]
+    },
+    {
+      label: "视图",
+      submenu: [
+        { label: "重新加载", role: "reload" },
+        { label: "开发者工具", role: "toggleDevTools" },
+        { type: "separator" },
+        { label: "实际大小", role: "resetZoom" },
+        { label: "放大", role: "zoomIn" },
+        { label: "缩小", role: "zoomOut" }
+      ]
+    }
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function startTerminal(size = {}) {
@@ -374,6 +423,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  setAppMenu();
   registerIpc();
   installEmbedHeaderFilter();
   installDownloadHandler();

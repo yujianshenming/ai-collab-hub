@@ -17,6 +17,21 @@ contextBridge.exposeInMainWorld("workbench", {
     ipcRenderer.on("download-completed", listener);
     return () => ipcRenderer.removeListener("download-completed", listener);
   },
+  onMenuToggleTasks: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("menu:toggle-tasks", listener);
+    return () => ipcRenderer.removeListener("menu:toggle-tasks", listener);
+  },
+  onMenuToggleTerminal: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("menu:toggle-terminal", listener);
+    return () => ipcRenderer.removeListener("menu:toggle-terminal", listener);
+  },
+  onMenuOpenSettings: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("menu:open-settings", listener);
+    return () => ipcRenderer.removeListener("menu:open-settings", listener);
+  },
   getExtensions: () => ipcRenderer.invoke("extensions:get"),
   saveExtensions: (entries) => ipcRenderer.invoke("extensions:save", entries),
   refreshExtensions: () => ipcRenderer.invoke("extensions:refresh")

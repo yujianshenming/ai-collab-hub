@@ -67,12 +67,6 @@
           </div>
           <div class="topbar-actions">
             <div id="extensions-bar" class="extensions-bar" aria-label="扩展工具栏"></div>
-            <button id="btn-toggle-tasks" class="task-toggle" type="button" title="本周任务列表" aria-label="打开本周任务列表">
-              <span>Tasks</span>
-            </button>
-            <button id="terminal-toggle" class="terminal-toggle" type="button" aria-label="切换终端" title="切换终端" aria-expanded="false">
-              <span>&gt;_</span>
-            </button>
           </div>
         </header>
 
@@ -160,16 +154,45 @@
 
 
     <dialog id="task-manager-modal" class="modal task-modal">
-      <form id="task-form" method="dialog">
-        <div class="modal-heading">
+      <section id="task-list-view" class="task-modal-view">
+        <div class="modal-heading task-modal-heading">
           <div>
             <span class="eyebrow">Weekly Tasks</span>
             <h2>本周任务列表</h2>
           </div>
           <button class="icon-button task-close" type="button" aria-label="关闭">×</button>
         </div>
+        <div class="task-table-wrap" aria-label="任务列表">
+          <table class="task-table">
+            <thead>
+              <tr>
+                <th>学校 / 课程</th>
+                <th>类型</th>
+                <th>数量</th>
+                <th>状态</th>
+                <th>负责人</th>
+                <th>产物</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="task-table-body"></tbody>
+          </table>
+        </div>
+        <div class="task-list-footer">
+          <button id="btn-add-new-task" class="primary-button" type="button">添加任务</button>
+        </div>
+      </section>
+
+      <form id="task-form" class="task-modal-view" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Task Editor</span>
+            <h2 id="task-form-title">添加任务</h2>
+          </div>
+          <button class="icon-button task-cancel" type="button" aria-label="返回任务列表">×</button>
+        </div>
         <input id="task-id" type="hidden" />
-        <div class="task-form-grid">
+        <div id="task-form-view" class="task-form-grid">
           <label>
             学校
             <input id="task-school" type="text" placeholder="清华大学" required />
@@ -181,10 +204,11 @@
           <label>
             类型
             <select id="task-type">
-              <option value="prompt-design">提示词设计</option>
-              <option value="simulation-test">仿真测试</option>
-              <option value="evaluation">智能评估</option>
-              <option value="analysis">优化分析</option>
+              <option value="capability-setup">能力训练搭建</option>
+              <option value="capability-edit">能力训练修改</option>
+              <option value="capability-acceptance">能力训练验收</option>
+              <option value="grading-setup">作业批阅搭建</option>
+              <option value="grading-acceptance">作业批阅验收</option>
             </select>
           </label>
           <label>
@@ -195,35 +219,16 @@
             负责人
             <input id="task-owner" type="text" placeholder="负责人" />
           </label>
-          <label class="task-field-wide">
-            关联文档路径
-            <input id="task-doc-path" type="text" placeholder="C:\path\to\task.md" />
-          </label>
         </div>
         <div class="modal-actions">
           <button id="task-reset-button" class="secondary-button" type="button">清空表单</button>
           <span class="action-spacer"></span>
-          <button class="secondary-button task-close" type="button">关闭</button>
+          <button class="secondary-button task-cancel" type="button">取消</button>
           <button class="primary-button" type="submit">保存任务</button>
         </div>
       </form>
-      <section class="task-table-wrap" aria-label="任务列表">
-        <table class="task-table">
-          <thead>
-            <tr>
-              <th>学校 / 课程</th>
-              <th>类型</th>
-              <th>数量</th>
-              <th>状态</th>
-              <th>负责人</th>
-              <th>关联文件</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="task-table-body"></tbody>
-        </table>
-      </section>
     </dialog>
+
     <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="./renderer.js"></script>
