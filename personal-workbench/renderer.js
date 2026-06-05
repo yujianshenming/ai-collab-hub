@@ -218,14 +218,11 @@ function activateTab(id) {
 }
 
 function fitWebviewZoom() {
-  const targetWidth = 1280;
   document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
     const webview = viewport.querySelector(".tab-webview");
     if (!webview) return;
-    const width = viewport.clientWidth || targetWidth;
-    const zoom = Math.max(0.65, Math.min(1, width / targetWidth));
     try {
-      webview.setZoomFactor?.(zoom);
+      webview.setZoomFactor?.(1.0);
     } catch (error) {
       console.warn("设置 Zoom 失败（Webview 实例尚未就绪）：", error);
     }
