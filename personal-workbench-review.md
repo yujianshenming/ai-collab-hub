@@ -1,137 +1,110 @@
-# 个人定制工作台缺陷审查与评估报告 (第 8.2 轮 - 鼠标拉伸、插件 URL 获取与刷新版)
+# 个人定制工作台缺陷审查与评估报告 (第 8.3 轮 - 丝滑拉伸、扩展 Cookies 注入与尺寸重置版)
 
-我已根据您的最新反馈（① 右侧栏需要鼠标拉拽调节宽度且中间比例缩放；② 插件无法获取当前页面链接；③ 扩展设置中需要刷新按钮），对工作台进行了补充审查与架构设计。
+我已结合您的最新反馈（① 右侧边栏关闭再打开后恢复默认宽度；② 扩展无法调用 cookies API 报错 `getAll` 的底层问题；③ 拖拽拉伸不丝滑的卡顿问题），对工作台进行了补充审查与架构重构。
 
-本报告已在本地更新，请您进行最终审查。确认无误后我们一同提交至 GitHub，由 Codex 实施重构。
+本报告已在本地更新，请您进行确认。
 
 ---
 
-## 一、 新增核心缺陷与优化方案 (请 Codex 实施整改)
+## 一、 本轮新增核心缺陷与优化方案 (请 Codex 实施整改)
 
-### 缺陷 1：右侧插件边栏固定宽度，无法手动拖拽调节 [严重等级：中]
-* **缺陷表现**：
-  由于不同 Chrome 插件的 UI 比例和信息密度不同，固定的右侧栏宽度（340px）会导致部分插件内容显示不全。
+### 缺陷 1：右侧边栏自定义宽度关闭后被持久化记忆，无法恢复初始大小 [严重等级：中]
+* **缺陷原因**：
+  在拖拽右侧栏时，自定义宽度直接写入了全局 CSS 变量 `--right-sidebar-width`。当关闭右侧边栏（或切换标签）并重新打开时，该 CSS 变量依然存在，导致无法重置为默认的 `340px` 初始宽度。
 * **整改方案**：
-  在右侧边栏左边缘加入一条宽度为 `12px` 的隐形拖拽手柄（Resizer），并利用 `setPointerCapture` 手势监听，实现用鼠标拖拽实时调节右侧栏宽度，同时触发中间 Webview 区域的响应式缩放。
+  在关闭右侧栏（或者初始化/切换）时，显式将 `--right-sidebar-width` 样式属性从文档根节点中移除，使其回退到 CSS 中定义的默认值。
+* **修改指导 (`personal-workbench/renderer.js`)**：
+  修改 `toggleRightSidebar(open, ...)` 函数：
+  ```javascript
+  function toggleRightSidebar(open, url = "", title = "") {
+    elements.appShell.classList.toggle("right-sidebar-open", open);
+    if (open) {
+      elements.rightSidebarTitle.textContent = title || "扩展程序";
+      elements.rightSidebarWebview.src = url;
+    } else {
+      elements.rightSidebarWebview.src = "about:blank";
+      // 关键修复：关闭右侧栏时，移除自定义宽度，恢复为默认 340px
+      document.documentElement.style.removeProperty("--right-sidebar-width");
+    }
+    setTimeout(() => {
+      fitAddon?.fit();
+      fitWebviewZoom();
+    }, 230);
+  }
+  ```
+
+### 缺陷 2：扩展运行报错 `Cannot read properties of undefined (reading 'getAll')` [严重等级：高]
+* **缺陷原因**：
+  您的 Chrome 扩展在点击“一键获取配置”时，调用了 `chrome.cookies.getAll` 来获取当前网页的登录状态。然而，**Electron 的 Chrome 扩展加载器默认并未实现 `chrome.cookies` API**（它是未定义的），导致插件在调用时抛出 Undefined 崩溃。
+* **整改方案**：
+  在我们的扩展垫片脚本 [preload-popup.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/preload-popup.js) 中，为 `window.chrome` 补充注入 `chrome.cookies.getAll` 和 `chrome.cookies.get` 的 Shim 垫片。在插件调用时，通过 IPC 向主进程发起查询，主进程调用 Electron 原生 Session Cookies 接口返回结果，实现完美打通！
 * **修改指导**：
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在 `#right-sidebar` 内部最前端加入：
-    ```html
-    <div id="right-sidebar-resizer" class="right-sidebar-resizer" title="拖动调整侧边栏宽度"></div>
-    ```
-  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：
-    ```css
-    .right-sidebar { position: relative; }
-    .right-sidebar-resizer { width: 12px; cursor: ew-resize; position: absolute; left: -6px; top: 0; bottom: 0; z-index: 10; }
-    ```
-  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
-    实现 `beginRightSidebarResize` 监听器，并在拖拽过程中更新 CSS 变量 `--right-sidebar-width`：
+  - **在 `personal-workbench/main.js` 中**：
+    注册获取 Cookie 的 IPC 处理器：
     ```javascript
-    const rightResizer = document.querySelector("#right-sidebar-resizer");
-    rightResizer.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
-      rightResizer.setPointerCapture(event.pointerId);
-      setWebviewPointerEvents(false);
-      const startX = event.clientX;
-      const startWidth = elements.rightSidebar.getBoundingClientRect().width;
-      
-      const onMove = (moveEvent) => {
-        // 因为侧边栏在右侧，向左拖拽（clientX 变小）宽度变大
-        const width = Math.max(280, Math.min(window.innerWidth * 0.6, startWidth + startX - moveEvent.clientX));
-        document.documentElement.style.setProperty("--right-sidebar-width", `${width}px`);
-        fitWebviewZoom();
-      };
-      const onUp = () => {
-        rightResizer.releasePointerCapture(event.pointerId);
-        setWebviewPointerEvents(true);
-        rightResizer.removeEventListener("pointermove", onMove);
-        rightResizer.removeEventListener("pointerup", onUp);
-      };
-      rightResizer.addEventListener("pointermove", onMove);
-      rightResizer.addEventListener("pointerup", onUp);
+    ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
+      try {
+        // 使用工作台 persist 分区查询原生 cookie
+        return await workbenchSession().cookies.get(details);
+      } catch (err) {
+        return [];
+      }
     });
     ```
-
-### 缺陷 2：嵌入的 Chrome 扩展无法获取工作台当前的网页链接（无法激活按钮） [严重等级：高]
-* **缺陷原因**：
-  Chrome 插件通常调用 `chrome.tabs.query({ active: true, currentWindow: true })` 来查询当前激活标签页的 URL。在 Electron 中，由于插件运行在独立的扩展上下文，它无法识别网页的 `<webview>` 为标准浏览器 Tab，导致插件查询不到当前 URL（出现您截图中的“请在训练页面打开”提示）。
-* **整改方案**：
-  通过编写一个专门针对扩展 Popup 窗口的 `webview 预加载脚本` (Popup Preload)，重写并注入 `chrome.tabs.query` 和 `chrome.tabs.getSelected` API。在插件调用该接口时，通过 IPC 向主进程获取工作台当前活跃的 webview 网页地址，实现无缝对接！
-* **修改指导**：
-  - **[NEW] [preload-popup.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/preload-popup.js)**：
+  - **在 [preload-popup.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/preload-popup.js) 中**：
+    编写 `mockCookies` 实现，并在 `patchChromeTabs` 中将其绑定：
     ```javascript
-    const { contextBridge, ipcRenderer } = require("electron");
-
-    let mockChrome = {
-      tabs: {
-        query(queryInfo, callback) {
-          ipcRenderer.invoke("workbench:get-active-tab-info").then((tabInfo) => {
-            callback([{ id: 9999, url: tabInfo.url, title: tabInfo.title, active: true }]);
-          });
-        },
-        getSelected(windowId, callback) {
-          const cb = typeof windowId === "function" ? windowId : callback;
-          ipcRenderer.invoke("workbench:get-active-tab-info").then((tabInfo) => {
-            cb({ id: 9999, url: tabInfo.url, title: tabInfo.title, active: true });
-          });
-        }
+    const mockCookies = {
+      getAll(details, callback) {
+        const promise = ipcRenderer.invoke("workbench:get-cookies", details).then((list) => list || []);
+        if (typeof callback === "function") promise.then(callback);
+        return promise;
+      },
+      get(details, callback) {
+        const promise = ipcRenderer.invoke("workbench:get-cookies", details).then((list) => list?.[0] || null);
+        if (typeof callback === "function") promise.then(callback);
+        return promise;
       }
     };
 
-    // 智能拦截并注入到 chrome API 中
-    if (typeof window.chrome === "undefined") {
-      let realChrome = undefined;
-      Object.defineProperty(window, "chrome", {
-        get() { return realChrome || mockChrome; },
-        set(val) {
-          realChrome = val;
-          if (realChrome) {
-            realChrome.tabs = realChrome.tabs || {};
-            realChrome.tabs.query = mockChrome.tabs.query;
-            realChrome.tabs.getSelected = mockChrome.tabs.getSelected;
-          }
-        },
-        configurable: true
-      });
-    } else {
-      window.chrome.tabs = window.chrome.tabs || {};
-      window.chrome.tabs.query = mockChrome.tabs.query;
-      window.chrome.tabs.getSelected = mockChrome.tabs.getSelected;
+    function patchChromeApis(chromeApi) {
+      if (!chromeApi) return;
+      // 注入 tabs API
+      chromeApi.tabs = chromeApi.tabs || {};
+      chromeApi.tabs.query = mockTabs.query;
+      chromeApi.tabs.getSelected = mockTabs.getSelected;
+      
+      // 关键修复：注入 cookies API 补全
+      chromeApi.cookies = chromeApi.cookies || {};
+      chromeApi.cookies.getAll = mockCookies.getAll;
+      chromeApi.cookies.get = mockCookies.get;
     }
     ```
-  - **[preload.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/preload.js)** & **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
-    - 渲染进程在切换标签页（`activateTab`）和网页跳转（`did-navigate`）时，通过 IPC 更新主进程记录的 `activeTabInfo`：
-      `window.workbench.updateActiveTabInfo({ url: webview.getURL(), title: tab.name })`。
-    - 为右侧侧边栏 webview 动态绑定该预加载脚本：
-      `<webview id="right-sidebar-webview" partition="persist:personal-workbench" preload="preload-popup.js"></webview>`。
-  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)**：
-    - 增加内存状态变量 `let activeTabInfo = { url: "", title: "" };`
-    - 注册 IPC 监听：`ipcMain.on("tab:active-update", (_, info) => { activeTabInfo = info; });`
-    - 注册 IPC 处理：`ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);`
+    *(注：确保 getter/setter 劫持中也将 `patchChromeApis` 应用于 `window.chrome`。)*
 
-### 缺陷 3：扩展设置弹窗缺少“刷新扩展”功能 [严重等级：中]
+### 缺陷 3：拉伸底部终端和右侧栏时存在“严重卡顿/延迟”不丝滑 [严重等级：中]
 * **缺陷原因**：
-  修改或添加扩展路径后，必须彻底重启整个应用才能让扩展生效，调试和使用过程极不方便。
+  因为我们在 `.terminal-panel`（高）、`.app-shell`（网格列宽）中配置了 CSS 过渡动画（`transition: height 220ms ease` 等）。在鼠标拖动时，每一帧都在修改尺寸，而 CSS 动画会在每一帧之间尝试进行过渡，导致**界面渲染严重滞后于鼠标轨迹，显得极不跟手和卡顿**。
 * **整改方案**：
-  在扩展设置的弹窗标题旁增加一个刷新的图标按钮。点击后，主进程遍历并卸载所有已加载扩展，并重新从配置文件载入加载，实现热重载。
+  在开始拖拽（PointerDown）时，为 `body` 或 `.app-shell` 动态添加一个 `.resizing` 类；在结束拖拽（PointerUp）时移除该类。在 CSS 中配置：当处于 `.resizing` 状态下时，**强制禁用一切 transition 过渡**，从而实现绝对实时、丝滑跟手的拉拽体验。
 * **修改指导**：
-  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在 `#settings-dialog` 的标题右侧添加刷新按钮：
-    ```html
-    <h2>本地扩展设置 <button id="refresh-extensions-button" class="icon-button inline-refresh" type="button" title="刷新并重新加载扩展">↻</button></h2>
-    ```
-  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)**：
-    ```javascript
-    ipcMain.handle("extensions:refresh", async () => {
-      const loaded = workbenchSession().extensions.getAllExtensions();
-      for (const ext of loaded) {
-        try { workbenchSession().extensions.removeExtension(ext.id); } catch {}
-      }
-      extensionResults = await loadConfiguredExtensions();
-      return extensionResults;
-    });
+  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：
+    ```css
+    /* 拖拽拉伸时禁用一切过渡效果，保障绝对流畅 */
+    .app-shell.resizing,
+    .app-shell.resizing * {
+      transition: none !important;
+    }
     ```
   - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
-    绑定 `#refresh-extensions-button` 的点击事件，调用 `window.workbench.refreshExtensions()` 并在完成后重新渲染扩展列表。
+    在 `beginTerminalResize` 和 `beginRightSidebarResize` 的 `pointerdown` 处加入：
+    ```javascript
+    elements.appShell.classList.add("resizing");
+    ```
+    在对应的 `onUp` 处理函数（拖拽结束）中加入：
+    ```javascript
+    elements.appShell.classList.remove("resizing");
+    ```
 
 ---
 
