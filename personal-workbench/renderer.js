@@ -452,20 +452,49 @@ document.querySelector("#move-down-tab-button").addEventListener("click", () => 
 document.querySelector("#add-extension-button").addEventListener("click", () => extensionRow());
 document.querySelector("#settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const entries = [...document.querySelectorAll(".extension-row")].map((row) => ({
-    enabled: row.querySelector(".extension-enabled").checked,
-    id: row.querySelector(".extension-id").value.trim(),
-    path: row.querySelector(".extension-path").value.trim()
-  })).filter((entry) => entry.id || entry.path);
-  const results = await window.workbench.saveExtensions(entries);
-  renderExtensionResults(results);
-  renderExtensionsInTopbar(results);
+  try {
+    const entries = [...document.querySelectorAll(".extension-row")].map((row) => ({
+      enabled: row.querySelector(".extension-enabled").checked,
+      id: row.querySelector(".extension-id").value.trim(),
+      path: row.querySelector(".extension-path").value.trim()
+    })).filter((entry) => entry.id || entry.path);
+    
+    const results = await window.workbench.saveExtensions(entries);
+    renderExtensionResults(results);
+    renderExtensionsInTopbar(results);
+    
+    // 自动关闭窗口
+    elements.settingsDialog.close();
+    
+    // 弹出 Toast 反馈
+    const failCount = results.filter(r => !r.ok).length;
+    if (failCount > 0) {
+      showToast(`扩展保存成功，但有 ${failCount} 个加载失败！`, "error");
+    } else {
+      showToast(results.length ? "扩展配置已成功保存并加载！" : "扩展配置已保存（当前无启用扩展）", "success");
+    }
+  } catch (error) {
+    console.error("保存扩展失败:", error);
+    showToast(`保存扩展失败: ${error.message || error}`, "error");
+  }
 });
 
 document.querySelector("#refresh-extensions-button").addEventListener("click", async () => {
-  const results = await window.workbench.refreshExtensions();
-  renderExtensionResults(results);
-  renderExtensionsInTopbar(results);
+  try {
+    const results = await window.workbench.refreshExtensions();
+    renderExtensionResults(results);
+    renderExtensionsInTopbar(results);
+    
+    const failCount = results.filter(r => !r.ok).length;
+    if (failCount > 0) {
+      showToast(`扩展重新加载成功，但有 ${failCount} 个加载失败！`, "error");
+    } else {
+      showToast(results.length ? "所有扩展已重新加载成功！" : "已重新加载（当前无启用扩展）", "success");
+    }
+  } catch (error) {
+    console.error("刷新扩展失败:", error);
+    showToast(`刷新扩展失败: ${error.message || error}`, "error");
+  }
 });
 
 const resizer = document.querySelector("#terminal-resizer");
