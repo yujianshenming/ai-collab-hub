@@ -1,7 +1,7 @@
-# Handoff: Antigravity -> Codex (第3轮 - 自定义HTML菜单栏、同行居中状态栏与助手全功能复原)
+# Handoff: Antigravity -> Codex (第4轮 - 自定义HTML状态栏、WebView遮挡修复与任务文件夹工作流)
 
 ## Date
-2026-06-05 18:03
+2026-06-05 18:08
 
 ## From
 Antigravity
@@ -10,17 +10,17 @@ Antigravity
 Codex
 
 ## Summary
-移交最新的个人工作台第3轮重构任务：
-1. 修复分屏和主视图中，原生智能助手面板（`.native-assistant-panel`）折叠至 0 宽时内部文本泄漏的 Bug。
-2. 弃用原生 Windows 菜单栏，引入在 `index.html` 最顶部渲染的**自定义 HTML 应用菜单栏**（`#app-menu-bar`）。
-3. 任务与终端功能一键直达：在 HTML 菜单栏中提供直点按钮，不再使用多级 dropdown 子菜单。
-4. 任务状态栏同行居中：将任务状态横幅移至 HTML 菜单栏的中间，并更名为“正在进行任务: XXX”，消除跑偏和越界问题，无任务时显示“正在进行任务: 无”。
-5. 原生智能训练助手的全功能实现：美化 UI 界面质感，支持自定义测试人设与参数、对话历史持久化与回显加载、大模型 API 参数设置以及 Prompt 导出下载。
+移交最新的个人工作台第4轮重构与新功能要求：
+1. 彻底移除 `index.html` 侧边栏底部的“扩展设置”按钮。
+2. 正在进行任务状态显示精细化：横幅更名为“正在进行任务”。在没有任务运行时，自定义 HTML 菜单栏中间**完全空白，隐藏横幅**；只有当点击任务“执行”后，菜单栏正中间才**显示横幅**。
+3. 彻底修复拖拉蓝线卡死/无法拖拽 Bug：将 resizer 设为 Webview 与面板之间的**Flex 独立兄弟（Sibling）元素**，摆脱绝对定位，从而阻断 Native WebView 对拖拽把手的覆盖遮挡。
+4. 开发任务专属文件夹逻辑：执行任务时自动创建专属目录 `temp/tasks/{taskId}_{school}_{course}`，并在该目录下保存测试对话 `dialogue.json` 与评估报告。
+5. Hermes 自动化加载闭环：在完成评估报告下载后，支持一键将任务文件夹下对话记录和报告的**本地绝对路径**自动填入 Hermes 网页的输入框中，**但先不发送**，由用户确认后手动发送。
 
 ## Current State
-1. 已将本地代码的所有更改还原至您最近提交的稳定点（`94e2c84`）。
-2. 在项目根目录更新了最新的第三轮设计规格：[personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
-3. 在此移交任务，由 Codex 进行代码开发。
+1. 所有的本地源码修改已完全还原至 Codex 在 GitHub 上提交的最新节点（`94e2c84`）。
+2. 在项目根目录起草了最新的第四轮设计规格：[personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
+3. 在此移交任务，由 Codex 接力进行实际代码开发。
 
 ## Important Files
 - **[Plan Spec] [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)**: 包含了本轮开发的所有设计标准和改动参考。
@@ -28,17 +28,19 @@ Codex
 
 ## Requested Next Action for Codex
 请 Codex 按照以下步骤进行：
-1. 本地拉取本分支（`codex/personal-workbench`）的最新更改，读取 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 的详细设计规范。
-2. 隐藏原生菜单栏并开发 HTML 菜单栏：
-   - 在 `main.js` 中设置 `mainWindow.setMenuBarVisibility(false)` 隐藏原生菜单。
-   - 在 `index.html` 最顶部插入 `#app-menu-bar` 容器，横向展示：左侧“工作台”（有二级下拉菜单）、“任务”和“终端”直点按钮；中间绝对居中展示正在进行任务状态栏；右侧“编辑”、“视图”（带二级下拉菜单）。
-   - 在 `renderer.js` 中捕获顶级按钮的点击直接呼起对应的弹窗或面板。同时拦截全局快捷键。
-3. 助手面板折叠泄漏修复：
-   - 仿照 `.tab-extension-panel`，为 `.native-assistant-panel` 包裹内部的 `.native-assistant-content` 容器，并设置 `overflow: hidden; width: 100%; height: 100%;` 使得宽度为 0 时内部文本完美裁剪。
-4. 全面复原并升级智能助手：
-   - **UI 升级**：融入毛玻璃背景、精致圆角与阴影聊天气泡、及交互发光与缩放微动画。
-   - **测试人设**：开发独立的人格配置与增删改页面。
-   - **对话记录**：将会话内容实时存储至本地 JSON，重开任务时自动加载回显历史记录。
-   - **登录态与参数获取**：读取 Webview 内的 `ai-poly` Cookie，并调用 Polymas API 渲染当前步骤的卡片参数。
-   - **模型设置与 Prompt 下载**：支持自定义配置大模型服务各项参数，并提供下载 Prompt 与对话日志文件的功能。
-5. 完成开发后运行 `npm run check` 自检，然后重新启动工作台进行各项验证，最终将代码提交和推送至 GitHub 协作仓库中！
+1. 本地拉取本分支（`codex/personal-workbench`）的最新更改，读取 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 详细设计规范。
+2. 清理左下角与横幅逻辑：
+   - 移除 `index.html` 里的 `#settings-button`。
+   - 实现 HTML 自定义菜单栏 `#app-menu-bar`（包含顶级一键直达的任务与终端按钮，悬浮的工作台、编辑、视图下拉框）。
+   - 横幅在无任务时设置 `display: none` 隐藏；启动任务时由 `renderer.js` 设置其为 `display: flex` 并更新文字。
+3. 兄弟元素重构 resizer：
+   - 将 `.tab-extension-resizer` 从 `.tab-extension-panel` 内部移出，作为兄弟节点放在 `webview` 与 `panel` 中间。
+   - 样式上设为独立的 flex 元素（宽度 `4px`），避免被 WebView 遮挡，且保证 0 宽闭合时能被拖拽拉开。
+4. 专属文件夹机制开发：
+   - 主进程在启动任务时，自动在 `temp/tasks` 创建专属文件夹。
+   - 保存对话记录、拦截并移动保存评估报告至该目录下。
+   - 自动在评估页面中拦截上传此文件夹下的文档和对话 JSON。
+5. Hermes 灌入逻辑：
+   - 提供“加载至 Hermes”按钮，读取专属文件夹下对话与报告的**绝对路径**。
+   - 自动切换至 Hermes 页面，将文本填入输入框，**保留不发送**。
+6. 完成开发后运行 `npm run check` 进行自检，重新启动工作台进行各项验证，并将代码提交和推送至 GitHub 协作分支上！
