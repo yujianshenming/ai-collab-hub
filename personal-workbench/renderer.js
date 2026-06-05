@@ -206,7 +206,13 @@ function activateTab(id) {
   });
 
   elements.activeTitle.textContent = tab.name;
-  elements.addressInput.value = activeWebview()?.getURL?.() || tab.url;
+  let currentUrl = tab.url;
+  try {
+    currentUrl = activeWebview()?.getURL?.() || tab.url;
+  } catch (error) {
+    console.warn("获取 Webview URL 失败:", error);
+  }
+  elements.addressInput.value = currentUrl;
   updateActiveTabInfo();
   fitWebviewZoom();
 }
@@ -218,22 +224,36 @@ function fitWebviewZoom() {
     if (!webview) return;
     const width = viewport.clientWidth || targetWidth;
     const zoom = Math.max(0.65, Math.min(1, width / targetWidth));
-    webview.setZoomFactor?.(zoom);
+    try {
+      webview.setZoomFactor?.(zoom);
+    } catch (error) {
+      console.warn("设置 Zoom 失败（Webview 实例尚未就绪）：", error);
+    }
   });
 }
 
 function updateAddressFromWebview(webview) {
   const tabId = webview.closest(".tab-viewport")?.dataset.id;
   if (tabId === activeTabId) {
-    elements.addressInput.value = webview.getURL();
-    updateActiveTabInfo();
+    try {
+      elements.addressInput.value = webview.getURL();
+      updateActiveTabInfo();
+    } catch (error) {
+      console.warn("更新地址栏失败:", error);
+    }
   }
 }
 
 function updateActiveTabInfo() {
   const tab = tabs.find((candidate) => candidate.id === activeTabId);
+  let activeUrl = "";
+  try {
+    activeUrl = activeWebview()?.getURL?.() || tab?.url || "";
+  } catch (error) {
+    activeUrl = tab?.url || "";
+  }
   window.workbench.updateActiveTabInfo({
-    url: activeWebview()?.getURL?.() || tab?.url || "",
+    url: activeUrl,
     title: tab?.name || ""
   });
 }
@@ -465,16 +485,39 @@ document.querySelector("#go-button").addEventListener("click", navigateToAddress
 elements.addressInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") navigateToAddress();
 });
-document.querySelector("#back-button").addEventListener("click", () => activeWebview()?.canGoBack() && activeWebview().goBack());
-document.querySelector("#forward-button").addEventListener("click", () => activeWebview()?.canGoForward() && activeWebview().goForward());
+document.querySelector("#back-button").addEventListener("click", () => {
+  try {
+    const webview = activeWebview();
+    if (webview && webview.canGoBack()) webview.goBack();
+  } catch (error) {
+    console.warn("后退失败:", error);
+  }
+});
+document.querySelector("#forward-button").addEventListener("click", () => {
+  try {
+    const webview = activeWebview();
+    if (webview && webview.canGoForward()) webview.goForward();
+  } catch (error) {
+    console.warn("前进失败:", error);
+  }
+});
 document.querySelector("#reload-button").addEventListener("click", () => {
-  const webview = activeWebview();
-  if (!webview) return;
-  webview.isLoading() ? webview.stop() : webview.reload();
+  try {
+    const webview = activeWebview();
+    if (!webview) return;
+    webview.isLoading() ? webview.stop() : webview.reload();
+  } catch (error) {
+    console.warn("重新加载失败:", error);
+  }
 });
 
 document.querySelector("#get-task-id-button").addEventListener("click", () => {
-  const url = elements.addressInput.value || activeWebview()?.getURL?.() || "";
+  let url = "";
+  try {
+    url = elements.addressInput.value || activeWebview()?.getURL?.() || "";
+  } catch (error) {
+    url = elements.addressInput.value || "";
+  }
   if (!url) {
     showToast("当前没有打开的网页网址", "error");
     return;
@@ -714,33 +757,42 @@ document.addEventListener("pointerup", (event) => {
   if (dragItem?.hasPointerCapture(pointerDrag.pointerId)) dragItem.releasePointerCapture(pointerDrag.pointerId);
   setWebviewPointerEvents(true);
 
-  if (pointerDrag.active) {
-    const isRightSide = event.clientX > window.innerWidth * 0.7;
-    if (isRightSide) {
-      toggleRightSidebar(true, pointerDrag.id);
-    } else {
-      const targetItem = document.querySelector(".tab-item.swap-target");
-      const targetId = targetItem?.dataset.id;
-      if (targetId && swapTabs(pointerDrag.id, targetId)) {
-        renderTabs();
+  try {
+    if (pointerDrag.active) {
+      const isRightSide = event.clientX > window.innerWidth * 0.7;
+      if (isRightSide) {
+        toggleRightSidebar(true, pointerDrag.id);
+      } else {
+        const targetItem = document.querySelector(".tab-item.swap-target");
+        const targetId = targetItem?.dataset.id;
+        if (targetId && swapTabs(pointerDrag.id, targetId)) {
+          renderTabs();
+        }
       }
+    } else {
+      activateTab(pointerDrag.id);
     }
-  } else {
-    activateTab(pointerDrag.id);
+  } catch (error) {
+    console.error("释放拖拽操作执行失败:", error);
+  } finally {
+    pointerDrag = null;
+    clearDragState();
   }
-  
-  pointerDrag = null;
-  clearDragState();
 });
 
 document.addEventListener("pointercancel", () => {
-  const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag?.id}"]`);
-  if (dragItem && pointerDrag?.pointerId !== undefined && dragItem.hasPointerCapture(pointerDrag.pointerId)) {
-    dragItem.releasePointerCapture(pointerDrag.pointerId);
+  try {
+    const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag?.id}"]`);
+    if (dragItem && pointerDrag?.pointerId !== undefined && dragItem.hasPointerCapture(pointerDrag.pointerId)) {
+      dragItem.releasePointerCapture(pointerDrag.pointerId);
+    }
+  } catch (error) {
+    console.error("释放指针捕获失败:", error);
+  } finally {
+    setWebviewPointerEvents(true);
+    pointerDrag = null;
+    clearDragState();
   }
-  setWebviewPointerEvents(true);
-  pointerDrag = null;
-  clearDragState();
 });
 initTerminal();
 renderTabs();
