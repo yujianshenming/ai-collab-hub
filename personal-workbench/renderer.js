@@ -6,6 +6,7 @@ const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
 let tabs = readTabs();
 let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
+let splitTabId = null;
 let terminal;
 let fitAddon;
 let pointerDrag = null;
@@ -26,8 +27,7 @@ const elements = {
   rightSidebar: document.querySelector("#right-sidebar"),
   rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
-  rightSidebarClose: document.querySelector("#right-sidebar-close"),
-  rightSidebarWebview: document.querySelector("#right-sidebar-webview")
+  rightSidebarClose: document.querySelector("#right-sidebar-close")
 };
 
 function readTabs() {
@@ -63,7 +63,7 @@ function renderTabs() {
 
   for (const tab of tabs) {
     const item = document.createElement("div");
-    item.className = `tab-item${tab.id === activeTabId ? " active" : ""}`;
+    item.className = `tab-item${tab.id === activeTabId ? " active" : ""}${tab.id === splitTabId ? " split-active" : ""}`;
     item.dataset.id = tab.id;
     item.innerHTML = `
       <button class="tab-main" type="button">
@@ -81,20 +81,24 @@ function renderTabs() {
     });
     elements.tabList.append(item);
 
-    if (!document.querySelector(`webview[data-id="${tab.id}"]`)) {
-      createWebview(tab);
+    if (!document.querySelector(`.tab-viewport[data-id="${tab.id}"]`)) {
+      createTabViewport(tab);
     }
   }
 
-  document.querySelectorAll("webview[data-id]").forEach((webview) => {
-    if (!tabs.some((tab) => tab.id === webview.dataset.id)) webview.remove();
+  document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
+    if (!tabs.some((tab) => tab.id === viewport.dataset.id)) viewport.remove();
   });
 
   activateTab(tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0].id);
 }
 
 function clearDragState() {
-  document.querySelectorAll(".tab-item").forEach((item) => item.classList.remove("dragging", "drag-over"));
+  document.querySelectorAll(".tab-item").forEach((item) => {
+    item.classList.remove("dragging", "swap-target");
+    item.style.transform = "";
+  });
+  document.querySelector("#split-drag-overlay")?.classList.remove("show");
 }
 
 function setWebviewPointerEvents(enabled) {
@@ -103,19 +107,24 @@ function setWebviewPointerEvents(enabled) {
   });
 }
 
-function reorderTab(draggedId, targetId) {
-  const draggedIndex = tabs.findIndex((tab) => tab.id === draggedId);
-  const targetIndex = tabs.findIndex((tab) => tab.id === targetId);
-  if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return false;
-  const [draggedTab] = tabs.splice(draggedIndex, 1);
-  tabs.splice(targetIndex, 0, draggedTab);
+function swapTabs(id1, id2) {
+  const idx1 = tabs.findIndex((t) => t.id === id1);
+  const idx2 = tabs.findIndex((t) => t.id === id2);
+  if (idx1 < 0 || idx2 < 0 || idx1 === idx2) return false;
+  const temp = tabs[idx1];
+  tabs[idx1] = tabs[idx2];
+  tabs[idx2] = temp;
   saveTabs();
   return true;
 }
 
-function createWebview(tab) {
+function createTabViewport(tab) {
+  const viewport = document.createElement("div");
+  viewport.className = "tab-viewport";
+  viewport.dataset.id = tab.id;
+
   const webview = document.createElement("webview");
-  webview.dataset.id = tab.id;
+  webview.className = "tab-webview";
   webview.src = tab.url;
   webview.partition = "persist:personal-workbench";
   webview.setAttribute("allowpopups", "false");
@@ -135,22 +144,67 @@ function createWebview(tab) {
   webview.addEventListener("page-title-updated", (event) => {
     if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
   });
-  elements.webviewStack.append(webview);
-  fitWebviewZoom();
+
+  const extPanel = document.createElement("div");
+  extPanel.className = "tab-extension-panel";
+  extPanel.innerHTML = `
+    <div class="tab-extension-header">
+      <span class="tab-extension-title">扩展程序</span>
+      <button class="icon-button tab-extension-close" type="button" aria-label="关闭扩展">×</button>
+    </div>
+    <div class="tab-extension-body"></div>
+  `;
+  extPanel.querySelector(".tab-extension-close").addEventListener("click", () => {
+    extPanel.classList.remove("open");
+    const extWebview = extPanel.querySelector("webview");
+    if (extWebview) extWebview.src = "about:blank";
+  });
+
+  viewport.append(webview);
+  viewport.append(extPanel);
+  elements.webviewStack.append(viewport);
 }
 
 function activeWebview() {
-  return document.querySelector(`webview[data-id="${activeTabId}"]`);
+  return document.querySelector(`.tab-viewport[data-id="${activeTabId}"] .tab-webview`);
 }
 
 function activateTab(id) {
+  if (splitTabId === id) {
+    splitTabId = activeTabId;
+  }
   activeTabId = id;
   localStorage.setItem("personal_workbench_active", id);
   const tab = tabs.find((candidate) => candidate.id === id);
   if (!tab) return;
 
-  document.querySelectorAll(".tab-item").forEach((item) => item.classList.toggle("active", item.dataset.id === id));
-  document.querySelectorAll("webview[data-id]").forEach((webview) => webview.classList.toggle("active", webview.dataset.id === id));
+  document.querySelectorAll(".tab-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.id === id);
+    item.classList.toggle("split-active", item.dataset.id === splitTabId);
+  });
+
+  // Move viewports to their correct parent containers
+  document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
+    const vpId = viewport.dataset.id;
+    if (vpId === activeTabId) {
+      viewport.classList.add("active");
+      if (viewport.parentElement !== elements.webviewStack) {
+        elements.webviewStack.append(viewport);
+      }
+    } else if (vpId === splitTabId) {
+      viewport.classList.add("active");
+      const rightBody = document.querySelector("#right-sidebar-body");
+      if (viewport.parentElement !== rightBody) {
+        rightBody.append(viewport);
+      }
+    } else {
+      viewport.classList.remove("active");
+      if (viewport.parentElement !== elements.webviewStack) {
+        elements.webviewStack.append(viewport);
+      }
+    }
+  });
+
   elements.activeTitle.textContent = tab.name;
   elements.addressInput.value = activeWebview()?.getURL?.() || tab.url;
   updateActiveTabInfo();
@@ -159,15 +213,18 @@ function activateTab(id) {
 
 function fitWebviewZoom() {
   const targetWidth = 1280;
-  const width = elements.webviewStack.clientWidth || targetWidth;
-  const zoom = Math.max(0.75, Math.min(1, width / targetWidth));
-  document.querySelectorAll("webview[data-id]").forEach((webview) => {
+  document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
+    const webview = viewport.querySelector(".tab-webview");
+    if (!webview) return;
+    const width = viewport.clientWidth || targetWidth;
+    const zoom = Math.max(0.65, Math.min(1, width / targetWidth));
     webview.setZoomFactor?.(zoom);
   });
 }
 
 function updateAddressFromWebview(webview) {
-  if (webview.dataset.id === activeTabId) {
+  const tabId = webview.closest(".tab-viewport")?.dataset.id;
+  if (tabId === activeTabId) {
     elements.addressInput.value = webview.getURL();
     updateActiveTabInfo();
   }
@@ -310,23 +367,71 @@ function renderExtensionsInTopbar(results) {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       const popupUrl = `chrome-extension://${extension.id}/${extension.popupPage.replace(/^\/+/, "")}`;
-      const isOpen = elements.appShell.classList.contains("right-sidebar-open")
-        && elements.rightSidebarWebview.src === popupUrl;
-      toggleRightSidebar(!isOpen, popupUrl, extension.name);
+      toggleTabExtension(activeTabId, extension.name, popupUrl);
     });
     elements.extensionsBar.append(button);
   }
 }
 
-function toggleRightSidebar(open, url = "", title = "") {
-  elements.appShell.classList.toggle("right-sidebar-open", open);
-  if (open) {
-    elements.rightSidebarTitle.textContent = title || "扩展程序";
-    elements.rightSidebarWebview.src = url;
+function toggleTabExtension(tabId, name, url) {
+  const viewport = document.querySelector(`.tab-viewport[data-id="${tabId}"]`);
+  if (!viewport) return;
+  
+  const extPanel = viewport.querySelector(".tab-extension-panel");
+  const extBody = viewport.querySelector(".tab-extension-body");
+  const extTitle = viewport.querySelector(".tab-extension-title");
+  
+  // Check if this extension is already open
+  const existingWebview = extBody.querySelector("webview");
+  const isOpen = extPanel.classList.contains("open") && existingWebview && existingWebview.src === url;
+  
+  if (isOpen) {
+    // Close it
+    extPanel.classList.remove("open");
+    if (existingWebview) existingWebview.src = "about:blank";
   } else {
-    elements.rightSidebarWebview.src = "about:blank";
+    // Open it
+    extTitle.textContent = name;
+    extPanel.classList.add("open");
+    
+    // Clear and create/re-use webview
+    extBody.replaceChildren();
+    const extWebview = document.createElement("webview");
+    extWebview.className = "tab-extension-webview";
+    extWebview.src = url;
+    extWebview.partition = "persist:personal-workbench";
+    extWebview.preload = "./preload-popup.js";
+    extWebview.setAttribute("webpreferences", "contextIsolation=no");
+    extBody.append(extWebview);
+  }
+  
+  setTimeout(() => {
+    fitWebviewZoom();
+  }, 230);
+}
+
+function toggleRightSidebar(open, tabId = null) {
+  if (open && tabId) {
+    if (tabs.length < 2) {
+      showToast("至少需要两个标签页才能开启分屏", "error");
+      return;
+    }
+    splitTabId = tabId;
+    elements.appShell.classList.add("right-sidebar-open");
+    if (activeTabId === splitTabId) {
+      const otherTab = tabs.find(t => t.id !== splitTabId);
+      if (otherTab) activeTabId = otherTab.id;
+    }
+    document.querySelector("#right-sidebar-title").textContent = tabs.find(t => t.id === splitTabId)?.name || "分屏视图";
+  } else {
+    splitTabId = null;
+    elements.appShell.classList.remove("right-sidebar-open");
     document.documentElement.style.removeProperty("--right-sidebar-width");
   }
+  
+  // Re-run activateTab to update viewport DOM locations
+  activateTab(activeTabId);
+  
   setTimeout(() => {
     fitAddon?.fit();
     fitWebviewZoom();
@@ -569,25 +674,65 @@ window.addEventListener("resize", () => {
 document.addEventListener("pointermove", (event) => {
   if (!pointerDrag) return;
   if (!pointerDrag.active && Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
+  
   pointerDrag.active = true;
-  document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`)?.classList.add("dragging");
-  document.querySelectorAll(".tab-item.drag-over").forEach((item) => item.classList.remove("drag-over"));
-  document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.classList.add("drag-over");
+  const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+  if (dragItem) {
+    dragItem.classList.add("dragging");
+    // Translate the item relative to mouse movement delta
+    dragItem.style.transform = `translate(${event.clientX - pointerDrag.startX}px, ${event.clientY - pointerDrag.startY}px) scale(1.02)`;
+  }
+
+  const isRightSide = event.clientX > window.innerWidth * 0.7;
+  const overlay = document.querySelector("#split-drag-overlay");
+  
+  if (isRightSide) {
+    // Show split overlay, hide swap highlights
+    overlay?.classList.add("show");
+    document.querySelectorAll(".tab-item").forEach((item) => item.classList.remove("swap-target"));
+  } else {
+    overlay?.classList.remove("show");
+    
+    // Find hovered sidebar tab using bounding box coordinates
+    const items = document.querySelectorAll(".tab-item");
+    for (const item of items) {
+      if (item.dataset.id === pointerDrag.id) continue;
+      const rect = item.getBoundingClientRect();
+      if (event.clientX >= rect.left && event.clientX <= rect.right &&
+          event.clientY >= rect.top && event.clientY <= rect.bottom) {
+        item.classList.add("swap-target");
+      } else {
+        item.classList.remove("swap-target");
+      }
+    }
+  }
 });
+
 document.addEventListener("pointerup", (event) => {
   if (!pointerDrag) return;
   const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
   if (dragItem?.hasPointerCapture(pointerDrag.pointerId)) dragItem.releasePointerCapture(pointerDrag.pointerId);
   setWebviewPointerEvents(true);
+
   if (pointerDrag.active) {
-    const targetId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.dataset.id;
-    if (targetId && reorderTab(pointerDrag.id, targetId)) renderTabs();
+    const isRightSide = event.clientX > window.innerWidth * 0.7;
+    if (isRightSide) {
+      toggleRightSidebar(true, pointerDrag.id);
+    } else {
+      const targetItem = document.querySelector(".tab-item.swap-target");
+      const targetId = targetItem?.dataset.id;
+      if (targetId && swapTabs(pointerDrag.id, targetId)) {
+        renderTabs();
+      }
+    }
   } else {
     activateTab(pointerDrag.id);
   }
+  
   pointerDrag = null;
   clearDragState();
 });
+
 document.addEventListener("pointercancel", () => {
   const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag?.id}"]`);
   if (dragItem && pointerDrag?.pointerId !== undefined && dragItem.hasPointerCapture(pointerDrag.pointerId)) {

@@ -90,15 +90,20 @@
       </main>
 
       <aside id="right-sidebar" class="right-sidebar">
-        <div id="right-sidebar-resizer" class="right-sidebar-resizer" title="拖动调整侧边栏宽度"></div>
+        <div id="right-sidebar-resizer" class="right-sidebar-resizer" title="拖动调整分屏宽度"></div>
         <header class="right-sidebar-header">
-          <strong id="right-sidebar-title">扩展程序</strong>
-          <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭扩展侧边栏" title="关闭扩展侧边栏">×</button>
+          <strong id="right-sidebar-title">分屏视图</strong>
+          <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭分屏" title="关闭分屏">×</button>
         </header>
-        <div class="right-sidebar-body">
-          <webview id="right-sidebar-webview" partition="persist:personal-workbench" preload="./preload-popup.js" webpreferences="contextIsolation=no"></webview>
-        </div>
+        <div id="right-sidebar-body" class="right-sidebar-body"></div>
       </aside>
+    </div>
+
+    <div id="split-drag-overlay" class="split-drag-overlay">
+      <div class="split-drag-box">
+        <span class="split-drag-icon">◫</span>
+        <span class="split-drag-text">释放以开启分屏显示</span>
+      </div>
     </div>
 
     <dialog id="tab-dialog" class="modal">
