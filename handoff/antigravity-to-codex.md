@@ -1,7 +1,7 @@
-# Handoff: Antigravity -> Codex (第2轮 - 菜单栏原生化与任务系统重构)
+# Handoff: Antigravity -> Codex (第3轮 - 原生菜单优化、分屏溢出修复与智能助手全功能复原)
 
 ## Date
-2026-06-05 16:34
+2026-06-05 17:50
 
 ## From
 Antigravity
@@ -10,28 +10,34 @@ Antigravity
 Codex
 
 ## Summary
-移交最新的个人工作台重构方案：任务和终端切换功能收进左上角原生菜单；任务管理弹窗修改为列表优先（拆分为列表视图和新增/编辑表单视图），更新五种具体任务类型并移除关联文档路径。
+移交最新的个人工作台重构方案：
+1. 修复分屏和主视图中，扩展及助手面板折叠到 0 宽时内部文本/按钮泄漏溢出的 CSS 渲染 Bug。
+2. 将地址栏上方占地方的 HTML 任务状态横幅移除，改为在 Electron 原生菜单栏的中间作为一个置灰/禁用的顶级菜单项展示，并更名为“正在进行任务”。
+3. 优化原生菜单栏中“任务”和“终端”的点击响应，去除二级子菜单，使点击顶级标签即可直接触发相应的功能弹窗或面板。
+4. 全面升级与复原内置的“Polymas 原生智能训练助手”：美化 UI 界面质感，支持测试人设增删改配、历史聊天持久化与加载、自动读取页面核心卡片参数、灵活的模型 Endpoint 设置以及 Prompt 导出下载。
 
 ## Current State
-1. 已在协作仓库中起草了最新的第二轮设计方案 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
-2. 先前制定的后台一键 Git 同步、可视化进度条等后续扩展建议已全部舍弃，不予采纳。
-3. 修正了任务数据格式，初始化在 [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json) 中。
+1. 所有的本地源码修改已完全还原至 Codex 在 GitHub 上提交的最新提交点（`6dab867`）。
+2. 在项目根目录起草了最新的第三轮设计规格：[personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
+3. 在此移交任务，由 Codex 接力进行实际的代码开发和逻辑实现。
 
 ## Important Files
-- **[Plan Spec] [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)**: 包含了 `main.js`、`index.html`、`renderer.js` 和 `style.css` 的具体修改规格。
-- **[Tasks JSON] [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json)**: 更新后的任务数据底板。
-
-## Decisions Made
-- **原生菜单栏实现**：不再使用 HTML 绘制的顶部栏 Tasks 和 >_ 按钮，而是完全通过 Electron 提供的应用级 Menu API，将操作选项融入 Windows 窗口左上角的菜单系统（工作台 -> 本周任务/本地终端/扩展设置），使用原生快捷键触发。
-- **列表优先的双视图弹窗**：任务管理器弹窗初次打开时只渲染任务表格（如果无数据展示“暂无任务”的提示）。点击最下方的“添加任务”或操作列的“编辑”后，弹窗内容平滑切换为表单输入界面；保存或取消后再切换回列表展示。
-- **重新界定任务类型**：移除 docPath，只维护 5 种业务类型的映射（能力训练搭建、能力训练修改、能力训练验收、作业批阅搭建、作业批阅验收）。
+- **[Plan Spec] [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)**: 包含了本轮开发的所有设计标准和改动参考。
+- **[Handoff File] [handoff/antigravity-to-codex.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/handoff/antigravity-to-codex.md)**: 本次交接的书面指引。
 
 ## Requested Next Action for Codex
 请 Codex 按照以下步骤进行：
-1. 本地拉取本分支（`codex/personal-workbench`）的最新更改。
-2. 按照 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 指引对 [personal-workbench](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench) 下的文件进行重构。
-3. 完成重构后，再次启动工作台，并手动测试：
-   - 验证原生菜单栏及其快捷键（Ctrl+T / Ctrl+`）可正常打开任务管理器和切换终端。
-   - 验证打开任务弹窗时只展示任务列表，只有点击“添加任务”才渲染表单，且操作流程闭环。
-   - 验证任务类型与 weekly_tasks.json 读写无误。
-4. 将最新的代码提交并推送到 GitHub 仓库。
+1. 本地拉取本分支（`codex/personal-workbench`）的最新更改，读取 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 的详细设计规范。
+2. 修复面板折叠泄漏 Bug：为面板内部的所有 header 和 body 结构包裹一层 `.tab-extension-content` 或 `.native-assistant-content` 容器，设置 `width: 100%; height: 100%; overflow: hidden;`，使内容能够随面板降为 0 宽时被完美裁剪。
+3. 原生菜单精简：移除“任务”与“终端”的原生二级 `submenu` 下拉框，直接给它们绑定顶级 `click` 事件处理器以一键调用 toggle，同时保留 `CmdOrCtrl+T` 和 `CmdOrCtrl+`` 的快捷键绑定。
+4. 任务状态栏转移：
+   - 彻底移除 `index.html` 的 HTML 任务指示横幅 `#active-task-banner`。
+   - 在 `main.js` 原生菜单模版的“终端”与“编辑”中间，定义一个 ID 为 `active-task-menu-item`、状态为 `enabled: false` 的顶级置灰菜单项。
+   - 编写 IPC 信道在 `renderer.js` 执行/结束任务时，动态通知主进程修改其 `label` 文案为 `正在进行任务: XXX`。
+5. 重构内置助手面板：
+   - 使用现代色彩搭配（毛玻璃特效 `backdrop-filter: blur(16px)`，优雅的非默认系统字体，高颜值聊天气泡等）彻底重绘 UI 质感。
+   - 实现测试人设（测试人格）的增、删、改、配置管理界面与 System Prompt 模版映射。
+   - 实现完整的对话存储（以 taskId 为名写入本地 json 文件）与自动恢复加载机制。
+   - 读取主 Webview 的页面参数和 Cookies 登录态，配合 Polymas 服务端进行会话交互。
+   - 支持自定义模型接口 Endpoint、Key 及一键导出 Prompt 的功能。
+6. 完成开发后运行 `npm run check` 进行自检，启动工作台进行各项验证，并最终将代码提交和推送至 GitHub 协作仓库中！

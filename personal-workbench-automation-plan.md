@@ -1,127 +1,67 @@
-# 个人定制工作台菜单栏优化与任务系统重构方案
+# 个人定制工作台重构与内置助手功能恢复技术规格书 (Round 3)
 
-根据用户的最新反馈，我们将移除之前方案中的后续拓展设想（已被用户否决），并对工作台的菜单栏布局、任务管理系统交互进行重构。
-
----
-
-## 1. 核心修改需求
-
-### 1.1 界面布局优化 (移除顶部栏按钮，使用原生菜单栏)
-- **痛点**：现有的“任务”和“终端”按钮（Tasks 和 >_）直接放置在顶部栏，显得杂乱且不够原生。
-- **方案**：
-  1. 移除 `index.html` 顶部工具栏中的 `#btn-toggle-tasks` 和 `#terminal-toggle` 按钮。
-  2. 启用 Electron 的原生菜单栏，并在窗口左上角添加自定义的“工作台”原生菜单，包含：
-     - **本周任务** (快捷键：`Ctrl+T`)
-     - **本地终端** (快捷键：`Ctrl+\``)
-     - **扩展设置**
-
-### 1.2 任务系统交互重构 (列表优先与表单拆分)
-- **痛点**：当前打开任务弹窗时，直接展示了编辑表单，占据了大量空间，且交互不够直观。
-- **方案**：
-  - 打开任务弹窗后，**默认只展示任务列表表格**（如果无任务则展示“暂无任务”的空白状态）。
-  - 在列表下方添加一个 **“添加任务”** 按钮。
-  - 点击“添加任务”或“编辑”后，弹窗切换为 **新增/编辑表单视图**，列表隐藏。
-  - 点击“保存任务”或“取消”后，表单隐藏，切换回 **任务列表视图**。
-
-### 1.3 字段与任务类型调整
-- **删除字段**：完全移除 **“关联文档路径”** (Task Doc Path) 字段，精简界面与任务对象属性。
-- **更新任务类型**：将原有的任务类型重新划分为以下五种，并在下拉框中进行适配：
-  1. **能力训练搭建** (`capability-setup`)
-  2. **能力训练修改** (`capability-edit`)
-  3. **能力训练验收** (`capability-acceptance`)
-  4. **作业批阅搭建** (`grading-setup`)
-  5. **作业批阅验收** (`grading-acceptance`)
+根据用户的最新反馈，我们需要对工作台菜单布局、分屏溢出 Bug、任务横幅展示进行细节修正。同时，需要对原生内置的“Polymas 智能训练助手”进行彻底重构，将其从一个简陋的草稿，恢复为具备高质感 UI 且功能完备（测试人设、完整历史记录、模型配置、下载提示词、参数获取）的成熟原生模块。
 
 ---
 
-## 2. 具体修改指引 (Codex 执行参考)
+## 1. 工作台核心界面与交互优化规格
 
-### 2.1 `main.js` (原生菜单栏实现)
-1. 移除创建窗口时的 `autoHideMenuBar: true`，确保菜单栏正常显示。
-2. 引入 `Menu` 模块，并构建自定义的应用菜单：
-```javascript
-const { app, BrowserWindow, ipcMain, session, shell, Menu } = require("electron");
+### 1.1 顶级原生菜单栏优化 (去除多余二级菜单)
+* **痛点**：目前“任务”和“终端”在原生菜单中为二级项。点击“任务”会出现“任务列表”子菜单，点击“终端”会出现“本地终端”子菜单，增加了多余的点击步骤。
+* **重构方案**：
+  - 简化“工作台”菜单，仅保留“扩展设置”和“退出”。
+  - 将“任务”和“终端”修改为**直接可点击的顶级菜单项**。点击“任务”时，直接触发打开任务弹窗；点击“终端”时，直接触发切换底部终端。
+  - 顶级菜单直接绑定快捷键（“任务”绑定 `CmdOrCtrl+T`，“终端”绑定 `CmdOrCtrl+``），在没有二级菜单的情况下，点击直接响应操作。
 
-function setAppMenu() {
-  const template = [
-    {
-      label: "工作台",
-      submenu: [
-        {
-          label: "本周任务",
-          accelerator: "CmdOrCtrl+T",
-          click: () => sendToRenderer("menu:toggle-tasks")
-        },
-        {
-          label: "本地终端",
-          accelerator: "CmdOrCtrl+`",
-          click: () => sendToRenderer("menu:toggle-terminal")
-        },
-        {
-          label: "扩展设置",
-          click: () => sendToRenderer("menu:open-settings")
-        },
-        { type: "separator" },
-        {
-          label: "退出",
-          role: "quit"
-        }
-      ]
-    },
-    {
-      label: "编辑",
-      submenu: [
-        { label: "撤销", role: "undo" },
-        { label: "重做", role: "redo" },
-        { type: "separator" },
-        { label: "剪切", role: "cut" },
-        { label: "复制", role: "copy" },
-        { label: "粘贴", role: "paste" },
-        { label: "全选", role: "selectAll" }
-      ]
-    },
-    {
-      label: "视图",
-      submenu: [
-        { label: "重新加载", role: "reload" },
-        { label: "开发者工具", role: "toggleDevTools" },
-        { type: "separator" },
-        { label: "实际大小", role: "resetZoom" },
-        { label: "放大", role: "zoomIn" },
-        { label: "缩小", role: "zoomOut" }
-      ]
-    }
-  ];
+### 1.2 正在进行任务状态栏移入菜单栏 (消除越界)
+* **痛点**：在地址栏上方渲染横幅（`#active-task-banner`）占用过多的垂直高度，且文字与按钮较长时会跑偏超出边界。
+* **重构方案**：
+  - **彻底移除 HTML 中地址栏上方的 `#active-task-banner` 节点**，把宝贵的页面空间还给浏览器。
+  - 将任务状态指示器**直接移入 Electron 的原生菜单栏中**，在“终端”与“编辑”菜单项之间，作为一个**置灰/禁用的顶级菜单项**显示。
+  - 其文案格式定义为：`正在进行任务: [学校] - [课程] (类型)`，若无正在进行任务，则显示 `正在进行任务: 无`。
+  - 在 `renderer.js` 点击任务执行或清除时，通过 IPC 通道向主进程发送当前任务状态信息，主进程通过 `Menu.getApplicationMenu().getMenuItemById(id).label = ...` 动态重绘更新菜单栏上的文本。
 
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-}
-```
-3. 在 `app.whenReady()` 后调用 `setAppMenu()`。
+### 1.3 修复分屏及主视图的 panel 溢出泄漏 Bug
+* **痛点**：当关闭右侧的扩展面板（`.tab-extension-panel`）或原生助手面板（`.native-assistant-panel`）时，它们虽然宽度被过渡（transition）设为 `0`，但因为面板本身的 CSS 为 `overflow: visible`，导致面板内未被销毁的文本和按钮纵向重合，在分屏的边缘泄漏并堆叠显示（如首屏截图所示）。
+* **重构方案**：
+  - 既要保留 resizer 在面板边缘溢出（`left: -5px`）以实现顺畅的 hover/drag 交互，又要裁剪内部所有多余的内容。
+  - 在面板 DOM 内部，将所有 header 和 body（即具体的内容结构）包裹进一个新的内容容器中，如 `.tab-extension-content` 和 `.native-assistant-content`。
+  - 容器样式设定为：`width: 100%; height: 100%; overflow: hidden; display: flex; flex-direction: column;`。
+  - 而 resizer (`.tab-extension-resizer`) 依旧作为 panel 的直接子元素放置，使得 panel 的 `overflow` 依旧为 `visible`。由于内部真实内容被 content 容器做了 `overflow: hidden` 强制包裹裁剪，当 panel 宽度降为 0 时，内部内容将干净地消失，且 resizer 的边缘触发区完美保留。
 
-### 2.2 `index.html` (DOM 结构修改)
-1. **顶部栏按钮移除**：移除 `.topbar-actions` 里的 `#btn-toggle-tasks` 和 `#terminal-toggle`。
-2. **任务弹窗重构**：
-   - 任务弹窗中将新增/编辑区域与表格区域包装为独立的容器：`#task-form-view`（表单视图）和 `#task-list-view`（列表视图）。
-   - 移除 `C:\path\to\task.md` 的关联文档路径 Input。
-   - 类型下拉框中修改为 5 种新任务类型。
-   - 列表视图下方添加 `<button id="btn-add-new-task" class="primary-button">添加任务</button>`。
+---
 
-### 2.3 `renderer.js` (视图切换与 IPC 监听)
-1. **IPC 菜单事件监听**：
-   - 监听 `menu:toggle-tasks`：直接打开/关闭任务列表弹窗。
-   - 监听 `menu:toggle-terminal`：切换下方终端面板显示。
-   - 监听 `menu:open-settings`：打开扩展设置弹窗。
-2. **双视图状态机控制**：
-   - 定义变量 `let taskViewMode = 'list'; // 'list' | 'form'`。
-   - 实现切换函数 `switchTaskModalView(mode)`，通过 CSS 类控制 `#task-form-view` 和 `#task-list-view` 的显示/隐藏（例如，使用 `display: none`）。
-   - 打开弹窗时默认调用 `switchTaskModalView('list')`。
-   - 点击“添加任务”按钮时，清空表单并调用 `switchTaskModalView('form')`。
-   - 在表格中点击“编辑”时，填充表单并调用 `switchTaskModalView('form')`。
-   - 保存任务成功或点击“取消/返回”时，调用 `switchTaskModalView('list')` 并刷新表格。
-3. **数据字段移除**：
-   - 在 `taskFromForm` 中移除 `docPath` 字段。
-   - 在自动化流程中，移除对 `docPath` 的上传逻辑，仅针对已下载的 `chatPath`（测试对话）和 `reportPath`（评估报告）执行流转。
+## 2. 内置 “Polymas 智能训练助手” 重构与功能复原规格
 
-### 2.4 `style.css` (双视图排版样式)
-- 适配 `#task-form-view` 和 `#task-list-view` 的布局。当处于 `form` 模式时，确保表单美观居中，且操作按钮对齐；当处于 `list` 模式时，表格宽度占满，表格下方的“添加任务”按钮具备高颜值浅色强调设计。
+目前版本的内置智能助手界面过于简陋，且缺失了原 Chrome 扩展的许多核心高级功能。Codex 必须按照以下规格进行全方位功能恢复与 UI 升级：
+
+### 2.1 高颜值质感 UI/CSS 升级 (Premium UI)
+* **字体与排版**：使用现代化的字体（如 `Outfit` / `Inter` / `Microsoft YaHei UI`）代替粗糙的浏览器默认字体。
+* **色彩与质感**：采用 curated HSL 色彩体系，支持柔和的毛玻璃特效（`backdrop-filter: blur(16px); background: rgba(255, 255, 255, 0.75)`），使助手面板显得高端而专业。
+* **气泡式聊天布局**：重新设计聊天气泡。AI 教师/平台的发言气泡位于左侧，支持精致边框与细致阴影；学生的发言气泡位于右侧，采用高颜值渐变背景。
+* **交互细节**：为所有按钮、下拉框、输入框和 Tab 键设计顺滑的 hover 和 focus 发光动画，添加缩放微动作；输入区高度能够随字数自适应，或者支持更舒服的文本框。
+
+### 2.2 测试人格设定 (Test Personas) 功能复原
+* **动态配置**：拒绝死板的硬编码人设。必须在设置视图中提供**测试人设的增、删、改、查**管理界面。
+* **参数设定**：每个人设需包含：人设名称（如“优秀学生”、“跑题学生”）、System Prompt 引导语、AI 模型 Temperature 温度系数、具体表达风格描述、以及缺省时（如接口无反应时）的兜底话术模板。
+* **运行联动**：在对话面板中，选择特定人设后，自动应用该人设的参数和 Prompt 向大模型发起对话请求。
+
+### 2.3 完整的对话树与历史记录机制 (Dialogue History)
+* **历史保留**：智能助手不能每次打开时都是空的，必须能记住先前的聊天记录。
+* **持久化**：以任务 `taskId` 为 Key，将对话过程中的所有消息（包含 user, assistant, system 角色与时间戳）实时缓存或持久化至本地文件中（如 `temp/chats/history_{taskId}.json`）。
+* **自动加载**：当工作台检测到页面切换并识别出相同的 `trainTaskId` 时，自动在助手对话区中重新渲染先前的历史对话记录。
+
+### 2.4 获取网页 Session 登录态与参数 (Parameters Extraction)
+* **动态侦测**：自动监听主 Webview 的导航和参数事件。一旦捕获到 `trainTaskId`，除了拉取步骤，还需要读取并渲染：
+  - 当前进行中的步骤卡片详细参数（卡片名称、期望指标、最大答题轮数限制等）。
+  - 通过 `getCookies` 获取当前 webview 的 Polymas 登录态 Token，用以向后台 API 进行无缝的数据交互。
+
+### 2.5 灵活的模型配置 (Model Config Panel)
+* **高级选项**：设置 Tab 下不仅要支持 Key 填写，还需要能够配置：
+  - 大模型接口地址 (Endpoint API URL)
+  - 密钥 (API Key)
+  - 使用的模型名 (Model Name)
+  - 能够实时测试接口联通状态。
+
+### 2.6 下载与管理 Prompt
+* **导出功能**：在助手界面中，提供一键下载/拷贝当前测试人设所使用的 Prompt 文件，以及下载导出完整对话文本（TXT 格式）或结构化日志（JSON 格式）的按钮。
