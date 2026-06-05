@@ -230,15 +230,29 @@ button { cursor: pointer; }
   min-width: 0;
   overflow: hidden;
 }
+.tab-viewport:not(:has(.tab-extension-panel.open)) .tab-extension-resizer {
+  display: none;
+}
 .tab-extension-resizer {
-  width: 4px;
-  flex: 0 0 4px;
+  width: 10px;
+  flex: 0 0 10px;
   cursor: ew-resize;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+}
+.tab-extension-resizer::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
   background: transparent;
   transition: background 150ms ease;
 }
-.tab-extension-resizer:hover,
-.tab-extension-resizer.resizing {
+.tab-extension-resizer:hover::after,
+.tab-extension-resizer.resizing::after {
   background: var(--accent-color);
 }
 .tab-extension-header {
