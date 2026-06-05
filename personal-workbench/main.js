@@ -1,5 +1,5 @@
 const { app, BrowserWindow, ipcMain, session, shell } = require("electron");
-const { spawn } = require("node:child_process");
+const pty = require("node-pty");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
@@ -44,28 +44,25 @@ function sendToRenderer(channel, payload) {
   }
 }
 
-function startTerminal() {
-  if (terminalProcess && !terminalProcess.killed) return;
+function startTerminal(size = {}) {
+  if (terminalProcess) return;
 
-  terminalProcess = spawn("cmd.exe", ["/D", "/Q", "/K", "chcp 65001>nul"], {
+  terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
+    cols: Math.max(20, Number(size.cols) || 80),
+    rows: Math.max(6, Number(size.rows) || 24),
     cwd: os.homedir(),
-    env: { ...process.env },
-    windowsHide: true
+    env: { ...process.env, TERM: "xterm-256color" }
   });
 
-  terminalProcess.stdout.on("data", (data) => sendToRenderer("terminal:data", data.toString()));
-  terminalProcess.stderr.on("data", (data) => sendToRenderer("terminal:data", data.toString()));
-  terminalProcess.on("exit", (code) => {
+  terminalProcess.onData((data) => sendToRenderer("terminal:data", data));
+  terminalProcess.onExit(({ exitCode }) => {
     terminalProcess = null;
-    sendToRenderer("terminal:data", `\r\n[命令提示符已退出，代码 ${code ?? "未知"}]\r\n`);
-  });
-  terminalProcess.on("error", (error) => {
-    sendToRenderer("terminal:data", `\r\n[无法启动命令提示符: ${error.message}]\r\n`);
+    sendToRenderer("terminal:data", `\r\n[命令提示符已退出，代码 ${exitCode ?? "未知"}]\r\n`);
   });
 }
 
 function stopTerminal() {
-  if (terminalProcess && !terminalProcess.killed) {
+  if (terminalProcess) {
     terminalProcess.kill();
   }
   terminalProcess = null;
@@ -187,10 +184,14 @@ function installEmbedHeaderFilter() {
 }
 
 function registerIpc() {
-  ipcMain.on("terminal:start", startTerminal);
+  ipcMain.on("terminal:start", (_event, size) => startTerminal(size));
   ipcMain.on("terminal:input", (_event, data) => {
-    if (!terminalProcess || terminalProcess.killed) startTerminal();
-    terminalProcess?.stdin.write(data);
+    if (!terminalProcess) startTerminal();
+    terminalProcess?.write(data);
+  });
+  ipcMain.on("terminal:resize", (_event, size) => {
+    if (!terminalProcess) return;
+    terminalProcess.resize(Math.max(20, Number(size?.cols) || 80), Math.max(6, Number(size?.rows) || 24));
   });
 
   ipcMain.handle("extensions:get", () => ({

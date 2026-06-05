@@ -8,9 +8,7 @@ let tabs = readTabs();
 let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
 let terminal;
 let fitAddon;
-let currentLine = "";
 let pointerDrag = null;
-let suppressTabClickUntil = 0;
 
 const elements = {
   tabList: document.querySelector("#tab-list"),
@@ -68,9 +66,6 @@ function renderTabs() {
       </button>
       <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
     `;
-    item.querySelector(".tab-main").addEventListener("click", () => {
-      if (Date.now() >= suppressTabClickUntil) activateTab(tab.id);
-    });
     item.querySelector(".tab-menu").addEventListener("click", () => openTabDialog(tab));
     item.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || event.target.closest(".tab-menu")) return;
@@ -130,10 +125,12 @@ function createWebview(tab) {
   });
   webview.addEventListener("did-navigate", () => updateAddressFromWebview(webview));
   webview.addEventListener("did-navigate-in-page", () => updateAddressFromWebview(webview));
+  webview.addEventListener("dom-ready", () => fitWebviewZoom());
   webview.addEventListener("page-title-updated", (event) => {
     if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
   });
   elements.webviewStack.append(webview);
+  fitWebviewZoom();
 }
 
 function activeWebview() {
@@ -150,6 +147,16 @@ function activateTab(id) {
   document.querySelectorAll("webview[data-id]").forEach((webview) => webview.classList.toggle("active", webview.dataset.id === id));
   elements.activeTitle.textContent = tab.name;
   elements.addressInput.value = activeWebview()?.getURL?.() || tab.url;
+  fitWebviewZoom();
+}
+
+function fitWebviewZoom() {
+  const targetWidth = 1280;
+  const width = elements.webviewStack.clientWidth || targetWidth;
+  const zoom = Math.max(0.75, Math.min(1, width / targetWidth));
+  document.querySelectorAll("webview[data-id]").forEach((webview) => {
+    webview.setZoomFactor?.(zoom);
+  });
 }
 
 function updateAddressFromWebview(webview) {
@@ -199,28 +206,7 @@ function initTerminal() {
   fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(document.querySelector("#terminal-container"));
-  terminal.onData((data) => {
-    if (data.startsWith("\x1b")) return;
-    for (const character of data.replace(/\r\n/g, "\r")) {
-      if (character === "\r" || character === "\n") {
-        terminal.write("\r\n");
-        window.workbench.sendTerminalInput(`${currentLine}\r\n`);
-        currentLine = "";
-      } else if (character === "\x7f" || character === "\x08") {
-        if (currentLine.length > 0) {
-          currentLine = currentLine.slice(0, -1);
-          terminal.write("\b \b");
-        }
-      } else if (character === "\x03") {
-        currentLine = "";
-        terminal.write("^C\r\n");
-        window.workbench.sendTerminalInput(character);
-      } else {
-        currentLine += character;
-        terminal.write(character);
-      }
-    }
-  });
+  terminal.onData((data) => window.workbench.sendTerminalInput(data));
   window.workbench.onTerminalData((data) => terminal.write(data));
 }
 
@@ -229,9 +215,9 @@ function toggleTerminal(force) {
   elements.terminalPanel.classList.toggle("open", open);
   elements.terminalToggle.setAttribute("aria-expanded", String(open));
   if (open) {
-    window.workbench.startTerminal();
     setTimeout(() => {
       fitAddon.fit();
+      window.workbench.startTerminal({ cols: terminal.cols, rows: terminal.rows });
       terminal.focus();
     }, 220);
   }
@@ -322,7 +308,10 @@ function toggleRightSidebar(open, url = "", title = "") {
   } else {
     elements.rightSidebarWebview.src = "about:blank";
   }
-  setTimeout(() => fitAddon?.fit(), 230);
+  setTimeout(() => {
+    fitAddon?.fit();
+    fitWebviewZoom();
+  }, 230);
 }
 
 function setSidebarCollapsed(collapsed) {
@@ -428,6 +417,7 @@ function beginTerminalResize(event) {
     const height = Math.max(180, Math.min(window.innerHeight * 0.7, startHeight + startY - moveEvent.clientY));
     document.documentElement.style.setProperty("--terminal-height", `${height}px`);
     fitAddon.fit();
+    window.workbench.resizeTerminal({ cols: terminal.cols, rows: terminal.rows });
   };
   const onUp = () => {
     if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
@@ -444,7 +434,11 @@ function beginTerminalResize(event) {
 resizer.addEventListener("pointerdown", beginTerminalResize);
 terminalHeader.addEventListener("pointerdown", beginTerminalResize);
 
-window.addEventListener("resize", () => fitAddon?.fit());
+window.addEventListener("resize", () => {
+  fitAddon?.fit();
+  fitWebviewZoom();
+  window.workbench.resizeTerminal({ cols: terminal.cols, rows: terminal.rows });
+});
 document.addEventListener("pointermove", (event) => {
   if (!pointerDrag) return;
   if (!pointerDrag.active && Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
@@ -461,12 +455,17 @@ document.addEventListener("pointerup", (event) => {
   if (pointerDrag.active) {
     const targetId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".tab-item")?.dataset.id;
     if (targetId && reorderTab(pointerDrag.id, targetId)) renderTabs();
-    suppressTabClickUntil = Date.now() + 250;
+  } else {
+    activateTab(pointerDrag.id);
   }
   pointerDrag = null;
   clearDragState();
 });
 document.addEventListener("pointercancel", () => {
+  const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag?.id}"]`);
+  if (dragItem && pointerDrag?.pointerId !== undefined && dragItem.hasPointerCapture(pointerDrag.pointerId)) {
+    dragItem.releasePointerCapture(pointerDrag.pointerId);
+  }
   setWebviewPointerEvents(true);
   pointerDrag = null;
   clearDragState();

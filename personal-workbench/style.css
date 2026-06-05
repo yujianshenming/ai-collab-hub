@@ -109,7 +109,7 @@ button { cursor: pointer; }
 .extension-trigger-button { border: 1px solid var(--border-color); background: white; box-shadow: var(--shadow-sm); }
 .extension-trigger-button img { width: 17px; height: 17px; object-fit: contain; }
 .extension-trigger-button span { font-size: 10px; font-weight: 800; }
-.terminal-toggle { display: flex; gap: 8px; align-items: center; padding: 10px 13px; border-radius: 11px; font-size: 12px; font-weight: 700; }
+.terminal-toggle { display: grid; place-items: center; width: 42px; height: 34px; padding: 0; border-radius: 11px; font-size: 12px; font-weight: 700; }
 .terminal-toggle span { font-family: Consolas, monospace; }
 .terminal-toggle:hover, .go-button:hover, .primary-button:hover { filter: brightness(0.97); transform: translateY(-1px); }
 .webview-stack { flex: 1 1 auto; min-height: 0; position: relative; }
@@ -121,12 +121,12 @@ webview.active { display: flex; }
   flex: 0 0 auto;
   overflow: hidden;
   background: white;
-  border-top: 1px solid var(--border-color);
+  border-top: 0 solid var(--border-color);
   box-shadow: 0 -16px 45px rgba(15, 23, 42, 0.08);
   position: relative;
-  transition: height 220ms ease;
+  transition: height 220ms ease, border-width 220ms ease;
 }
-.terminal-panel.open { height: var(--terminal-height); }
+.terminal-panel.open { height: var(--terminal-height); border-top-width: 1px; }
 .terminal-resizer { height: 12px; cursor: ns-resize; position: absolute; top: -6px; right: 0; left: 0; z-index: 2; }
 .terminal-resizer::after { content: ""; width: 40px; height: 3px; border-radius: 3px; background: #dbe3ed; position: absolute; top: 4px; left: calc(50% - 20px); }
 .terminal-header { display: flex; align-items: center; justify-content: space-between; height: 42px; padding: 0 14px 0 17px; border-bottom: 1px solid var(--border-color); cursor: ns-resize; user-select: none; }
@@ -181,6 +181,5 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 @media (max-width: 1100px) {
   :root { --sidebar-width: 200px; }
   .topbar { grid-template-columns: auto minmax(100px, .4fr) minmax(300px, 2fr) auto; gap: 10px; padding-inline: 12px; }
-  .terminal-toggle { font-size: 0; }
   .terminal-toggle span { font-size: 12px; }
 }

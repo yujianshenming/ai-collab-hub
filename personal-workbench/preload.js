@@ -1,8 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("workbench", {
-  startTerminal: () => ipcRenderer.send("terminal:start"),
+  startTerminal: (size) => ipcRenderer.send("terminal:start", size),
   sendTerminalInput: (data) => ipcRenderer.send("terminal:input", data),
+  resizeTerminal: (size) => ipcRenderer.send("terminal:resize", size),
   onTerminalData: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on("terminal:data", listener);
