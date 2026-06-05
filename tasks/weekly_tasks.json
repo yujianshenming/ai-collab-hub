@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1717586400000,
+    "school": "示例学校",
+    "course": "高中体育教师提示词测试",
+    "taskType": "仿真测试",
+    "quantity": 1,
+    "status": "pending",
+    "owner": "负责人",
+    "docPath": "",
+    "chatLogPath": "",
+    "reportPath": ""
+  }
+]
