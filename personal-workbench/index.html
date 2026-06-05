@@ -29,10 +29,6 @@
         <nav id="tab-list" class="tab-list" aria-label="工作台标签"></nav>
 
         <footer class="sidebar-footer">
-          <button id="settings-button" class="quiet-button" type="button">
-            <span class="button-icon">⚙</span>
-            扩展设置
-          </button>
           <div class="connection-status">
             <span class="status-dot"></span>
             本地工作台已就绪
@@ -41,6 +37,38 @@
       </aside>
 
       <main class="workspace">
+        <nav id="app-menu-bar" class="app-menu-bar" aria-label="工作台菜单">
+          <div class="app-menu-left">
+            <button id="menu-task-button" class="app-menu-action" type="button">任务</button>
+            <button id="menu-terminal-button" class="app-menu-action" type="button">终端</button>
+            <div class="app-menu-dropdown">
+              <button class="app-menu-item" type="button">工作台</button>
+              <div class="app-menu-popover">
+                <button id="menu-settings-button" type="button">扩展设置</button>
+              </div>
+            </div>
+            <div class="app-menu-dropdown">
+              <button class="app-menu-item" type="button">编辑</button>
+              <div class="app-menu-popover">
+                <button data-command="copy" type="button">复制</button>
+                <button data-command="paste" type="button">粘贴</button>
+                <button data-command="selectAll" type="button">全选</button>
+              </div>
+            </div>
+            <div class="app-menu-dropdown">
+              <button class="app-menu-item" type="button">视图</button>
+              <div class="app-menu-popover">
+                <button id="menu-reload-button" type="button">重新加载</button>
+              </div>
+            </div>
+          </div>
+          <div id="active-task-banner" class="active-task-banner" hidden>
+            <span id="active-task-text"></span>
+            <button id="active-task-finish" class="active-task-finish" type="button">结束</button>
+            <button id="active-task-hermes" class="active-task-finish" type="button" hidden>加载至 Hermes</button>
+          </div>
+          <div class="app-menu-right"></div>
+        </nav>
         <header class="topbar">
           <button id="sidebar-toggle" class="icon-button sidebar-toggle-button" type="button" aria-label="切换侧边栏" title="切换侧边栏" aria-expanded="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

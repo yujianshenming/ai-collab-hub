@@ -12,7 +12,15 @@ let fitAddon;
 let pointerDrag = null;
 let weeklyTasks = [];
 let taskViewMode = "list";
-let pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", uploadQueue: [] };
+let pipelineState = {
+  active: false,
+  taskId: null,
+  step: "idle",
+  chatPath: "",
+  reportPath: "",
+  taskFolder: "",
+  uploadQueue: []
+};
 
 const elements = {
   tabList: document.querySelector("#tab-list"),
@@ -36,7 +44,15 @@ const elements = {
   taskFormTitle: document.querySelector("#task-form-title"),
   taskForm: document.querySelector("#task-form"),
   taskTableBody: document.querySelector("#task-table-body"),
-  addNewTask: document.querySelector("#btn-add-new-task")
+  addNewTask: document.querySelector("#btn-add-new-task"),
+  menuTaskButton: document.querySelector("#menu-task-button"),
+  menuTerminalButton: document.querySelector("#menu-terminal-button"),
+  menuSettingsButton: document.querySelector("#menu-settings-button"),
+  menuReloadButton: document.querySelector("#menu-reload-button"),
+  activeTaskBanner: document.querySelector("#active-task-banner"),
+  activeTaskText: document.querySelector("#active-task-text"),
+  activeTaskFinish: document.querySelector("#active-task-finish"),
+  activeTaskHermes: document.querySelector("#active-task-hermes")
 };
 
 function readTabs() {
@@ -159,7 +175,6 @@ function createTabViewport(tab) {
   const extPanel = document.createElement("div");
   extPanel.className = "tab-extension-panel";
   extPanel.innerHTML = `
-    <div class="tab-extension-resizer" title="拖动调整扩展宽度"></div>
     <div class="tab-extension-content">
       <div class="tab-extension-header">
         <span class="tab-extension-title">扩展程序</span>
@@ -175,13 +190,16 @@ function createTabViewport(tab) {
     if (extWebview) extWebview.src = "about:blank";
   });
 
-  const resizer = extPanel.querySelector(".tab-extension-resizer");
+  const resizer = document.createElement("div");
+  resizer.className = "tab-extension-resizer";
+  resizer.title = "拖动调整扩展宽度";
   resizer.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
     resizer.setPointerCapture(event.pointerId);
     elements.appShell.classList.add("resizing");
     extPanel.classList.add("resizing");
+    resizer.classList.add("resizing");
     setWebviewPointerEvents(false);
     
     const startX = event.clientX;
@@ -199,6 +217,7 @@ function createTabViewport(tab) {
       }
       elements.appShell.classList.remove("resizing");
       extPanel.classList.remove("resizing");
+      resizer.classList.remove("resizing");
       setWebviewPointerEvents(true);
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
@@ -211,6 +230,7 @@ function createTabViewport(tab) {
   });
 
   viewport.append(webview);
+  viewport.append(resizer);
   viewport.append(extPanel);
   elements.webviewStack.append(viewport);
 }
@@ -400,14 +420,30 @@ function taskTypeLabel(type) {
 function updateActiveTaskMenu(task = null) {
   if (!task) {
     window.workbench.updateActiveTaskInfo({});
+    elements.activeTaskBanner.hidden = true;
+    elements.activeTaskText.textContent = "";
+    elements.activeTaskHermes.hidden = true;
     return;
   }
+  elements.activeTaskText.textContent = `🏃 正在进行任务: ${task.school || ""} - ${task.course || ""} (${taskTypeLabel(task.taskType)})`;
+  elements.activeTaskBanner.hidden = false;
   window.workbench.updateActiveTaskInfo({
     school: task.school || "",
     course: task.course || "",
     taskType: task.taskType || "",
-    taskTypeLabel: taskTypeLabel(task.taskType)
+    taskTypeLabel: taskTypeLabel(task.taskType),
+    folderPath: pipelineState.taskFolder || task.taskFolder || ""
   });
+}
+
+async function finishActiveTask() {
+  const taskId = pipelineState.taskId;
+  const folderPath = pipelineState.taskFolder;
+  pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+  updateActiveTaskMenu(null);
+  if (taskId) await updateTaskFields(taskId, { status: "completed", chatLogPath: "", reportPath: "", taskFolder: "" });
+  if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
+  showToast("任务已结束，临时文件已清理", "success");
 }
 
 function taskStatusLabel(status) {
@@ -453,7 +489,8 @@ function normalizeWeeklyTask(task = {}) {
     status: task.status || "pending",
     owner: task.owner || "",
     chatLogPath: task.chatLogPath || "",
-    reportPath: task.reportPath || ""
+    reportPath: task.reportPath || "",
+    taskFolder: task.taskFolder || ""
   };
 }
 
@@ -531,7 +568,8 @@ function taskFromForm() {
     status: existing.status || "pending",
     owner: document.querySelector("#task-owner").value.trim(),
     chatLogPath: existing.chatLogPath || "",
-    reportPath: existing.reportPath || ""
+    reportPath: existing.reportPath || "",
+    taskFolder: existing.taskFolder || ""
   };
 }
 
@@ -556,11 +594,14 @@ function editWeeklyTask(id) {
 }
 
 async function deleteWeeklyTask(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
   weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
+  const folderPath = pipelineState.taskId === id ? pipelineState.taskFolder : task?.taskFolder || "";
   if (pipelineState.taskId === id) {
-    pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", uploadQueue: [] };
+    pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
     updateActiveTaskMenu(null);
   }
+  if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
   await persistWeeklyTasks();
 }
 
@@ -601,15 +642,17 @@ function activateOrCreateTab(id, name, url) {
 async function startTaskAutomation(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
+  const taskFolder = await window.workbench.prepareTaskFolder(task);
   pipelineState = {
     active: true,
     taskId: id,
     step: "testing",
     chatPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
+    taskFolder,
     uploadQueue: []
   };
-  await updateTaskFields(id, { status: "running" });
+  await updateTaskFields(id, { status: "running", taskFolder });
   updateActiveTaskMenu(task);
   elements.taskModal?.close();
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
@@ -631,8 +674,8 @@ async function handleDownloadCompleted(download) {
     pipelineState.reportPath = download.path;
     pipelineState.step = "analysis";
     await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path });
-    updateActiveTaskMenu(null);
-    runHermesPrompt();
+    elements.activeTaskHermes.hidden = false;
+    showToast("评估报告已保存，可加载至 Hermes 后确认发送。", "success");
   }
 }
 
@@ -664,10 +707,9 @@ function runHermesPrompt() {
   }
   activateTab(hermesTab.id);
   const promptText = [
-    "系统自动指令：请帮我分析以下测试与评估结果。",
-    `测试对话本地路径：${pipelineState.chatPath || ""}`,
-    `评估报告本地路径：${pipelineState.reportPath || ""}`,
-    "请根据上述文件内容诊断当前提示词表现，并给出具体迭代建议。"
+    `测试对话记录地址：${pipelineState.chatPath || ""}`,
+    `评估报告地址：${pipelineState.reportPath || ""}`,
+    "请读取上述本地文件路径后进行诊断分析。"
   ].join("\\n");
   setTimeout(() => {
     const webview = activeWebview();
@@ -679,12 +721,11 @@ function runHermesPrompt() {
         if (input.isContentEditable) input.textContent = text;
         else input.value = text;
         input.dispatchEvent(new Event('input', { bubbles: true }));
-        const send = document.querySelector('button[type="submit"], .send-btn, [aria-label*="send" i], [aria-label*="发送"]');
-        send?.click();
         return true;
       })();
     `).then((ok) => {
-      if (!ok) showToast("Hermes 页面未检测到输入框，请手动粘贴分析提示。", "error");
+      if (ok) showToast("已加载至 Hermes 输入框，请确认后手动发送。", "success");
+      else showToast("Hermes 页面未检测到输入框，请手动粘贴分析提示。", "error");
     }).catch((error) => {
       console.error("Hermes 自动填充失败:", error);
       showToast("Hermes 自动填充失败，请手动粘贴分析提示。", "error");
@@ -829,7 +870,15 @@ function moveTab(direction) {
 }
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
-document.querySelector("#settings-button").addEventListener("click", openSettings);
+elements.menuTaskButton?.addEventListener("click", openTaskModal);
+elements.menuTerminalButton?.addEventListener("click", () => toggleTerminal());
+elements.menuSettingsButton?.addEventListener("click", openSettings);
+elements.menuReloadButton?.addEventListener("click", () => activeWebview()?.reload?.());
+document.querySelectorAll("[data-command]").forEach((button) => {
+  button.addEventListener("click", () => document.execCommand(button.dataset.command));
+});
+elements.activeTaskFinish?.addEventListener("click", () => finishActiveTask());
+elements.activeTaskHermes?.addEventListener("click", () => runHermesPrompt());
 window.workbench.onMenuToggleTasks(openTaskModal);
 window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);

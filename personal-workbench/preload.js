@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("workbench", {
   },
   updateActiveTabInfo: (info) => ipcRenderer.send("tab:active-update", info),
   updateActiveTaskInfo: (info) => ipcRenderer.send("task:active-update", info),
+  prepareTaskFolder: (task) => ipcRenderer.invoke("tasks:prepare-folder", task),
+  cleanupTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:cleanup-folder", folderPath),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

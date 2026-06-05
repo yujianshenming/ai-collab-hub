@@ -11,11 +11,11 @@ let lastTerminalSize = { cols: 80, rows: 24 };
 let activeTabInfo = { url: "", title: "" };
 let extensionResults = [];
 let localServer;
+let activeTaskFolder = "";
 const workbenchPartition = "persist:personal-workbench";
 const localServerPort = 38924;
 const downloadRoot = path.join(__dirname, "temp");
 const weeklyTasksPath = path.join(__dirname, "..", "tasks", "weekly_tasks.json");
-const activeTaskMenuItemId = "active-task-menu-item";
 
 function workbenchSession() {
   return session.fromPartition(workbenchPartition);
@@ -39,6 +39,7 @@ function createWindow() {
   });
 
   mainWindow.loadFile("index.html");
+  mainWindow.setMenuBarVisibility(false);
   mainWindow.on("closed", () => {
     mainWindow = null;
     stopTerminal();
@@ -75,11 +76,6 @@ function setAppMenu() {
       click: () => sendToRenderer("menu:toggle-terminal")
     },
     {
-      id: activeTaskMenuItemId,
-      label: "正在进行任务: 无",
-      enabled: false
-    },
-    {
       label: "编辑",
       submenu: [
         { label: "撤销", role: "undo" },
@@ -104,20 +100,6 @@ function setAppMenu() {
     }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
-}
-
-function updateActiveTaskMenuLabel(info = {}) {
-  const menu = Menu.getApplicationMenu();
-  const item = menu?.getMenuItemById(activeTaskMenuItemId);
-  if (!item) return;
-
-  const school = String(info.school || "").trim();
-  const course = String(info.course || "").trim();
-  const taskType = String(info.taskTypeLabel || info.taskType || "").trim();
-  const hasTask = Boolean(school || course || taskType);
-  item.label = hasTask
-    ? "正在进行任务: " + [school, course].filter(Boolean).join(" - ") + (taskType ? " (" + taskType + ")" : "")
-    : "正在进行任务: 无";
 }
 
 function startTerminal(size = {}) {
@@ -244,6 +226,14 @@ function safeDownloadName(filename) {
   return path.basename(filename || fallback).replace(/[<>:"/\\|?*\x00-\x1F]/g, "_") || fallback;
 }
 
+function safePathPart(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "_")
+    .replace(/\s+/g, "_")
+    .slice(0, 60) || "untitled";
+}
+
 function classifyDownload(filename) {
   const lowerName = filename.toLowerCase();
   if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
@@ -255,13 +245,30 @@ function classifyDownload(filename) {
   return { type: "generic", folder: "downloads" };
 }
 
+function cleanupTaskFolder(folderPath) {
+  const tasksRoot = path.resolve(downloadRoot, "tasks");
+  const target = path.resolve(String(folderPath || ""));
+  if (!target.startsWith(`${tasksRoot}${path.sep}`)) return false;
+  if (!fs.existsSync(target)) return false;
+  fs.rmSync(target, { recursive: true, force: true });
+  if (activeTaskFolder && path.resolve(activeTaskFolder) === target) activeTaskFolder = "";
+  return true;
+}
+
 function installDownloadHandler() {
   workbenchSession().on("will-download", (_event, item) => {
     const filename = safeDownloadName(item.getFilename());
     const classification = classifyDownload(filename);
-    const saveDir = path.join(downloadRoot, classification.folder);
+    const saveDir = activeTaskFolder && classification.type !== "generic"
+      ? activeTaskFolder
+      : path.join(downloadRoot, classification.folder);
     fs.mkdirSync(saveDir, { recursive: true });
-    const savePath = path.join(saveDir, `${Date.now()}_${filename}`);
+    const extension = path.extname(filename) || ".bin";
+    const archiveName = {
+      chat: "dialogue.json",
+      report: `eval_report${extension}`
+    }[classification.type] || `${Date.now()}_${filename}`;
+    const savePath = path.join(saveDir, archiveName);
     item.setSavePath(savePath);
 
     item.once("done", (_doneEvent, state) => {
@@ -408,8 +415,20 @@ function registerIpc() {
     };
   });
   ipcMain.on("task:active-update", (_event, info = {}) => {
-    updateActiveTaskMenuLabel(info);
+    activeTaskFolder = String(info.folderPath || "");
   });
+  ipcMain.handle("tasks:prepare-folder", (_event, task = {}) => {
+    const folderName = [
+      safePathPart(task.id),
+      safePathPart(task.school),
+      safePathPart(task.course)
+    ].join("_");
+    const folderPath = path.join(downloadRoot, "tasks", folderName);
+    fs.mkdirSync(folderPath, { recursive: true });
+    activeTaskFolder = folderPath;
+    return folderPath;
+  });
+  ipcMain.handle("tasks:cleanup-folder", (_event, folderPath) => cleanupTaskFolder(folderPath));
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
     return getWorkbenchCookies(details);
