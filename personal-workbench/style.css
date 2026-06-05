@@ -148,19 +148,28 @@ button { cursor: pointer; }
   box-shadow: -8px 0 25px rgba(15, 23, 42, 0.04);
 }
 .tab-extension-resizer {
-  width: 6px;
+  width: 10px;
   cursor: ew-resize;
   position: absolute;
-  left: -3px;
+  left: -5px;
   top: 0;
   bottom: 0;
   z-index: 10;
   background: transparent;
+}
+.tab-extension-resizer::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
   transition: background 150ms ease;
 }
-.tab-extension-resizer:hover, .tab-extension-panel.resizing .tab-extension-resizer {
-  background: rgba(59, 130, 246, 0.2) !important;
-  border-left: 2px solid var(--accent-color);
+.tab-extension-resizer:hover::after,
+.tab-extension-panel.resizing .tab-extension-resizer::after {
+  background: var(--accent-color);
 }
 .tab-extension-header {
   display: flex;
@@ -269,7 +278,30 @@ button { cursor: pointer; }
 .task-actions .secondary-button, .task-actions .danger-button { padding: 7px 9px; font-size: 10px; }
 .right-sidebar { display: flex; flex-direction: column; min-width: 0; height: 100vh; overflow: hidden; background: rgba(255, 255, 255, 0.96); border-left: 1px solid var(--border-color); opacity: 1; transition: opacity 220ms ease, border-color 220ms ease; z-index: 3; position: relative; }
 .app-shell:not(.right-sidebar-open) .right-sidebar { opacity: 0; border-left-color: transparent; pointer-events: none; }
-.right-sidebar-resizer { width: 12px; cursor: ew-resize; position: absolute; left: -6px; top: 0; bottom: 0; z-index: 10; }
+.right-sidebar-resizer {
+  width: 10px;
+  cursor: ew-resize;
+  position: absolute;
+  left: -5px;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  background: transparent;
+}
+.right-sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 150ms ease;
+}
+.right-sidebar-resizer:hover::after,
+.app-shell.resizing #right-sidebar-resizer::after {
+  background: var(--accent-color);
+}
 .right-sidebar-header { display: flex; align-items: center; justify-content: space-between; height: var(--topbar-height); flex: 0 0 var(--topbar-height); padding: 0 14px 0 16px; border-bottom: 1px solid var(--border-color); }
 .right-sidebar-header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .right-sidebar-body { display: flex; flex: 1; min-height: 0; position: relative; background: white; }

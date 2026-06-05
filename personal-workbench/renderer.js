@@ -198,14 +198,14 @@ function createTabViewport(tab) {
       elements.appShell.classList.remove("resizing");
       extPanel.classList.remove("resizing");
       setWebviewPointerEvents(true);
-      resizer.removeEventListener("pointermove", onMove);
-      resizer.removeEventListener("pointerup", onUp);
-      resizer.removeEventListener("pointercancel", onUp);
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
     };
     
-    resizer.addEventListener("pointermove", onMove);
-    resizer.addEventListener("pointerup", onUp);
-    resizer.addEventListener("pointercancel", onUp);
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
   });
 
   viewport.append(webview);
@@ -1025,13 +1025,13 @@ function beginTerminalResize(event) {
     if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
     elements.appShell.classList.remove("resizing");
     setWebviewPointerEvents(true);
-    handle.removeEventListener("pointermove", onMove);
-    handle.removeEventListener("pointerup", onUp);
-    handle.removeEventListener("pointercancel", onUp);
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onUp);
   };
-  handle.addEventListener("pointermove", onMove);
-  handle.addEventListener("pointerup", onUp);
-  handle.addEventListener("pointercancel", onUp);
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onUp);
 }
 
 resizer.addEventListener("pointerdown", beginTerminalResize);
@@ -1056,13 +1056,13 @@ function beginRightSidebarResize(event) {
     }
     elements.appShell.classList.remove("resizing");
     setWebviewPointerEvents(true);
-    elements.rightSidebarResizer.removeEventListener("pointermove", onMove);
-    elements.rightSidebarResizer.removeEventListener("pointerup", onUp);
-    elements.rightSidebarResizer.removeEventListener("pointercancel", onUp);
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onUp);
   };
-  elements.rightSidebarResizer.addEventListener("pointermove", onMove);
-  elements.rightSidebarResizer.addEventListener("pointerup", onUp);
-  elements.rightSidebarResizer.addEventListener("pointercancel", onUp);
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onUp);
 }
 
 elements.rightSidebarResizer.addEventListener("pointerdown", beginRightSidebarResize);
