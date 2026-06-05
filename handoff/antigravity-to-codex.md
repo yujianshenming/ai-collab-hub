@@ -1,7 +1,7 @@
-# Handoff: Antigravity -> Codex (第3轮 - 原生菜单优化、分屏溢出修复与智能助手全功能复原)
+# Handoff: Antigravity -> Codex (第3轮 - 自定义HTML菜单栏、同行居中状态栏与助手全功能复原)
 
 ## Date
-2026-06-05 17:50
+2026-06-05 18:03
 
 ## From
 Antigravity
@@ -10,34 +10,35 @@ Antigravity
 Codex
 
 ## Summary
-移交最新的个人工作台重构方案：
-1. 修复分屏和主视图中，扩展及助手面板折叠到 0 宽时内部文本/按钮泄漏溢出的 CSS 渲染 Bug。
-2. 将地址栏上方占地方的 HTML 任务状态横幅移除，改为在 Electron 原生菜单栏的中间作为一个置灰/禁用的顶级菜单项展示，并更名为“正在进行任务”。
-3. 优化原生菜单栏中“任务”和“终端”的点击响应，去除二级子菜单，使点击顶级标签即可直接触发相应的功能弹窗或面板。
-4. 全面升级与复原内置的“Polymas 原生智能训练助手”：美化 UI 界面质感，支持测试人设增删改配、历史聊天持久化与加载、自动读取页面核心卡片参数、灵活的模型 Endpoint 设置以及 Prompt 导出下载。
+移交最新的个人工作台第3轮重构任务：
+1. 修复分屏和主视图中，原生智能助手面板（`.native-assistant-panel`）折叠至 0 宽时内部文本泄漏的 Bug。
+2. 弃用原生 Windows 菜单栏，引入在 `index.html` 最顶部渲染的**自定义 HTML 应用菜单栏**（`#app-menu-bar`）。
+3. 任务与终端功能一键直达：在 HTML 菜单栏中提供直点按钮，不再使用多级 dropdown 子菜单。
+4. 任务状态栏同行居中：将任务状态横幅移至 HTML 菜单栏的中间，并更名为“正在进行任务: XXX”，消除跑偏和越界问题，无任务时显示“正在进行任务: 无”。
+5. 原生智能训练助手的全功能实现：美化 UI 界面质感，支持自定义测试人设与参数、对话历史持久化与回显加载、大模型 API 参数设置以及 Prompt 导出下载。
 
 ## Current State
-1. 所有的本地源码修改已完全还原至 Codex 在 GitHub 上提交的最新提交点（`6dab867`）。
-2. 在项目根目录起草了最新的第三轮设计规格：[personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
-3. 在此移交任务，由 Codex 接力进行实际的代码开发和逻辑实现。
+1. 已将本地代码的所有更改还原至您最近提交的稳定点（`94e2c84`）。
+2. 在项目根目录更新了最新的第三轮设计规格：[personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。
+3. 在此移交任务，由 Codex 进行代码开发。
 
 ## Important Files
 - **[Plan Spec] [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)**: 包含了本轮开发的所有设计标准和改动参考。
-- **[Handoff File] [handoff/antigravity-to-codex.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/handoff/antigravity-to-codex.md)**: 本次交接的书面指引。
+- **[Handoff File] [handoff/antigravity-to-codex.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/handoff/antigravity-to-codex.md)**: 本次交接的指引。
 
 ## Requested Next Action for Codex
 请 Codex 按照以下步骤进行：
 1. 本地拉取本分支（`codex/personal-workbench`）的最新更改，读取 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 的详细设计规范。
-2. 修复面板折叠泄漏 Bug：为面板内部的所有 header 和 body 结构包裹一层 `.tab-extension-content` 或 `.native-assistant-content` 容器，设置 `width: 100%; height: 100%; overflow: hidden;`，使内容能够随面板降为 0 宽时被完美裁剪。
-3. 原生菜单精简：移除“任务”与“终端”的原生二级 `submenu` 下拉框，直接给它们绑定顶级 `click` 事件处理器以一键调用 toggle，同时保留 `CmdOrCtrl+T` 和 `CmdOrCtrl+`` 的快捷键绑定。
-4. 任务状态栏转移：
-   - 彻底移除 `index.html` 的 HTML 任务指示横幅 `#active-task-banner`。
-   - 在 `main.js` 原生菜单模版的“终端”与“编辑”中间，定义一个 ID 为 `active-task-menu-item`、状态为 `enabled: false` 的顶级置灰菜单项。
-   - 编写 IPC 信道在 `renderer.js` 执行/结束任务时，动态通知主进程修改其 `label` 文案为 `正在进行任务: XXX`。
-5. 重构内置助手面板：
-   - 使用现代色彩搭配（毛玻璃特效 `backdrop-filter: blur(16px)`，优雅的非默认系统字体，高颜值聊天气泡等）彻底重绘 UI 质感。
-   - 实现测试人设（测试人格）的增、删、改、配置管理界面与 System Prompt 模版映射。
-   - 实现完整的对话存储（以 taskId 为名写入本地 json 文件）与自动恢复加载机制。
-   - 读取主 Webview 的页面参数和 Cookies 登录态，配合 Polymas 服务端进行会话交互。
-   - 支持自定义模型接口 Endpoint、Key 及一键导出 Prompt 的功能。
-6. 完成开发后运行 `npm run check` 进行自检，启动工作台进行各项验证，并最终将代码提交和推送至 GitHub 协作仓库中！
+2. 隐藏原生菜单栏并开发 HTML 菜单栏：
+   - 在 `main.js` 中设置 `mainWindow.setMenuBarVisibility(false)` 隐藏原生菜单。
+   - 在 `index.html` 最顶部插入 `#app-menu-bar` 容器，横向展示：左侧“工作台”（有二级下拉菜单）、“任务”和“终端”直点按钮；中间绝对居中展示正在进行任务状态栏；右侧“编辑”、“视图”（带二级下拉菜单）。
+   - 在 `renderer.js` 中捕获顶级按钮的点击直接呼起对应的弹窗或面板。同时拦截全局快捷键。
+3. 助手面板折叠泄漏修复：
+   - 仿照 `.tab-extension-panel`，为 `.native-assistant-panel` 包裹内部的 `.native-assistant-content` 容器，并设置 `overflow: hidden; width: 100%; height: 100%;` 使得宽度为 0 时内部文本完美裁剪。
+4. 全面复原并升级智能助手：
+   - **UI 升级**：融入毛玻璃背景、精致圆角与阴影聊天气泡、及交互发光与缩放微动画。
+   - **测试人设**：开发独立的人格配置与增删改页面。
+   - **对话记录**：将会话内容实时存储至本地 JSON，重开任务时自动加载回显历史记录。
+   - **登录态与参数获取**：读取 Webview 内的 `ai-poly` Cookie，并调用 Polymas API 渲染当前步骤的卡片参数。
+   - **模型设置与 Prompt 下载**：支持自定义配置大模型服务各项参数，并提供下载 Prompt 与对话日志文件的功能。
+5. 完成开发后运行 `npm run check` 自检，然后重新启动工作台进行各项验证，最终将代码提交和推送至 GitHub 协作仓库中！

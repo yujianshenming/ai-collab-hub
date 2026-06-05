@@ -1,67 +1,124 @@
-# 个人定制工作台重构与内置助手功能恢复技术规格书 (Round 3)
+# 个人定制工作台重构与内置助手功能恢复技术规格书 (Round 3 - 最终重构)
 
-根据用户的最新反馈，我们需要对工作台菜单布局、分屏溢出 Bug、任务横幅展示进行细节修正。同时，需要对原生内置的“Polymas 智能训练助手”进行彻底重构，将其从一个简陋的草稿，恢复为具备高质感 UI 且功能完备（测试人设、完整历史记录、模型配置、下载提示词、参数获取）的成熟原生模块。
+根据您的最新审查反馈，我们需要解决以下四个核心问题，并由 Codex 进行代码实现：
 
----
-
-## 1. 工作台核心界面与交互优化规格
-
-### 1.1 顶级原生菜单栏优化 (去除多余二级菜单)
-* **痛点**：目前“任务”和“终端”在原生菜单中为二级项。点击“任务”会出现“任务列表”子菜单，点击“终端”会出现“本地终端”子菜单，增加了多余的点击步骤。
-* **重构方案**：
-  - 简化“工作台”菜单，仅保留“扩展设置”和“退出”。
-  - 将“任务”和“终端”修改为**直接可点击的顶级菜单项**。点击“任务”时，直接触发打开任务弹窗；点击“终端”时，直接触发切换底部终端。
-  - 顶级菜单直接绑定快捷键（“任务”绑定 `CmdOrCtrl+T`，“终端”绑定 `CmdOrCtrl+``），在没有二级菜单的情况下，点击直接响应操作。
-
-### 1.2 正在进行任务状态栏移入菜单栏 (消除越界)
-* **痛点**：在地址栏上方渲染横幅（`#active-task-banner`）占用过多的垂直高度，且文字与按钮较长时会跑偏超出边界。
-* **重构方案**：
-  - **彻底移除 HTML 中地址栏上方的 `#active-task-banner` 节点**，把宝贵的页面空间还给浏览器。
-  - 将任务状态指示器**直接移入 Electron 的原生菜单栏中**，在“终端”与“编辑”菜单项之间，作为一个**置灰/禁用的顶级菜单项**显示。
-  - 其文案格式定义为：`正在进行任务: [学校] - [课程] (类型)`，若无正在进行任务，则显示 `正在进行任务: 无`。
-  - 在 `renderer.js` 点击任务执行或清除时，通过 IPC 通道向主进程发送当前任务状态信息，主进程通过 `Menu.getApplicationMenu().getMenuItemById(id).label = ...` 动态重绘更新菜单栏上的文本。
-
-### 1.3 修复分屏及主视图的 panel 溢出泄漏 Bug
-* **痛点**：当关闭右侧的扩展面板（`.tab-extension-panel`）或原生助手面板（`.native-assistant-panel`）时，它们虽然宽度被过渡（transition）设为 `0`，但因为面板本身的 CSS 为 `overflow: visible`，导致面板内未被销毁的文本和按钮纵向重合，在分屏的边缘泄漏并堆叠显示（如首屏截图所示）。
-* **重构方案**：
-  - 既要保留 resizer 在面板边缘溢出（`left: -5px`）以实现顺畅的 hover/drag 交互，又要裁剪内部所有多余的内容。
-  - 在面板 DOM 内部，将所有 header 和 body（即具体的内容结构）包裹进一个新的内容容器中，如 `.tab-extension-content` 和 `.native-assistant-content`。
-  - 容器样式设定为：`width: 100%; height: 100%; overflow: hidden; display: flex; flex-direction: column;`。
-  - 而 resizer (`.tab-extension-resizer`) 依旧作为 panel 的直接子元素放置，使得 panel 的 `overflow` 依旧为 `visible`。由于内部真实内容被 content 容器做了 `overflow: hidden` 强制包裹裁剪，当 panel 宽度降为 0 时，内部内容将干净地消失，且 resizer 的边缘触发区完美保留。
+1. **分屏面板溢出问题**：除扩展面板外，内置的原生智能助手面板（`.native-assistant-panel`）折叠至 0 宽时内部文字依然溢出，需要同样包裹内容容器并配置 `overflow: hidden` 裁剪。
+2. **直达顶级菜单**：在 Windows 原生菜单栏中，“任务”与“终端”作为顶级菜单存在直接点击限制（OS 会展开空下拉框，且点击冗余）。我们需要采用**自定义 HTML 应用菜单栏**的方案，将“工作台”、“任务”、“终端”等功能标签与任务状态展示整合在同一行中，消除冗余步骤。
+3. **状态栏同行居中与更名**：任务横幅需更名为“正在进行任务”（非“正在运行”），且必须与菜单标签在同一行中居中展示，防止越界并提升空间利用率。
+4. **内置智能助手的全面复原**：复原原 Chrome 扩展的完整功能（自定义测试人设、完整对话历史、核心参数读取、模型配置、下载提示词），并进行界面美化升级。
 
 ---
 
-## 2. 内置 “Polymas 智能训练助手” 重构与功能复原规格
+## 1. 工作台核心界面与交互重构指引
 
-目前版本的内置智能助手界面过于简陋，且缺失了原 Chrome 扩展的许多核心高级功能。Codex 必须按照以下规格进行全方位功能恢复与 UI 升级：
+### 1.1 移除原生菜单栏，引入 HTML 自定义菜单栏
+* **主进程配置 (`main.js`)**：
+  - 隐藏原生 Electron 菜单栏，在 `createWindow()` 中设置 `mainWindow.setMenuBarVisibility(false)`（或通过 `frame: true` 但不设 Menu）。
+* **DOM 结构调整 (`index.html`)**：
+  - 在 `.workspace` 容器的最顶部（`.topbar` 之上），新增一个 `#app-menu-bar`（HTML 应用菜单栏）节点：
+    ```html
+    <div id="app-menu-bar" class="app-menu-bar">
+      <!-- 左侧功能菜单 -->
+      <div class="menu-left-section">
+        <div class="menu-item-dropdown">
+          <button class="menu-btn" id="menu-workbench-btn">工作台</button>
+          <div class="dropdown-content">
+            <button id="submenu-extension-settings">扩展设置</button>
+            <button id="submenu-exit">退出</button>
+          </div>
+        </div>
+        <button class="menu-btn" id="menu-task-btn" title="快捷键: Ctrl+T">任务</button>
+        <button class="menu-btn" id="menu-terminal-btn" title="快捷键: Ctrl+`">终端</button>
+      </div>
 
-### 2.1 高颜值质感 UI/CSS 升级 (Premium UI)
-* **字体与排版**：使用现代化的字体（如 `Outfit` / `Inter` / `Microsoft YaHei UI`）代替粗糙的浏览器默认字体。
-* **色彩与质感**：采用 curated HSL 色彩体系，支持柔和的毛玻璃特效（`backdrop-filter: blur(16px); background: rgba(255, 255, 255, 0.75)`），使助手面板显得高端而专业。
-* **气泡式聊天布局**：重新设计聊天气泡。AI 教师/平台的发言气泡位于左侧，支持精致边框与细致阴影；学生的发言气泡位于右侧，采用高颜值渐变背景。
-* **交互细节**：为所有按钮、下拉框、输入框和 Tab 键设计顺滑的 hover 和 focus 发光动画，添加缩放微动作；输入区高度能够随字数自适应，或者支持更舒服的文本框。
+      <!-- 中间居中显示的任务状态栏 -->
+      <div class="menu-center-section">
+        <div id="active-task-banner-inline" class="active-task-banner-inline" style="display: none;">
+          <span class="active-task-pulse"></span>
+          🏃 正在进行任务: <span id="active-task-text-inline"></span>
+          <button id="clear-task-banner-btn-inline" class="active-task-close-inline" type="button" title="停止当前任务">结束</button>
+        </div>
+        <span id="active-task-empty-inline" class="active-task-empty-inline">正在进行任务: 无</span>
+      </div>
 
-### 2.2 测试人格设定 (Test Personas) 功能复原
-* **动态配置**：拒绝死板的硬编码人设。必须在设置视图中提供**测试人设的增、删、改、查**管理界面。
-* **参数设定**：每个人设需包含：人设名称（如“优秀学生”、“跑题学生”）、System Prompt 引导语、AI 模型 Temperature 温度系数、具体表达风格描述、以及缺省时（如接口无反应时）的兜底话术模板。
-* **运行联动**：在对话面板中，选择特定人设后，自动应用该人设的参数和 Prompt 向大模型发起对话请求。
+      <!-- 右侧辅助菜单 -->
+      <div class="menu-right-section">
+        <div class="menu-item-dropdown">
+          <button class="menu-btn">编辑</button>
+          <div class="dropdown-content">
+            <button onclick="document.execCommand('undo')">撤销</button>
+            <button onclick="document.execCommand('redo')">重做</button>
+            <button onclick="document.execCommand('cut')">剪切</button>
+            <button onclick="document.execCommand('copy')">复制</button>
+            <button onclick="document.execCommand('paste')">粘贴</button>
+          </div>
+        </div>
+        <div class="menu-item-dropdown">
+          <button class="menu-btn">视图</button>
+          <div class="dropdown-content">
+            <button id="submenu-reload">重新加载</button>
+            <button id="submenu-devtools">开发者工具</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    ```
+* **核心交互逻辑 (`renderer.js`)**：
+  - 点击左侧的“任务”按钮直接触发 `openTaskModal()` 打开任务弹窗（一键直达，无任何子菜单阻碍）。
+  - 点击左侧的“终端”按钮直接触发 `toggleTerminal()` 切换终端展现（一键直达，无任何子菜单阻碍）。
+  - 全局快捷键（`Ctrl+T` 和 `Ctrl+``）的键盘事件处理在 `renderer.js` 中捕获并直接触发相应函数。
+  - 任务的启动、结束和清除逻辑与中间的居中任务状态栏（`#active-task-banner-inline`）绑定，有任务时显示跑马灯和详情，无任务时显示 `正在进行任务: 无`。
+* **样式定义 (`style.css`)**：
+  - `#app-menu-bar` 高度约为 `32px`，背景采用高质感亮色 (`#ffffff` 或极浅灰色 `#f8fafc`) 并带底边框。
+  - 左侧、右侧、中间部分使用 Flex 弹性排列，中间区域（`menu-center-section`）使用绝对居中对齐，确保与两侧标签在同一水平线上，且保证长文本不越界（可以使用 `text-overflow: ellipsis` 截断）。
+  - 下拉菜单使用 CSS 悬浮（`:hover`）或点击切换展开，确保悬浮效果自然、反馈灵敏。
 
-### 2.3 完整的对话树与历史记录机制 (Dialogue History)
-* **历史保留**：智能助手不能每次打开时都是空的，必须能记住先前的聊天记录。
-* **持久化**：以任务 `taskId` 为 Key，将对话过程中的所有消息（包含 user, assistant, system 角色与时间戳）实时缓存或持久化至本地文件中（如 `temp/chats/history_{taskId}.json`）。
-* **自动加载**：当工作台检测到页面切换并识别出相同的 `trainTaskId` 时，自动在助手对话区中重新渲染先前的历史对话记录。
+### 1.2 修复助手面板的溢出折叠 Bug
+* **DOM 包裹 (`index.html` 或 `renderer.js`)**：
+  - 在 `createTabViewport` 函数中，对 `.native-assistant-panel` 内除 `.tab-extension-resizer` 外的所有子元素，全部包裹在 `<div class="native-assistant-content">` 容器内。
+* **CSS 样式限制 (`style.css`)**：
+  - 配置 `.native-assistant-content { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; overflow: hidden; }`。
+  - 确保面板宽度为 `0` 时，内部的所有聊天列表、表单、按钮和文本被 content 容器彻底隐藏裁剪，而边缘的 resizer 正常保留。
 
-### 2.4 获取网页 Session 登录态与参数 (Parameters Extraction)
-* **动态侦测**：自动监听主 Webview 的导航和参数事件。一旦捕获到 `trainTaskId`，除了拉取步骤，还需要读取并渲染：
-  - 当前进行中的步骤卡片详细参数（卡片名称、期望指标、最大答题轮数限制等）。
-  - 通过 `getCookies` 获取当前 webview 的 Polymas 登录态 Token，用以向后台 API 进行无缝的数据交互。
+---
 
-### 2.5 灵活的模型配置 (Model Config Panel)
-* **高级选项**：设置 Tab 下不仅要支持 Key 填写，还需要能够配置：
-  - 大模型接口地址 (Endpoint API URL)
-  - 密钥 (API Key)
-  - 使用的模型名 (Model Name)
-  - 能够实时测试接口联通状态。
+## 2. 内置 “Polymas 原生智能训练助手” 重构规格
 
-### 2.6 下载与管理 Prompt
-* **导出功能**：在助手界面中，提供一键下载/拷贝当前测试人设所使用的 Prompt 文件，以及下载导出完整对话文本（TXT 格式）或结构化日志（JSON 格式）的按钮。
+为彻底解决“不能对话、没有历史记录、界面太简陋、无法设置人设、大模型参数固定”等问题，Codex 必须在 `src/assistant.js`（或相关引入文件中）完整复原原扩展功能，并提供高级 UI：
+
+### 2.1 高颜值质感 UI 设计 (CSS Premium)
+* **毛玻璃质感**：面板背景使用 `backdrop-filter: blur(16px); background: rgba(255, 255, 255, 0.8)`。
+* **聊天气泡**：
+  - AI 教师气泡（左侧）：白色背景，带精致柔和阴影（`box-shadow: 0 4px 12px rgba(0,0,0,0.03)`），暗色细边框。
+  - 学生气泡（右侧）：采用蓝紫色渐变（`background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%)`），白色文字，右下角尖角过渡。
+  - 系统信息气泡（居中）：圆角卡片，浅灰色半透明背景，精致的 Emoji 提示。
+* **动画与微动作**：发送按钮、清空按钮及人设卡片在 hover 时有轻微上浮（`-1px`）和边框发光特效；大模型回复时提供打字呼吸效果（或加载点动画）。
+
+### 2.2 恢复测试人设 (Test Personas) 设置功能
+* 在助手控制区中，提供“管理测试人设”视图。
+* 允许用户自定义测试人格列表，每个人格可以配置并下载保存：
+  - **人设名称**（如：优秀学生、偏题学生、中等学生）
+  - **系统提示词 (System Prompt)**
+  - **表达温度 (Temperature)**
+  - **专属话术与风格描述**
+  - **兜底/缺省话术模板**
+* 对话运行时，根据下拉框选择的人格，向大模型注入对应的 System Prompt 和温度参数进行回复生成。
+
+### 2.3 对话历史记录与持久化机制 (History Log)
+* **本地日志持久化**：原生助手需在每次收到或发送消息时，将当前的对话历史数组保存至本地 temp 目录下：`temp/chats/history_{taskId}.json`。
+* **历史回显**：当用户切换标签页或重新打开带有相同 `trainTaskId` 的 Polymas 页面时，助手能静默读取该文件，并完美将历史聊天记录复显在对话窗口中，支持无限滚动查看。
+
+### 2.4 获取登录态与页面上下文参数 (Parameters Parser)
+* **读取凭证**：通过 Preload 的 `getCookies`，自动获取 `hike-teaching-center.polymas.com` 下的 `ai-poly` token。
+* **解析参数**：分析网页 API 返回的步骤详情，获取当前步骤卡片的名称、当前剧本的达标指标和要求，辅助大模型生成更切合本步骤上下文的回答。
+
+### 2.5 灵活的模型参数配置面板
+* 在设置面板中，提供大模型参数管理输入项：
+  - **API 接口地址 (URL)**
+  - **API 密钥 (API Key)**
+  - **模型名称 (Model)**
+  - **温度参数 (Temperature)**
+  - 提供“测试联通性”按钮，点击后向配置的接口发送测试请求，反馈是否配置成功。
+
+### 2.6 下载与管理 Prompt 及日志
+* 提供一键“下载当前人设 Prompt”和“下载当前对话日志”按钮，保存为 `.txt` 或 `.json` 文件。
