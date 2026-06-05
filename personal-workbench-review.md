@@ -1,104 +1,144 @@
-# 个人定制工作台缺陷审查与评估报告 (第 7 轮 - 新窗口链接与终端优化版)
+# 个人定制工作台缺陷审查与评估报告 (第 8.2 轮 - 鼠标拉伸、插件 URL 获取与刷新版)
 
-我已对工作台在运行中的交互体验进行了深度审查，并结合您的最新反馈，找出了关于“超链接弹到外部浏览器”、“终端自动重启后尺寸变形”、以及“地址栏搜索限制”的核心问题。
+我已根据您的最新反馈（① 右侧栏需要鼠标拉拽调节宽度且中间比例缩放；② 插件无法获取当前页面链接；③ 扩展设置中需要刷新按钮），对工作台进行了补充审查与架构设计。
 
-本报告已提交至 GitHub，请通知 Codex 读取本报告并对相应文件进行重构。
+本报告已在本地更新，请您进行最终审查。确认无误后我们一同提交至 GitHub，由 Codex 实施重构。
 
 ---
 
-## 一、 核心缺陷分析与整改方案 (请 Codex 实施)
+## 一、 新增核心缺陷与优化方案 (请 Codex 实施整改)
 
-### 1. 超链接跳转外部浏览器问题
+### 缺陷 1：右侧插件边栏固定宽度，无法手动拖拽调节 [严重等级：中]
 * **缺陷表现**：
-  当在工作台内页（如评估页面）点击一些含有 `target="_blank"` 的链接时，新页面会跳出工作台，直接在用户的系统默认浏览器（如 Chrome/Edge）中打开，破坏了工作台的闭环使用体验。
+  由于不同 Chrome 插件的 UI 比例和信息密度不同，固定的右侧栏宽度（340px）会导致部分插件内容显示不全。
 * **整改方案**：
-  在主进程中拦截 Webview 新窗口创建事件，让其直接在当前 Webview 的 WebContents 中通过 `loadURL` 进行覆盖加载。
-* **修改指导 (`personal-workbench/main.js`)**：
-  定位到 `app.on("web-contents-created", ...)` 部分：
-  ```javascript
-  app.on("web-contents-created", (_event, contents) => {
-    if (contents.getType() === "webview") {
-      contents.setWindowOpenHandler(({ url }) => {
-        // 核心修复：直接在当前 Webview 中加载 URL 覆盖当前页面
-        contents.loadURL(url);
-        return { action: "deny" };
-      });
-    }
-  });
-  ```
-
-### 2. 终端自动重建时尺寸变形/出现黑边的问题
-* **缺陷表现**：
-  当内嵌 CMD 进程被退出（例如在终端内运行 `exit`）后，再次在键盘打字会通过 IPC 自动拉起一个新的终端。但因为此时没有传入当前的 `cols` 和 `rows`，导致拉起的新终端以默认的 `80x24` 大小进行初始化，出现渲染错位或大片黑边。
-* **整改方案**：
-  在主进程中维护一个全局的终端尺寸变量 `lastTerminalSize`。每次终端被缩放时，更新该变量。当因键盘输入触发终端重建时，自动应用最后一次记录的有效尺寸。
-* **修改指导 (`personal-workbench/main.js`)**：
-  - 在文件头部定义 `lastTerminalSize`：
-    ```javascript
-    let lastTerminalSize = { cols: 80, rows: 24 };
+  在右侧边栏左边缘加入一条宽度为 `12px` 的隐形拖拽手柄（Resizer），并利用 `setPointerCapture` 手势监听，实现用鼠标拖拽实时调节右侧栏宽度，同时触发中间 Webview 区域的响应式缩放。
+* **修改指导**：
+  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在 `#right-sidebar` 内部最前端加入：
+    ```html
+    <div id="right-sidebar-resizer" class="right-sidebar-resizer" title="拖动调整侧边栏宽度"></div>
     ```
-  - 修改 `startTerminal` 函数，在启动时将传入的尺寸保存到全局中，若无传入则使用最后记录的尺寸：
-    ```javascript
-    function startTerminal(size = {}) {
-      if (terminalProcess) return;
-
-      if (size.cols) lastTerminalSize.cols = Math.max(20, Number(size.cols));
-      if (size.rows) lastTerminalSize.rows = Math.max(6, Number(size.rows));
-
-      terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
-        cols: lastTerminalSize.cols,
-        rows: lastTerminalSize.rows,
-        cwd: os.homedir(),
-        env: { ...process.env, TERM: "xterm-256color" }
-      });
-      // ... 保持其他监听与交互逻辑不变
-    }
+  - **[style.css](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/style.css)**：
+    ```css
+    .right-sidebar { position: relative; }
+    .right-sidebar-resizer { width: 12px; cursor: ew-resize; position: absolute; left: -6px; top: 0; bottom: 0; z-index: 10; }
     ```
-  - 修改 `terminal:resize` 的 IPC 监听器：
+  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
+    实现 `beginRightSidebarResize` 监听器，并在拖拽过程中更新 CSS 变量 `--right-sidebar-width`：
     ```javascript
-    ipcMain.on("terminal:resize", (_event, size) => {
-      if (size) {
-        if (size.cols) lastTerminalSize.cols = Math.max(20, Number(size.cols));
-        if (size.rows) lastTerminalSize.rows = Math.max(6, Number(size.rows));
-      }
-      if (!terminalProcess) return;
-      terminalProcess.resize(lastTerminalSize.cols, lastTerminalSize.rows);
+    const rightResizer = document.querySelector("#right-sidebar-resizer");
+    rightResizer.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      rightResizer.setPointerCapture(event.pointerId);
+      setWebviewPointerEvents(false);
+      const startX = event.clientX;
+      const startWidth = elements.rightSidebar.getBoundingClientRect().width;
+      
+      const onMove = (moveEvent) => {
+        // 因为侧边栏在右侧，向左拖拽（clientX 变小）宽度变大
+        const width = Math.max(280, Math.min(window.innerWidth * 0.6, startWidth + startX - moveEvent.clientX));
+        document.documentElement.style.setProperty("--right-sidebar-width", `${width}px`);
+        fitWebviewZoom();
+      };
+      const onUp = () => {
+        rightResizer.releasePointerCapture(event.pointerId);
+        setWebviewPointerEvents(true);
+        rightResizer.removeEventListener("pointermove", onMove);
+        rightResizer.removeEventListener("pointerup", onUp);
+      };
+      rightResizer.addEventListener("pointermove", onMove);
+      rightResizer.addEventListener("pointerup", onUp);
     });
     ```
 
-### 3. 地址栏输入非网址文本报错的问题
-* **缺陷表现**：
-  如果在地址栏中输入的是搜索词（如 `claude 使用教程`），目前的 `normalizeUrl` 会将其暴力拼接为 `https://claude 使用教程`，导致 Webview 无法加载。
+### 缺陷 2：嵌入的 Chrome 扩展无法获取工作台当前的网页链接（无法激活按钮） [严重等级：高]
+* **缺陷原因**：
+  Chrome 插件通常调用 `chrome.tabs.query({ active: true, currentWindow: true })` 来查询当前激活标签页的 URL。在 Electron 中，由于插件运行在独立的扩展上下文，它无法识别网页的 `<webview>` 为标准浏览器 Tab，导致插件查询不到当前 URL（出现您截图中的“请在训练页面打开”提示）。
 * **整改方案**：
-  优化地址栏的 URL 检测。如果输入不符合域名格式，则自动转为百度/Google等搜索引擎的搜索结果页。
-* **修改指导 (`personal-workbench/renderer.js`)**：
-  重构 `normalizeUrl(value)` 函数：
-  ```javascript
-  function normalizeUrl(value) {
-    const trimmed = value.trim();
-    if (/^https?:\/\//i.test(trimmed)) return trimmed;
-    
-    // 如果是本地开发地址
-    if (/^localhost(:\d+)?$/i.test(trimmed)) {
-      return `http://${trimmed}`;
+  通过编写一个专门针对扩展 Popup 窗口的 `webview 预加载脚本` (Popup Preload)，重写并注入 `chrome.tabs.query` 和 `chrome.tabs.getSelected` API。在插件调用该接口时，通过 IPC 向主进程获取工作台当前活跃的 webview 网页地址，实现无缝对接！
+* **修改指导**：
+  - **[NEW] [preload-popup.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/preload-popup.js)**：
+    ```javascript
+    const { contextBridge, ipcRenderer } = require("electron");
+
+    let mockChrome = {
+      tabs: {
+        query(queryInfo, callback) {
+          ipcRenderer.invoke("workbench:get-active-tab-info").then((tabInfo) => {
+            callback([{ id: 9999, url: tabInfo.url, title: tabInfo.title, active: true }]);
+          });
+        },
+        getSelected(windowId, callback) {
+          const cb = typeof windowId === "function" ? windowId : callback;
+          ipcRenderer.invoke("workbench:get-active-tab-info").then((tabInfo) => {
+            cb({ id: 9999, url: tabInfo.url, title: tabInfo.title, active: true });
+          });
+        }
+      }
+    };
+
+    // 智能拦截并注入到 chrome API 中
+    if (typeof window.chrome === "undefined") {
+      let realChrome = undefined;
+      Object.defineProperty(window, "chrome", {
+        get() { return realChrome || mockChrome; },
+        set(val) {
+          realChrome = val;
+          if (realChrome) {
+            realChrome.tabs = realChrome.tabs || {};
+            realChrome.tabs.query = mockChrome.tabs.query;
+            realChrome.tabs.getSelected = mockChrome.tabs.getSelected;
+          }
+        },
+        configurable: true
+      });
+    } else {
+      window.chrome.tabs = window.chrome.tabs || {};
+      window.chrome.tabs.query = mockChrome.tabs.query;
+      window.chrome.tabs.getSelected = mockChrome.tabs.getSelected;
     }
-    // 如果是域名或 IP (包含 "." 且不包含空格)
-    if (/^[a-zA-Z0-9-]+\.[a-zA-Z0-9.-]+/i.test(trimmed) && !/\s/.test(trimmed)) {
-      return `https://${trimmed}`;
-    }
-    // 否则作为百度搜索词
-    return `https://www.baidu.com/s?wd=${encodeURIComponent(trimmed)}`;
-  }
-  ```
+    ```
+  - **[preload.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/preload.js)** & **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
+    - 渲染进程在切换标签页（`activateTab`）和网页跳转（`did-navigate`）时，通过 IPC 更新主进程记录的 `activeTabInfo`：
+      `window.workbench.updateActiveTabInfo({ url: webview.getURL(), title: tab.name })`。
+    - 为右侧侧边栏 webview 动态绑定该预加载脚本：
+      `<webview id="right-sidebar-webview" partition="persist:personal-workbench" preload="preload-popup.js"></webview>`。
+  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)**：
+    - 增加内存状态变量 `let activeTabInfo = { url: "", title: "" };`
+    - 注册 IPC 监听：`ipcMain.on("tab:active-update", (_, info) => { activeTabInfo = info; });`
+    - 注册 IPC 处理：`ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);`
+
+### 缺陷 3：扩展设置弹窗缺少“刷新扩展”功能 [严重等级：中]
+* **缺陷原因**：
+  修改或添加扩展路径后，必须彻底重启整个应用才能让扩展生效，调试和使用过程极不方便。
+* **整改方案**：
+  在扩展设置的弹窗标题旁增加一个刷新的图标按钮。点击后，主进程遍历并卸载所有已加载扩展，并重新从配置文件载入加载，实现热重载。
+* **修改指导**：
+  - **[index.html](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/index.html)**：在 `#settings-dialog` 的标题右侧添加刷新按钮：
+    ```html
+    <h2>本地扩展设置 <button id="refresh-extensions-button" class="icon-button inline-refresh" type="button" title="刷新并重新加载扩展">↻</button></h2>
+    ```
+  - **[main.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/main.js)**：
+    ```javascript
+    ipcMain.handle("extensions:refresh", async () => {
+      const loaded = workbenchSession().extensions.getAllExtensions();
+      for (const ext of loaded) {
+        try { workbenchSession().extensions.removeExtension(ext.id); } catch {}
+      }
+      extensionResults = await loadConfiguredExtensions();
+      return extensionResults;
+    });
+    ```
+  - **[renderer.js](file:///C:/Users/24391/Documents/New%20project/ai-collab-hub/personal-workbench/renderer.js)**：
+    绑定 `#refresh-extensions-button` 的点击事件，调用 `window.workbench.refreshExtensions()` 并在完成后重新渲染扩展列表。
 
 ---
 
-## 二、 后续优化与演进方向建议 (Roadmap Suggestions)
+## 二、 之前的缺陷与优化项目（保留并整合）
 
-为使工作台未来更加强大实用，建议后续考虑以下重构路线：
-1. **系统托盘后台运行常驻**：
-   支持最小化到右下角托盘，不占任务栏，通过全局快捷键（如 `Alt + Space`）一键唤醒或隐藏主界面。
-2. **多账号 Cookie 会话隔离**：
-   在添加自定义标签页时，可选“隔离容器”，以使用独立的存储空间多开同一网站的不同账号。
-3. **全局快捷键管理**：
-   添加在多个工作台标签页中快速切换的快捷键（如 `Ctrl + Tab`），提升纯键盘流操作效率。
+1. **缺陷 4：删除 `shell` 模块导致外部协议链接（如 `mailto:`、`vscode:`）失效**。
+2. **缺陷 5：地址栏对 `file://` 协议的支持缺失**。
+3. **缺陷 6：新建标签页保存 URL 未做智能清洗导致死链接**。
+4. **缺陷 7：桌面端一键启动与打包支持（新增 `启动工作台.vbs` 免黑框脚本，配置打包命令）**。
+5. **缺陷 8：网页加载或网络异常时，缺乏任何 UI 进度反馈**。
