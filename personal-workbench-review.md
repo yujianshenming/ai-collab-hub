@@ -1,155 +1,142 @@
-# 个人定制工作台缺陷审查与评估报告 (第 9 轮 - 扩展 background.js 深度突破版)
+# 个人定制工作台缺陷审查与评估报告 (第 9.1 轮 - 增加提取复制 trainTaskId 按钮与 Toast 反馈版)
 
-我已针对扩展在工作台内“仍无法使用”、“无法获取配置且报错”的问题，对您的扩展源码 [background.js](file:///C:/Users/24391/Downloads/chrome-extension-skill-training-course-main/dist/background.js) 进行了深度审查。
+在成功突破 Electron 限制打通扩展后台数据后，我们针对您的最新反馈（在界面中增加一个快捷提取并复制 `trainTaskId` 的按钮，该参数通常存在于当前 URL 中），对工作台进行了补充设计。
 
-我们找出了**导致扩展功能失效的终极原因**并设计了破局方案。本报告已更新，请在确认后我们一起提交至 GitHub，由 Codex 实施双端重构。
-
----
-
-## 一、 缺陷根本原因分析 (Root Cause)
-
-1. **`chrome.cookies` 报错 `getAll` 属于 background.js 崩溃**：
-   - 您的扩展中，获取 Cookie 和配置的实际逻辑并非运行在 Popup 弹窗中，而是运行在扩展独立的 Service Worker 进程 [background.js](file:///C:/Users/24391/Downloads/chrome-extension-skill-training-course-main/dist/background.js) 中（第 1122 行 `chrome.cookies.getAll` 以及第 1010 行 `chrome.cookies.get`）。
-   - 之前我们通过 `preload-popup.js` 仅仅在 Popup 弹窗的 webview 中注入了 API。但是，**background.js 运行在独立的扩展后台页面上下文，完全无法加载 preload 脚本**。这导致 background 运行时因为调用了未定义的 `chrome.cookies` 直接崩溃。
-2. **`chrome.tabs.query` 在 background.js 中获取不到当前网页 URL**：
-   - background.js 频繁调用 `chrome.tabs.query({ active: true, currentWindow: true })` 来识别用户正在浏览的页面。
-   - 在 Electron 环境中，后台进程无法将 `<webview>` 识别为标准浏览器 Tab。这导致 `chrome.tabs.query` 返回空数组，使插件误判定用户“未在能力训练页面”，因而按钮呈现灰色状态。
+本报告已在本地更新，请您进行确认。
 
 ---
 
-## 二、 终极整改方案 (请 Codex 实施双端重构)
+## 一、 新增功能规范 (请 Codex 实施重构)
 
-由于扩展后台环境没有 IPC 权限，我们需要在工作台主进程中**开启一个超轻量的本地 HTTP 服务**，供扩展 background.js 异步获取工作台的 Cookie 和活动标签状态，从而完美实现桥接。
+### 1. 地址栏内侧新增“获取并复制 trainTaskId”按钮
+* **设计目的**：
+  为方便用户快速复制当前训练页面 URL 中的关键参数 `trainTaskId`（或 `train_task_id`），在地址栏内部右侧（在输入框与 GO 打开按钮之间）放置一个专门的提取图标按钮。
+* **位置与布局 (`personal-workbench/index.html`)**：
+  在 `#address-input` 的后面，`#go-button` 的前面插入：
+  ```html
+  <!-- 新增：提取复制 ID 按钮 -->
+  <button id="get-task-id-button" class="icon-button address-bar-action" type="button" title="提取并复制当前网址的 trainTaskId">🆔</button>
+  ```
 
-### 1. 工作台主进程重构：`personal-workbench/main.js`
-- 引入 Node 原生的 `http` 模块，在主进程启动时监听本地端口（如 `38924`）。
-- 注册两个微型 API 接口：
-  - `/cookies`：读取工作台原生 Session 中的 Cookie。
-  - `/active-tab`：返回当前工作台活跃的标签页 URL。
-
-* **修改指导 (`personal-workbench/main.js`)**：
-  在 `main.js` 中新增以下逻辑：
-  ```javascript
-  const http = require("node:http");
-  let localServer;
-
-  function startLocalServer() {
-    if (localServer) return;
-    localServer = http.createServer(async (req, res) => {
-      // 允许跨域
-      res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("Access-Control-Allow-Headers", "*");
+### 2. 复制反馈与高颜值 Toast 提示机制
+* **设计目的**：
+  当用户点击该按钮时，如果提取成功，则将该参数复制到剪贴板并弹出精致的渐显渐隐 Toast 弹窗反馈；如果当前网页不包含该参数或网址不合法，则弹出错误的 Toast 反馈。
+* **修改指导 (`personal-workbench/renderer.js`)**：
+  - **编写 Toast 提示工具**：
+    ```javascript
+    function showToast(message, type = "success") {
+      let container = document.querySelector(".toast-container");
+      if (!container) {
+        container = document.createElement("div");
+        container.className = "toast-container";
+        document.body.append(container);
+      }
+      const toast = document.createElement("div");
+      toast.className = `toast-message ${type}`;
+      toast.textContent = message;
+      container.append(toast);
       
-      const parsedUrl = new URL(req.url, "http://localhost");
+      // 触发重绘以实现过渡动画
+      setTimeout(() => toast.classList.add("show"), 10);
       
-      if (parsedUrl.pathname === "/cookies") {
-        const urlParam = parsedUrl.searchParams.get("url");
-        const nameParam = parsedUrl.searchParams.get("name");
-        try {
-          const filter = {};
-          if (urlParam) filter.url = urlParam;
-          if (nameParam) filter.name = nameParam;
-          const cookies = await workbenchSession().cookies.get(filter);
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify(cookies));
-        } catch {
-          res.writeHead(500);
-          res.end("[]");
+      // 2.5秒后渐隐并移除
+      setTimeout(() => {
+        toast.classList.remove("show");
+        setTimeout(() => toast.remove(), 300);
+      }, 2500);
+    }
+    ```
+  - **绑定按钮点击事件**：
+    ```javascript
+    document.querySelector("#get-task-id-button").addEventListener("click", () => {
+      const url = elements.addressInput.value || activeWebview()?.getURL?.() || "";
+      if (!url) {
+        showToast("当前没有打开的网页网址", "error");
+        return;
+      }
+      try {
+        const parsed = new URL(url);
+        const id = parsed.searchParams.get("trainTaskId") || parsed.searchParams.get("train_task_id");
+        if (id) {
+          navigator.clipboard.writeText(id).then(() => {
+            showToast(`已复制 trainTaskId: ${id}`, "success");
+          }).catch(() => {
+            showToast("复制到剪贴板失败，请重试", "error");
+          });
+        } else {
+          showToast("当前网址中未包含 trainTaskId 参数", "error");
         }
-      } else if (parsedUrl.pathname === "/active-tab") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(activeTabInfo));
-      } else {
-        res.writeHead(404);
-        res.end();
+      } catch {
+        showToast("无法解析当前网址，请确认网址格式是否正确", "error");
       }
     });
-    // 监听本地回环端口
-    localServer.listen(38924, "127.0.0.1");
-  }
+    ```
 
-  function stopLocalServer() {
-    if (localServer) {
-      localServer.close();
-      localServer = null;
-    }
+### 3. Toast 样式设计 (`personal-workbench/style.css`)
+* **设计要求**：
+  保持极简、淡雅的浅色主题设计风格。Toast 应浮动在应用正上方或正下方，并有柔和的阴影。
+* **样式指南**：
+  ```css
+  /* Toast 提示容器 */
+  .toast-container {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 9999;
+    pointer-events: none;
+  }
+  /* Toast 单条消息 */
+  .toast-message {
+    padding: 10px 18px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: white;
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.08);
+    border: 1px solid var(--border-color);
+    opacity: 0;
+    transform: translateY(-10px) scale(0.95);
+    transition: opacity 280ms ease, transform 280ms ease;
+  }
+  .toast-message.show {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .toast-message.success {
+    border-color: #bbf7d0;
+    color: #15803d;
+    background: #f0fdf4;
+  }
+  .toast-message.error {
+    border-color: #fecaca;
+    color: #b91c1c;
+    background: #fef2f2;
   }
   ```
-  在 `app.whenReady()` 的最后调用 `startLocalServer()`，在 `window-all-closed` 处调用 `stopLocalServer()`。
 
 ---
 
-### 2. 扩展后台文件重构：在 [background.js](file:///C:/Users/24391/Downloads/chrome-extension-skill-training-course-main/dist/background.js) 头部注入 Polyfill 垫片
-- 我们需要在您的扩展文件 `C:\Users\24391\Downloads\chrome-extension-skill-training-course-main\dist\background.js` **第 1 行之前**，由 Codex 强行置入以下 polyfill 垫片，用于拦截扩展后台对 `chrome.cookies` 和 `chrome.tabs` 的调用，并自动请求本地接口：
+## 二、 之前已完成的缺陷修复清单 (保留作为基准)
 
-* **修改指导 (`C:\Users\24391\Downloads\chrome-extension-skill-training-course-main\dist\background.js`)**：
-  在 `background.js` 文件最顶端 prepend 写入以下代码：
-  ```javascript
-  // ================= Electron Extension Background Polyfill =================
-  (function() {
-    if (typeof chrome !== "undefined") {
-      // 1. Polyfill chrome.cookies
-      if (!chrome.cookies) {
-        chrome.cookies = {
-          async getAll(details = {}) {
-            const url = details.url ? `?url=${encodeURIComponent(details.url)}` : "";
-            const res = await fetch(`http://127.0.0.1:38924/cookies${url}`);
-            return await res.json();
-          },
-          async get(details = {}) {
-            const url = details.url ? `?url=${encodeURIComponent(details.url)}` : "";
-            const name = details.name ? `&name=${encodeURIComponent(details.name)}` : "";
-            const res = await fetch(`http://127.0.0.1:38924/cookies${url}${name}`);
-            const list = await res.json();
-            return list[0] || null;
-          }
-        };
-      }
-      // 2. Polyfill chrome.tabs
-      if (chrome.tabs) {
-        const originalQuery = chrome.tabs.query;
-        chrome.tabs.query = async function(queryInfo, callback) {
-          if (queryInfo && queryInfo.active) {
-            try {
-              const res = await fetch("http://127.0.0.1:38924/active-tab");
-              const tabInfo = await res.json();
-              const tab = { id: 9999, url: tabInfo.url, title: tabInfo.title, active: true };
-              if (typeof callback === "function") callback([tab]);
-              return [tab];
-            } catch {
-              return [];
-            }
-          }
-          if (originalQuery) return originalQuery.apply(this, arguments);
-        };
-        const originalGetSelected = chrome.tabs.getSelected;
-        chrome.tabs.getSelected = async function(windowId, callback) {
-          const cb = typeof windowId === "function" ? windowId : callback;
-          try {
-            const res = await fetch("http://127.0.0.1:38924/active-tab");
-            const tabInfo = await res.json();
-            const tab = { id: 9999, url: tabInfo.url, title: tabInfo.title, active: true };
-            if (typeof cb === "function") cb(tab);
-            return tab;
-          } catch {
-            return null;
-          }
-        };
-      }
-    }
-  })();
-  // =========================================================================
-  ```
+1. **扩展 background.js 本地 HTTP 服务桥接** (监听 `127.0.0.1:38924`，注入 Cookie 及 Tab 获取垫片)。
+2. **右侧插件栏鼠标拉伸调节** & 中间网页自适应比例缩放。
+3. **右侧栏关闭后大小自动恢复 340px**（从 documentElement 中移除 `--right-sidebar-width`）。
+4. **拉伸终端/侧边栏时加入 `.resizing` 样式类**，拖动期间屏蔽一切 transition 以保证绝对流畅。
+5. **外部协议跳转修复**（使用 `shell.openExternal` 处理 `mailto:` 等协议）。
+6. **地址栏搜索路由与本地 `file://` 支持**。
 
 ---
 
 ## 三、 验证计划
 
-1. **测试扩展自动配置**：
-   - 重启工作台（通过双击 `启动工作台.vbs`）。
-   - 切换到含有 `trainTaskId` 的网页页面。
-   - 点击插件图标呼出右侧抽屉，验证**原本被禁用的“开始对话”大按钮已成功被激活（表示 tabs 成功匹配）**。
-   - 点击“**一键获取平台配置**”按钮，验证 `Cannot read properties of undefined` 报错彻底清除，成功提取出该站点的 Cookie 和 JWT！
-2. **测试拉伸流畅性与重置**：
-   - 拖拽右侧栏看是否依然保持流畅的实时无过渡渲染。
-   - 关闭后重试，确保自动缩回 `340px`。
+1. **测试复制 trainTaskId**：
+   - 切换到含有 `trainTaskId=12345` 参数的网页。
+   - 点击地址栏的 `🆔` 按钮，验证屏幕上方弹出绿色的 “已复制 trainTaskId: 12345” Toast 提示。
+   - 在任意文本框（如内嵌终端）中按下 `Ctrl + V`，验证剪贴板中是否成功粘贴了 `12345`。
+2. **测试无 ID 提示**：
+   - 切换到不含该参数的页面（如 `https://www.baidu.com`），点击 `🆔` 按钮，验证弹出红色的 “当前网址中未包含 trainTaskId 参数” 错误提示。
