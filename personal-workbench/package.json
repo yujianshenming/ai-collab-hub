@@ -1,0 +1,19 @@
+{
+  "name": "personal-workbench",
+  "version": "0.1.0",
+  "description": "A calm desktop workbench for persistent web tools and PowerShell.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check main.js && node --check preload.js && node --check preload-popup.js && node --check renderer.js",
+    "test": "npm run check"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^36.4.0"
+  }
+}
