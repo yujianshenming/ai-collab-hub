@@ -45,7 +45,12 @@ function saveTabs() {
 function normalizeUrl(value) {
   const trimmed = value.trim();
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  if (/^localhost(:\d+)?(\/.*)?$/i.test(trimmed)) return `http://${trimmed}`;
+  if (/^(\d{1,3}\.){3}\d{1,3}(:\d+)?(\/.*)?$/.test(trimmed)) return `http://${trimmed}`;
+  if (/^([a-z0-9-]+\.)+[a-z0-9-]+(:\d+)?(\/.*)?$/i.test(trimmed) && !/\s/.test(trimmed)) {
+    return `https://${trimmed}`;
+  }
+  return `https://www.baidu.com/s?wd=${encodeURIComponent(trimmed)}`;
 }
 
 function iconForTab(name) {

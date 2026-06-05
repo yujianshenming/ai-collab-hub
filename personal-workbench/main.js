@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, session } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -6,6 +6,7 @@ const os = require("node:os");
 
 let mainWindow;
 let terminalProcess;
+let lastTerminalSize = { cols: 80, rows: 24 };
 let extensionResults = [];
 const workbenchPartition = "persist:personal-workbench";
 
@@ -47,9 +48,10 @@ function sendToRenderer(channel, payload) {
 function startTerminal(size = {}) {
   if (terminalProcess) return;
 
+  updateTerminalSize(size);
   terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
-    cols: Math.max(20, Number(size.cols) || 80),
-    rows: Math.max(6, Number(size.rows) || 24),
+    cols: lastTerminalSize.cols,
+    rows: lastTerminalSize.rows,
     cwd: os.homedir(),
     env: { ...process.env, TERM: "xterm-256color" }
   });
@@ -59,6 +61,17 @@ function startTerminal(size = {}) {
     terminalProcess = null;
     sendToRenderer("terminal:data", `\r\n[命令提示符已退出，代码 ${exitCode ?? "未知"}]\r\n`);
   });
+}
+
+function updateTerminalSize(size = {}) {
+  const cols = Number(size.cols);
+  const rows = Number(size.rows);
+  if (Number.isFinite(cols)) lastTerminalSize.cols = Math.max(20, cols);
+  if (Number.isFinite(rows)) lastTerminalSize.rows = Math.max(6, rows);
+}
+
+function canLoadInWebview(url) {
+  return /^(https?|chrome-extension):\/\//i.test(url);
 }
 
 function stopTerminal() {
@@ -190,8 +203,9 @@ function registerIpc() {
     terminalProcess?.write(data);
   });
   ipcMain.on("terminal:resize", (_event, size) => {
+    updateTerminalSize(size);
     if (!terminalProcess) return;
-    terminalProcess.resize(Math.max(20, Number(size?.cols) || 80), Math.max(6, Number(size?.rows) || 24));
+    terminalProcess.resize(lastTerminalSize.cols, lastTerminalSize.rows);
   });
 
   ipcMain.handle("extensions:get", () => ({
@@ -220,7 +234,7 @@ app.whenReady().then(async () => {
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
       contents.setWindowOpenHandler(({ url }) => {
-        shell.openExternal(url);
+        if (canLoadInWebview(url)) contents.loadURL(url).catch(() => {});
         return { action: "deny" };
       });
     }
