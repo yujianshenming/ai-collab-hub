@@ -325,6 +325,7 @@ function toggleRightSidebar(open, url = "", title = "") {
     elements.rightSidebarWebview.src = url;
   } else {
     elements.rightSidebarWebview.src = "about:blank";
+    document.documentElement.style.removeProperty("--right-sidebar-width");
   }
   setTimeout(() => {
     fitAddon?.fit();
@@ -434,6 +435,7 @@ function beginTerminalResize(event) {
   event.preventDefault();
   const handle = event.currentTarget;
   handle.setPointerCapture(event.pointerId);
+  elements.appShell.classList.add("resizing");
   setWebviewPointerEvents(false);
   const startY = event.clientY;
   const startHeight = elements.terminalPanel.getBoundingClientRect().height;
@@ -445,6 +447,7 @@ function beginTerminalResize(event) {
   };
   const onUp = () => {
     if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    elements.appShell.classList.remove("resizing");
     setWebviewPointerEvents(true);
     handle.removeEventListener("pointermove", onMove);
     handle.removeEventListener("pointerup", onUp);
@@ -462,6 +465,7 @@ function beginRightSidebarResize(event) {
   if (event.button !== 0) return;
   event.preventDefault();
   elements.rightSidebarResizer.setPointerCapture(event.pointerId);
+  elements.appShell.classList.add("resizing");
   setWebviewPointerEvents(false);
   const startX = event.clientX;
   const startWidth = elements.rightSidebar.getBoundingClientRect().width;
@@ -474,6 +478,7 @@ function beginRightSidebarResize(event) {
     if (elements.rightSidebarResizer.hasPointerCapture(event.pointerId)) {
       elements.rightSidebarResizer.releasePointerCapture(event.pointerId);
     }
+    elements.appShell.classList.remove("resizing");
     setWebviewPointerEvents(true);
     elements.rightSidebarResizer.removeEventListener("pointermove", onMove);
     elements.rightSidebarResizer.removeEventListener("pointerup", onUp);

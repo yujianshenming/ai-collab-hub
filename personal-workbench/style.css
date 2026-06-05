@@ -30,6 +30,7 @@ button { cursor: pointer; }
 .app-shell.right-sidebar-open { grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--right-sidebar-width); }
 .app-shell.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0; }
 .app-shell.sidebar-collapsed.right-sidebar-open { grid-template-columns: 0 minmax(0, 1fr) var(--right-sidebar-width); }
+.app-shell.resizing, .app-shell.resizing * { transition: none !important; }
 .sidebar {
   display: flex;
   flex-direction: column;

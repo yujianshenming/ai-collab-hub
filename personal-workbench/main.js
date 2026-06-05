@@ -215,6 +215,13 @@ function registerIpc() {
     };
   });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
+  ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
+    try {
+      return await workbenchSession().cookies.get(details);
+    } catch {
+      return [];
+    }
+  });
 
   ipcMain.handle("extensions:get", () => ({
     entries: readExtensionConfig(),

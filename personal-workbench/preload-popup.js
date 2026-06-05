@@ -2,11 +2,11 @@ const { ipcRenderer } = require("electron");
 
 function activeTab(callback) {
   const promise = ipcRenderer.invoke("workbench:get-active-tab-info").then((tabInfo) => ({
-      id: 9999,
-      url: tabInfo.url,
-      title: tabInfo.title,
-      active: true
-    }));
+    id: 9999,
+    url: tabInfo.url,
+    title: tabInfo.title,
+    active: true
+  }));
   if (typeof callback === "function") promise.then(callback);
   return promise;
 }
@@ -23,16 +23,36 @@ const mockTabs = {
   }
 };
 
-function patchChromeTabs(chromeApi) {
+const mockCookies = {
+  getAll(details = {}, callback) {
+    const promise = ipcRenderer.invoke("workbench:get-cookies", details).then((list) => list || []);
+    if (typeof callback === "function") promise.then(callback);
+    return promise;
+  },
+  get(details = {}, callback) {
+    const promise = ipcRenderer.invoke("workbench:get-cookies", details).then((list) => list?.[0] || null);
+    if (typeof callback === "function") promise.then(callback);
+    return promise;
+  }
+};
+
+function patchChromeApis(chromeApi) {
   if (!chromeApi) return;
   try {
     chromeApi.tabs = chromeApi.tabs || {};
     chromeApi.tabs.query = mockTabs.query;
     chromeApi.tabs.getSelected = mockTabs.getSelected;
+    chromeApi.cookies = chromeApi.cookies || {};
+    chromeApi.cookies.getAll = mockCookies.getAll;
+    chromeApi.cookies.get = mockCookies.get;
   } catch {
     try {
       Object.defineProperty(chromeApi, "tabs", {
         value: { ...(chromeApi.tabs || {}), ...mockTabs },
+        configurable: true
+      });
+      Object.defineProperty(chromeApi, "cookies", {
+        value: { ...(chromeApi.cookies || {}), ...mockCookies },
         configurable: true
       });
     } catch {}
@@ -40,16 +60,16 @@ function patchChromeTabs(chromeApi) {
 }
 
 if (window.chrome) {
-  patchChromeTabs(window.chrome);
+  patchChromeApis(window.chrome);
 } else {
   let realChrome;
   Object.defineProperty(window, "chrome", {
     get() {
-      return realChrome || { tabs: mockTabs };
+      return realChrome || { tabs: mockTabs, cookies: mockCookies };
     },
     set(value) {
       realChrome = value;
-      patchChromeTabs(realChrome);
+      patchChromeApis(realChrome);
     },
     configurable: true
   });
