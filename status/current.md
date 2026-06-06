@@ -1,25 +1,28 @@
 # Current Status
 
 ## Active Goal
-通过高质量微信文章沉淀知识库，并整合本地 UI/UX 设计决策工具提升开发质量。
+通过整合优质大模型工程准则（Andrej Karpathy 行为指南与 Matt Pocock 软件工程 Skills 库），规范 AI Agent 在代码重构、架构优化与任务协作时的行为，告别“氛围编码（Vibe Coding）”。
 
 ## Current Owner
 Antigravity (生活/工作电脑实例)
 
 ## Last Updated
-2026-06-04 15:30
+2026-06-06 20:30
 
 ## Latest Summary
-1. **服务安装与连接**：成功安装 `notebooklm-mcp-server`，完成自动化 Chrome 会话授权，打通与云端 NotebookLM 笔记本的连接。
-2. **工作流整合**：
-   - 导入了 `wechat-article-to-markdown-skill` 微信抓取流程。已成功将《oh-my-codex工作流》、《WeSight开源控制台》、《ui-ux-pro-max-skill UI设计能力》、《Claude code云端部署与流式调用》以及《分享Claude Code团队内部的5条工作原则，我觉得每一条都值得学习。》这五篇极具工程指导意义的文章分类导入到云端 [微信文章归档](https://notebooklm.google.com/notebook/54261b3c-4085-4b53-842d-f91024a2471f) 知识库中。
-   - 成功全局安装 `uipro-cli`，并在项目根目录初始化了 [ui-ux-pro-max](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/.gemini/skills/ui-ux-pro-max) 技能。该技能通过反向 AVOID 规则库（161 条行业禁忌）和风格持久化机制（`MASTER.md`），规范 AI 的 UI 页面生成行为。
-3. **运行验证**：UI/UX 搜索脚本本地运行通过，能够稳定输出高水平的设计决策卡。
+1. **全局技能安装**：
+   - 成功全局安装并初始化了 `mattpocock/skills` 包含的 29 项核心软件工程 SOP 技能，包含 `grill-me`、`tdd`、`triage` 等。
+   - 自行设计并全局整合了 **Andrej Karpathy 编码指南插件（`andrej-karpathy-skills-plugin`）**，将其作为全局技能 `karpathy-guidelines` 注册。
+2. **仓库工作流集成**：
+   - 在本仓库创建了 `CLAUDE.md` 规范，融合了 Karpathy 指南（**编码前思考、简洁优先、精准修改、目标驱动**）和 Matt Pocock 技能配置。
+   - 创建并配置了 `docs/agents/` 目录下的任务追踪对齐文件，将 Issue Tracker 绑定到符合本地 `PROTOCOL.md` 规范的 `tasks/` 本地 Markdown 任务看板（`todo.md`/`active.md`/`done.md`）。
+3. **协作状态同步**：
+   - 与 GitHub 远程仓库完成了 Pull/Merge，并将最新的工作流配置文件推送到 GitHub `master` 分支共享。
 
 ## Next Step
-1. 在后续所有涉及网页界面、原型 and UI 设计的代码编写或方案策划中，全面启用并遵守 `ui-ux-pro-max` 规范及 AVOID 检查。
-2. 随时接收用户发来的新公众号文章并持续归档。
-3. 等待用户提供自定义卡片任务模板以进行进一步的功能适配。
+1. 在后续涉及 Hermes 系统的代码逻辑修改、重构或测试中，严格以 `CLAUDE.md` 准则为导向（特别是对于大文件的精简和 surgical surgical surgical精准修改）。
+2. 在进行任何复杂方案开发前，通过任务看板新建 Task 并由 Codex/Antigravity 协作逐步拆解推进。
+3. 遵循 `ui-ux-pro-max` 与新集成的工程准则展开开发。
 
 ## Known Risks
 - 暂无
