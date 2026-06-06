@@ -1,35 +1,43 @@
 # Handoff: Codex -> Antigravity
 
 ## Date
-2026-05-31 21:02
+2026-06-01 16:30
 
 ## Summary
-Codex 已完成 `[Task-004]` 文档解析扩展，Hermes Agent 现在支持上传 `.docx` 与 `.pdf`。
+已根据你们最新测试反馈完成二次增强：去除提示词长度上限、增加强约束规则（不丢规则、不空行、自适应提问、偏题拉回、图片上传提醒、禁止内部思路）、修复被动模式首轮发言顺序，并支持按卡片独立跳转词。
 
 ## Implemented
-- `index.html`：文件上传控件的 `accept` 已扩展为 `.txt,.md,.json,.csv,.docx,.pdf`。
-- `server.py`：新增 `parse_file_content(filename, content)`。
-- `.docx`：使用 `docx.Document(io.BytesIO(content))` 遍历 paragraphs 并拼接文本。
-- `.pdf`：使用 `pypdf.PdfReader(io.BytesIO(content))` 遍历 pages 并提取文本。
-- 其他文本格式：默认使用 `utf-8-sig` 解码。
-- `/api/start-harness` 已改为通过解析函数处理上传文件。
+- `TaskAnalyzer` 的卡片 schema 增加可选 `card.transition_word`，缺省自动回退到根级 `transition_word`。
+- `AgentSandbox.simulate()` 切档检测改为按“当前卡片跳转词”判定，不再强依赖全局单词。
+- 被动模式 `passive` 首轮改为学生先发起，Trainer 被动应答，避免患者/对手主动引导。
+- `compile_card_prompt()` 两套模板新增硬规则：
+  - 规则不可弱化：不允许减少关键约束。
+  - 禁止空行，回复连续输出。
+  - 严禁内部思路与 `<think>`。
+  - 学生偏离角色时提醒回到角色与场景。
+  - 学生问非本阶段内容时引导回本阶段。
+  - 除非任务文档写死问题，否则不要固定问句模板，必须按学生回答自适应追问。
+  - 图片由平台人工上传，AI 需主动提示“请上传对应图片资源”并继续文字引导。
+- `normalize_dialogue_output()` 新增空行压缩与行清洗，确保输出连续。
+- 去除提示词长度上限相关限制：
+  - 移除 `create_trainer_prompt` 中“strictly under 300 characters”约束。
+  - 移除 `Optimizer.refine` 中 300 字精简要求。
+  - 系统提示返回截断阈值改为大上限（避免实际截断）。
 
 ## Verification
-- 本机已存在 `python-docx 1.2.0` 与 `pypdf 6.12.2`。
-- `python -m py_compile server.py hermes_agent.py` 通过。
-- 直接调用 `parse_file_content` 成功解析临时 `.docx` 内容。
-- 直接调用 `parse_file_content` 可处理 `.pdf` 文件路径，不发生崩溃。
-- 使用 FastAPI `TestClient` 上传临时 `.docx` 到 `/api/start-harness`，接口返回 200，且 `task_summary` 包含 docx 文本。
+- `python -m compileall hermes_agent.py` 通过。
+- mock 验证：
+  - `passive` 模式首条发言为 `Student`。
+  - 卡片独立跳转词可被准确触发（示例：`准备就绪`、`现象确认`）。
+  - 对话中无 `<think>`，无空行插入。
 
 ## Changed Files
+- `hermes_agent.py`
 - `handoff/codex-to-antigravity.md`
-- `tasks/active.md`
 - `status/current.md`
-- `server.py`
-- `index.html`
 
 ## Blockers
 暂无。
 
 ## Requested Next Action
-请 Antigravity 拉取本仓库后，用真实 `.docx` 和含文本层的 `.pdf` 样本文档进行实测。注意：扫描版 PDF 需要 OCR，当前 `pypdf` 方案只能提取已有文本层。
+请使用你们刚测试的同一批真实任务文档复测三点：1) 是否仍会出现“规则被缩写”现象；2) 被动模式首轮是否稳定由学生发起；3) 多卡片不同跳转词是否都能稳定切档。

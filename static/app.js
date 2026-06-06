@@ -80,6 +80,9 @@ function renderResult(result) {
   metaType.textContent = result.task_type || "--";
   metaStatus.textContent = "已完成";
   metaStatus.className = "status-pill";
+  if (result.transition_word) {
+    form.elements.transition_word.value = result.transition_word;
+  }
 
   // Render Evaluation Criteria
   evaluationCriteriaList.innerHTML = "";
@@ -131,7 +134,7 @@ function renderResult(result) {
               <span class="card-field-label">提示词 (System Prompt)</span>
               <button type="button" class="copy-btn" onclick="copyDirectText(this)">复制</button>
             </div>
-            <pre class="card-field-value text-to-copy">${escapeHtml(card.prompt)}</pre>
+            <pre class="card-field-value text-to-copy">${escapeHtml(card.compiled_prompt)}</pre>
           </div>
         </div>
       `;
