@@ -71,5 +71,9 @@ contextBridge.exposeInMainWorld("workbench", {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);
-  }
+  },
+  updateTabsList: (tabs) => ipcRenderer.send("tabs:list-update", tabs),
+  getSessionToken: () => ipcRenderer.invoke("workbench:get-session-token"),
+  cleanupTabResources: (tabId) => ipcRenderer.invoke("tab:cleanup-resources", tabId)
 });
+

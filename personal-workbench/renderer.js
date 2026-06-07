@@ -6,7 +6,8 @@ const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
 let tabs = readTabs();
 let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
-let splitTabId = null;
+let rightSplitTabId = null;
+let bottomSplitTabId = null;
 let terminal;
 let fitAddon;
 let pointerDrag = null;
@@ -40,6 +41,11 @@ const elements = {
   rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
   rightSidebarClose: document.querySelector("#right-sidebar-close"),
+  bottomSidebar: document.querySelector("#bottom-sidebar"),
+  bottomSidebarResizer: document.querySelector("#bottom-sidebar-resizer"),
+  bottomSidebarTitle: document.querySelector("#bottom-sidebar-title"),
+  bottomSidebarClose: document.querySelector("#bottom-sidebar-close"),
+  bottomSidebarBody: document.querySelector("#bottom-sidebar-body"),
   taskModal: document.querySelector("#task-manager-modal"),
   taskListView: document.querySelector("#task-list-view"),
   taskFormView: document.querySelector("#task-form"),
@@ -68,6 +74,7 @@ function readTabs() {
 
 function saveTabs() {
   localStorage.setItem(storageKey, JSON.stringify(tabs));
+  window.workbench.updateTabsList(tabs);
 }
 
 function normalizeUrl(value) {
@@ -90,7 +97,7 @@ function renderTabs() {
 
   for (const tab of tabs) {
     const item = document.createElement("div");
-    item.className = `tab-item${tab.id === activeTabId ? " active" : ""}${tab.id === splitTabId ? " split-active" : ""}`;
+    item.className = `tab-item${tab.id === activeTabId ? " active" : ""}${tab.id === rightSplitTabId || tab.id === bottomSplitTabId ? " split-active" : ""}`;
     item.dataset.id = tab.id;
     item.innerHTML = `
       <button class="tab-main" type="button">
@@ -126,6 +133,7 @@ function clearDragState() {
     item.style.transform = "";
   });
   document.querySelector("#split-drag-overlay")?.classList.remove("show");
+  document.querySelector("#split-drag-overlay-bottom")?.classList.remove("show");
 }
 
 function setWebviewPointerEvents(enabled) {
@@ -175,7 +183,12 @@ function createTabViewport(tab) {
     });
     webview.addEventListener("did-navigate", () => updateAddressFromWebview(webview));
     webview.addEventListener("did-navigate-in-page", () => updateAddressFromWebview(webview));
-    webview.addEventListener("dom-ready", () => fitWebviewZoom());
+    webview.addEventListener("dom-ready", () => {
+      fitWebviewZoom();
+      window.workbench.getSessionToken().then((token) => {
+        webview.executeJavaScript(`window.__workbenchSessionToken = "${token}";`).catch(() => {});
+      });
+    });
     setupWebviewUploadInterceptor(webview);
     webview.addEventListener("page-title-updated", (event) => {
       if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
@@ -703,9 +716,17 @@ function activeWebview() {
 }
 
 function activateTab(id) {
-  if (splitTabId === id) {
-    splitTabId = activeTabId;
+  if (rightSplitTabId === id) {
+    rightSplitTabId = activeTabId;
+  } else if (bottomSplitTabId === id) {
+    bottomSplitTabId = activeTabId;
   }
+
+  // Prevent duplicate references
+  if (rightSplitTabId === bottomSplitTabId) {
+    bottomSplitTabId = null;
+  }
+
   activeTabId = id;
   localStorage.setItem("personal_workbench_active", id);
   const tab = tabs.find((candidate) => candidate.id === id);
@@ -713,7 +734,7 @@ function activateTab(id) {
 
   document.querySelectorAll(".tab-item").forEach((item) => {
     item.classList.toggle("active", item.dataset.id === id);
-    item.classList.toggle("split-active", item.dataset.id === splitTabId);
+    item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
   });
 
   // Move viewports to their correct parent containers
@@ -724,11 +745,15 @@ function activateTab(id) {
       if (viewport.parentElement !== elements.webviewStack) {
         elements.webviewStack.append(viewport);
       }
-    } else if (vpId === splitTabId) {
+    } else if (vpId === rightSplitTabId) {
       viewport.classList.add("active");
-      const rightBody = document.querySelector("#right-sidebar-body");
-      if (viewport.parentElement !== rightBody) {
-        rightBody.append(viewport);
+      if (viewport.parentElement !== elements.rightSidebarBody) {
+        elements.rightSidebarBody.append(viewport);
+      }
+    } else if (vpId === bottomSplitTabId) {
+      viewport.classList.add("active");
+      if (viewport.parentElement !== elements.bottomSidebarBody) {
+        elements.bottomSidebarBody.append(viewport);
       }
     } else {
       viewport.classList.remove("active");
@@ -767,17 +792,18 @@ function activateTab(id) {
   }
 
   // Toggle visibility of embedded desktop applications
+  const visibleIds = [activeTabId, rightSplitTabId, bottomSplitTabId].filter(Boolean);
   tabs.forEach((candidate) => {
     if (candidate.type === "desktop-app" && candidate.embedMode) {
-      const isCurrent = candidate.id === id;
-      window.workbench.toggleEmbeddedWindowVisibility(candidate.id, isCurrent);
-      if (isCurrent) {
+      const isVisible = visibleIds.includes(candidate.id);
+      window.workbench.toggleEmbeddedWindowVisibility(candidate.id, isVisible);
+      if (isVisible) {
         setTimeout(() => {
-          const viewport = document.querySelector(`.tab-viewport[data-id="${id}"]`);
+          const viewport = document.querySelector(`.tab-viewport[data-id="${candidate.id}"]`);
           const container = viewport?.querySelector(".desktop-embed-container");
           if (container) {
             const rect = container.getBoundingClientRect();
-            window.workbench.resizeEmbeddedWindow(id, {
+            window.workbench.resizeEmbeddedWindow(candidate.id, {
               x: rect.left,
               y: rect.top,
               width: rect.width,
@@ -1353,15 +1379,19 @@ function toggleRightSidebar(open, tabId = null) {
       showToast("至少需要两个标签页才能开启分屏", "error");
       return;
     }
-    splitTabId = tabId;
+    rightSplitTabId = tabId;
+    if (bottomSplitTabId === tabId) {
+      bottomSplitTabId = null;
+      elements.workspace.classList.remove("bottom-sidebar-open");
+    }
     elements.appShell.classList.add("right-sidebar-open");
-    if (activeTabId === splitTabId) {
-      const otherTab = tabs.find(t => t.id !== splitTabId);
+    if (activeTabId === rightSplitTabId) {
+      const otherTab = tabs.find(t => t.id !== rightSplitTabId && t.id !== bottomSplitTabId);
       if (otherTab) activeTabId = otherTab.id;
     }
-    document.querySelector("#right-sidebar-title").textContent = tabs.find(t => t.id === splitTabId)?.name || "分屏视图";
+    elements.rightSidebarTitle.textContent = tabs.find(t => t.id === rightSplitTabId)?.name || "分屏视图";
   } else {
-    splitTabId = null;
+    rightSplitTabId = null;
     elements.appShell.classList.remove("right-sidebar-open");
     document.documentElement.style.removeProperty("--right-sidebar-width");
   }
@@ -1370,7 +1400,40 @@ function toggleRightSidebar(open, tabId = null) {
   activateTab(activeTabId);
   
   setTimeout(() => {
-    fitAddon?.fit();
+    if (typeof fitAddon?.fit === "function") fitAddon.fit();
+    fitWebviewZoom();
+  }, 230);
+}
+
+function toggleBottomSidebar(open, tabId = null) {
+  if (open && tabId) {
+    const requiredTabs = rightSplitTabId ? 3 : 2;
+    if (tabs.length < requiredTabs) {
+      showToast(`当前分屏需要至少 ${requiredTabs} 个标签页`, "error");
+      return;
+    }
+    bottomSplitTabId = tabId;
+    if (rightSplitTabId === tabId) {
+      rightSplitTabId = null;
+      elements.appShell.classList.remove("right-sidebar-open");
+    }
+    elements.workspace.classList.add("bottom-sidebar-open");
+    if (activeTabId === bottomSplitTabId) {
+      const otherTab = tabs.find(t => t.id !== bottomSplitTabId && t.id !== rightSplitTabId);
+      if (otherTab) activeTabId = otherTab.id;
+    }
+    elements.bottomSidebarTitle.textContent = tabs.find(t => t.id === bottomSplitTabId)?.name || "底部分屏视图";
+  } else {
+    bottomSplitTabId = null;
+    elements.workspace.classList.remove("bottom-sidebar-open");
+    document.documentElement.style.removeProperty("--bottom-sidebar-height");
+  }
+  
+  // Re-run activateTab to update viewport DOM locations
+  activateTab(activeTabId);
+  
+  setTimeout(() => {
+    if (typeof fitAddon?.fit === "function") fitAddon.fit();
     fitWebviewZoom();
   }, 230);
 }
@@ -1490,6 +1553,7 @@ function showToast(message, type = "success") {
 }
 document.querySelector("#terminal-close").addEventListener("click", () => toggleTerminal(false));
 elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
+elements.bottomSidebarClose.addEventListener("click", () => toggleBottomSidebar(false));
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
@@ -1545,6 +1609,7 @@ elements.tabForm.addEventListener("submit", (event) => {
   const existing = tabs.findIndex((tab) => tab.id === data.id);
   if (existing >= 0) {
     tabs[existing] = data;
+    window.workbench.cleanupTabResources(data.id);
     document.querySelector(`.tab-viewport[data-id="${data.id}"]`)?.remove();
   } else {
     tabs.push(data);
@@ -1563,9 +1628,23 @@ elements.tabForm.addEventListener("submit", (event) => {
 document.querySelector("#delete-tab-button").addEventListener("click", () => {
   const id = document.querySelector("#tab-id").value;
   if (!id || tabs.length === 1) return;
+  
+  if (rightSplitTabId === id) {
+    toggleRightSidebar(false);
+  }
+  if (bottomSplitTabId === id) {
+    toggleBottomSidebar(false);
+  }
+  
+  window.workbench.cleanupTabResources(id);
+
   tabs = tabs.filter((tab) => tab.id !== id);
   document.querySelector(`.tab-viewport[data-id="${id}"]`)?.remove();
-  activeTabId = tabs[0].id;
+  
+  if (activeTabId === id) {
+    activeTabId = tabs[0].id;
+  }
+  
   saveTabs();
   elements.tabDialog.close();
   renderTabs();
@@ -1655,6 +1734,47 @@ function beginTerminalResize(event) {
 resizer.addEventListener("pointerdown", beginTerminalResize);
 terminalHeader.addEventListener("pointerdown", beginTerminalResize);
 
+let lastResizeTime = 0;
+let resizeTimeout = null;
+
+function throttleResizeEmbedded(tabId, rect) {
+  const now = Date.now();
+  if (now - lastResizeTime > 150) {
+    window.workbench.resizeEmbeddedWindow(tabId, rect);
+    lastResizeTime = now;
+  } else {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(() => {
+      window.workbench.resizeEmbeddedWindow(tabId, rect);
+      lastResizeTime = Date.now();
+    }, 150);
+  }
+}
+
+function updateAllEmbeddedPositions(throttled = false) {
+  const visibleIds = [activeTabId, rightSplitTabId, bottomSplitTabId].filter(Boolean);
+  tabs.forEach((candidate) => {
+    if (candidate.type === "desktop-app" && candidate.embedMode && visibleIds.includes(candidate.id)) {
+      const viewport = document.querySelector(`.tab-viewport[data-id="${candidate.id}"]`);
+      const container = viewport?.querySelector(".desktop-embed-container");
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const coords = {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        };
+        if (throttled) {
+          throttleResizeEmbedded(candidate.id, coords);
+        } else {
+          window.workbench.resizeEmbeddedWindow(candidate.id, coords);
+        }
+      }
+    }
+  });
+}
+
 function beginRightSidebarResize(event) {
   if (event.button !== 0) return;
   event.preventDefault();
@@ -1667,6 +1787,7 @@ function beginRightSidebarResize(event) {
     const width = Math.max(280, Math.min(window.innerWidth * 0.6, startWidth + startX - moveEvent.clientX));
     document.documentElement.style.setProperty("--right-sidebar-width", `${width}px`);
     fitWebviewZoom();
+    updateAllEmbeddedPositions(true);
   };
   const onUp = () => {
     if (elements.rightSidebarResizer.hasPointerCapture(event.pointerId)) {
@@ -1677,6 +1798,41 @@ function beginRightSidebarResize(event) {
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", onUp);
+    
+    updateAllEmbeddedPositions(false);
+  };
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onUp);
+}
+
+function beginBottomSidebarResize(event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  elements.bottomSidebarResizer.setPointerCapture(event.pointerId);
+  elements.workspace.classList.add("resizing");
+  setWebviewPointerEvents(false);
+  const startY = event.clientY;
+  const startHeight = elements.bottomSidebar.getBoundingClientRect().height;
+  
+  const onMove = (moveEvent) => {
+    const maxHeight = Math.max(200, window.innerHeight * 0.7);
+    const height = Math.max(150, Math.min(maxHeight, startHeight + startY - moveEvent.clientY));
+    document.documentElement.style.setProperty("--bottom-sidebar-height", `${height}px`);
+    updateAllEmbeddedPositions(true);
+  };
+  
+  const onUp = () => {
+    if (elements.bottomSidebarResizer.hasPointerCapture(event.pointerId)) {
+      elements.bottomSidebarResizer.releasePointerCapture(event.pointerId);
+    }
+    elements.workspace.classList.remove("resizing");
+    setWebviewPointerEvents(true);
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onUp);
+    
+    updateAllEmbeddedPositions(false);
   };
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
@@ -1684,27 +1840,18 @@ function beginRightSidebarResize(event) {
 }
 
 elements.rightSidebarResizer.addEventListener("pointerdown", beginRightSidebarResize);
+elements.bottomSidebarResizer.addEventListener("pointerdown", beginBottomSidebarResize);
 
+let windowResizeTimeout = null;
 window.addEventListener("resize", () => {
-  fitAddon?.fit();
+  if (typeof fitAddon?.fit === "function") fitAddon.fit();
   fitWebviewZoom();
   window.workbench.resizeTerminal({ cols: terminal.cols, rows: terminal.rows });
   
-  tabs.forEach((candidate) => {
-    if (candidate.type === "desktop-app" && candidate.embedMode && candidate.id === activeTabId) {
-      const viewport = document.querySelector(`.tab-viewport[data-id="${candidate.id}"]`);
-      const container = viewport?.querySelector(".desktop-embed-container");
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        window.workbench.resizeEmbeddedWindow(candidate.id, {
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height
-        });
-      }
-    }
-  });
+  clearTimeout(windowResizeTimeout);
+  windowResizeTimeout = setTimeout(() => {
+    updateAllEmbeddedPositions(false);
+  }, 150);
 
   tabTerminals.forEach((termObj, tId) => {
     try {
@@ -1747,18 +1894,29 @@ document.addEventListener("pointermove", (event) => {
   }
 
   const isRightSide = event.clientX > window.innerWidth * 0.7;
-  const overlay = document.querySelector("#split-drag-overlay");
+  const isBottomSide = event.clientY > window.innerHeight * 0.75 && event.clientX <= window.innerWidth * 0.7;
+  const overlayRight = document.querySelector("#split-drag-overlay");
+  const overlayBottom = document.querySelector("#split-drag-overlay-bottom");
   
   if (isRightSide) {
-    // Show split overlay, clear shifts
-    overlay?.classList.add("show");
+    overlayRight?.classList.add("show");
+    overlayBottom?.classList.remove("show");
+    pointerDrag.items.forEach((item) => {
+      if (item.dataset.id !== pointerDrag.id) {
+        item.style.transform = "";
+      }
+    });
+  } else if (isBottomSide) {
+    overlayBottom?.classList.add("show");
+    overlayRight?.classList.remove("show");
     pointerDrag.items.forEach((item) => {
       if (item.dataset.id !== pointerDrag.id) {
         item.style.transform = "";
       }
     });
   } else {
-    overlay?.classList.remove("show");
+    overlayRight?.classList.remove("show");
+    overlayBottom?.classList.remove("show");
     
     // Calculate current insertion index
     let insertIndex = 0;
@@ -1799,9 +1957,22 @@ document.addEventListener("pointerup", (event) => {
   try {
     if (pointerDrag.active) {
       const isRightSide = event.clientX > window.innerWidth * 0.7;
+      const isBottomSide = event.clientY > window.innerHeight * 0.75 && event.clientX <= window.innerWidth * 0.7;
+      
       if (isRightSide) {
         toggleRightSidebar(true, pointerDrag.id);
+      } else if (isBottomSide) {
+        toggleBottomSidebar(true, pointerDrag.id);
+      } else if (event.clientX > 238) {
+        // Dropped outside sidebar -> Restore split if applicable, then activate
+        if (rightSplitTabId === pointerDrag.id) {
+          toggleRightSidebar(false);
+        } else if (bottomSplitTabId === pointerDrag.id) {
+          toggleBottomSidebar(false);
+        }
+        activateTab(pointerDrag.id);
       } else {
+        // Dropped inside sidebar -> Reorder tabs
         const draggedIndex = pointerDrag.draggedIndex;
         const insertIndex = pointerDrag.insertIndex;
         if (typeof draggedIndex === "number" && typeof insertIndex === "number" && draggedIndex !== insertIndex) {
@@ -1982,6 +2153,7 @@ window.workbench.onDragAddTab((payload) => {
 
 initTerminal();
 renderTabs();
+window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();
 window.workbench.onDownloadCompleted(handleDownloadCompleted);

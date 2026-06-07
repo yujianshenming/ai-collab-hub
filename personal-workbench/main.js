@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const os = require("node:os");
+const crypto = require("node:crypto");
 const { spawn, exec } = require("node:child_process");
 
 // Enforce single instance lock
@@ -23,6 +24,14 @@ const localAppsMap = new Map();
 const runningDesktopApps = new Map();
 const tabPtyProcesses = new Map();
 const embeddedWindows = new Map();
+
+// SSE & state sharing structures
+const sessionToken = crypto.randomBytes(16).toString("hex");
+let allTabs = [];
+const sseClients = [];
+const sharedStateMap = new Map();
+let heartbeatInterval = null;
+
 
 let resolvedScriptPath = "";
 
@@ -358,6 +367,38 @@ function serveFile(res, filePath) {
   });
 }
 
+function broadcastToSse(eventName, payload) {
+  const dataStr = JSON.stringify({ event: eventName, payload });
+  sseClients.forEach((res) => {
+    try {
+      res.write(`event: message\ndata: ${dataStr}\n\n`);
+    } catch (error) {
+      console.warn("发送 SSE 消息失败:", error);
+    }
+  });
+}
+
+function getRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 1e6) { // 1MB payload limit
+        req.destroy();
+        reject(new Error("Request payload too large"));
+      }
+    });
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (e) {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+    req.on("error", (err) => reject(err));
+  });
+}
+
 function startLocalServer() {
   if (localServer) return;
 
@@ -372,6 +413,45 @@ function startLocalServer() {
     }
 
     const parsedUrl = new URL(req.url, `http://127.0.0.1:${localServerPort}`);
+    const token = parsedUrl.searchParams.get("token") || req.headers["authorization"]?.split(" ")[1];
+
+    const secureRoutes = ["/cookies", "/events", "/broadcast", "/state", "/tabs", "/active-tab", "/active-task"];
+    if (secureRoutes.includes(parsedUrl.pathname)) {
+      if (token !== sessionToken) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized" }));
+        return;
+      }
+    }
+
+    if (parsedUrl.pathname === "/events") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive"
+      });
+      res.write(": ok\n\n");
+      sseClients.push(res);
+
+      req.on("close", () => {
+        const idx = sseClients.indexOf(res);
+        if (idx >= 0) {
+          sseClients.splice(idx, 1);
+        }
+      });
+      return;
+    }
+
+    if (parsedUrl.pathname === "/tabs") {
+      sendJson(res, 200, allTabs);
+      return;
+    }
+
+    if (parsedUrl.pathname === "/active-task") {
+      sendJson(res, 200, { folderPath: activeTaskFolder });
+      return;
+    }
+
     if (parsedUrl.pathname === "/active-tab") {
       sendJson(res, 200, activeTabInfo);
       return;
@@ -384,6 +464,39 @@ function startLocalServer() {
       if (url) filter.url = url;
       if (name) filter.name = name;
       sendJson(res, 200, await getWorkbenchCookies(filter));
+      return;
+    }
+
+    if (parsedUrl.pathname === "/broadcast" && req.method === "POST") {
+      try {
+        const body = await getRequestBody(req);
+        broadcastToSse("broadcast", body);
+        sendJson(res, 200, { success: true });
+      } catch (err) {
+        sendJson(res, 400, { error: err.message });
+      }
+      return;
+    }
+
+    if (parsedUrl.pathname === "/state") {
+      if (req.method === "GET") {
+        const key = parsedUrl.searchParams.get("key");
+        const value = key ? sharedStateMap.get(key) : undefined;
+        sendJson(res, 200, { key, value });
+      } else if (req.method === "POST") {
+        try {
+          const body = await getRequestBody(req);
+          if (body && body.key !== undefined) {
+            sharedStateMap.set(body.key, body.value);
+            broadcastToSse("state-changed", { key: body.key, value: body.value });
+            sendJson(res, 200, { success: true });
+          } else {
+            sendJson(res, 400, { error: "Missing key in state body" });
+          }
+        } catch (err) {
+          sendJson(res, 400, { error: err.message });
+        }
+      }
       return;
     }
 
@@ -433,13 +546,36 @@ function startLocalServer() {
     localServer = null;
   });
   localServer.listen(localServerPort, "127.0.0.1");
+
+  heartbeatInterval = setInterval(() => {
+    sseClients.forEach((res) => {
+      try {
+        res.write(": keepalive\n\n");
+      } catch (e) {
+        const idx = sseClients.indexOf(res);
+        if (idx >= 0) sseClients.splice(idx, 1);
+      }
+    });
+  }, 15000);
 }
 
 function stopLocalServer() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  sseClients.forEach((res) => {
+    try {
+      res.write("event: close\ndata: {}\n\n");
+      res.end();
+    } catch (e) {}
+  });
+  sseClients.length = 0;
   if (!localServer) return;
   localServer.close();
   localServer = null;
 }
+
 
 function stopTerminal() {
   if (terminalProcess) {
@@ -664,9 +800,38 @@ function registerIpc() {
       url: String(info.url || ""),
       title: String(info.title || "")
     };
+    broadcastToSse("active-tab-changed", activeTabInfo);
   });
   ipcMain.on("task:active-update", (_event, info = {}) => {
     activeTaskFolder = String(info.folderPath || "");
+    broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
+  });
+  ipcMain.on("tabs:list-update", (_event, list = []) => {
+    allTabs = list;
+    broadcastToSse("tab-list-changed", allTabs);
+  });
+  ipcMain.handle("workbench:get-session-token", () => sessionToken);
+  ipcMain.handle("tab:cleanup-resources", (_event, tabId) => {
+    const appInfo = runningDesktopApps.get(tabId);
+    if (appInfo) {
+      try {
+        process.kill(appInfo.pid, 9);
+      } catch (err) {
+        if (appInfo.child) {
+          try { appInfo.child.kill(); } catch (e) {}
+        }
+      }
+      embeddedWindows.delete(tabId);
+      runningDesktopApps.delete(tabId);
+    }
+    const ptyProcess = tabPtyProcesses.get(tabId);
+    if (ptyProcess) {
+      try {
+        ptyProcess.kill();
+      } catch (e) {}
+      tabPtyProcesses.delete(tabId);
+    }
+    return { success: true };
   });
   ipcMain.handle("tasks:prepare-folder", (_event, task = {}) => {
     const folderName = [
@@ -677,15 +842,21 @@ function registerIpc() {
     const folderPath = path.join(downloadRoot, "tasks", folderName);
     fs.mkdirSync(folderPath, { recursive: true });
     activeTaskFolder = folderPath;
+    broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return folderPath;
   });
-  ipcMain.handle("tasks:cleanup-folder", (_event, folderPath) => cleanupTaskFolder(folderPath));
+  ipcMain.handle("tasks:cleanup-folder", (_event, folderPath) => {
+    const res = cleanupTaskFolder(folderPath);
+    broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
+    return res;
+  });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
     return getWorkbenchCookies(details);
   });
   ipcMain.handle("tasks:read-weekly", () => readWeeklyTasks());
   ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
+
 
   ipcMain.handle("extensions:get", () => ({
     entries: readExtensionConfig(),

@@ -100,6 +100,15 @@
 
         <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
 
+        <aside id="bottom-sidebar" class="bottom-sidebar">
+          <div id="bottom-sidebar-resizer" class="bottom-sidebar-resizer" title="拖动调整分屏高度"></div>
+          <header class="bottom-sidebar-header">
+            <strong id="bottom-sidebar-title">底部分屏视图</strong>
+            <button id="bottom-sidebar-close" class="icon-button" type="button" aria-label="关闭分屏" title="关闭分屏">×</button>
+          </header>
+          <div id="bottom-sidebar-body" class="bottom-sidebar-body"></div >
+        </aside>
+
         <section id="terminal-panel" class="terminal-panel" aria-label="命令提示符终端">
           <div id="terminal-resizer" class="terminal-resizer" title="拖动调整终端高度"></div>
           <header class="terminal-header">
@@ -128,6 +137,13 @@
       <div class="split-drag-box">
         <span class="split-drag-icon">◫</span>
         <span class="split-drag-text">释放以开启分屏显示</span>
+      </div>
+    </div>
+
+    <div id="split-drag-overlay-bottom" class="split-drag-overlay-bottom">
+      <div class="split-drag-box">
+        <span class="split-drag-icon">◫</span>
+        <span class="split-drag-text">释放以开启底部分屏</span>
       </div>
     </div>
 
