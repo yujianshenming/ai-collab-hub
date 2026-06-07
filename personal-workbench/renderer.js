@@ -25,6 +25,31 @@ let pipelineState = {
 const tabTerminals = new Map();
 const desktopStatusPollers = new Map();
 
+// Category configuration and state
+let collapsedCategories = {};
+try {
+  collapsedCategories = JSON.parse(localStorage.getItem("workbench_collapsed_categories")) || {};
+} catch {
+  collapsedCategories = {};
+}
+
+const CATEGORY_MAP = {
+  builtin: { id: "builtin", name: "内置工具" },
+  "desktop-app": { id: "desktop-app", name: "桌面应用" },
+  "local-web": { id: "local-web", name: "本地项目" },
+  "cli-app": { id: "cli-app", name: "命令终端" },
+  web: { id: "web", name: "网页浏览" }
+};
+
+function getTabCategory(tab) {
+  const type = tab.type || "web";
+  if (type === "builtin") return "builtin";
+  if (type === "desktop-app") return "desktop-app";
+  if (type === "local-web") return "local-web";
+  if (type === "cli-app") return "cli-app";
+  return "web";
+}
+
 const elements = {
   tabList: document.querySelector("#tab-list"),
   webviewStack: document.querySelector("#webview-stack"),
@@ -46,7 +71,8 @@ const elements = {
   bottomSidebarTitle: document.querySelector("#bottom-sidebar-title"),
   bottomSidebarClose: document.querySelector("#bottom-sidebar-close"),
   bottomSidebarBody: document.querySelector("#bottom-sidebar-body"),
-  taskModal: document.querySelector("#task-manager-modal"),
+  taskPanel: document.querySelector("#task-manager-panel"),
+  taskPanelOverlay: document.querySelector("#task-panel-overlay"),
   taskListView: document.querySelector("#task-list-view"),
   taskFormView: document.querySelector("#task-form"),
   taskFormTitle: document.querySelector("#task-form-title"),
@@ -95,36 +121,89 @@ function iconForTab(name) {
 function renderTabs() {
   elements.tabList.replaceChildren();
 
-  for (const tab of tabs) {
-    const item = document.createElement("div");
-    item.className = `tab-item${tab.id === activeTabId ? " active" : ""}${tab.id === rightSplitTabId || tab.id === bottomSplitTabId ? " split-active" : ""}`;
-    item.dataset.id = tab.id;
-    item.innerHTML = `
-      <button class="tab-main" type="button">
-        <span class="tab-icon">${iconForTab(tab.name)}</span>
-        <span>${tab.name}</span>
-      </button>
-      <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
-    `;
-    item.querySelector(".tab-menu").addEventListener("click", () => openTabDialog(tab));
-    item.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || event.target.closest(".tab-menu")) return;
-      item.setPointerCapture(event.pointerId);
-      setWebviewPointerEvents(false);
-      pointerDrag = { id: tab.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false };
-    });
-    elements.tabList.append(item);
+  // Group tabs by category
+  const groups = {
+    builtin: [],
+    "desktop-app": [],
+    "local-web": [],
+    "cli-app": [],
+    web: []
+  };
 
+  for (const tab of tabs) {
+    const cat = getTabCategory(tab);
+    groups[cat].push(tab);
+    
+    // Make sure viewport exists
     if (!document.querySelector(`.tab-viewport[data-id="${tab.id}"]`)) {
       createTabViewport(tab);
     }
   }
 
+  // Render group sections
+  for (const catId of Object.keys(CATEGORY_MAP)) {
+    const catTabs = groups[catId];
+    if (catTabs.length === 0) continue; // Hide empty categories
+
+    const section = document.createElement("div");
+    section.className = `category-section${collapsedCategories[catId] ? " collapsed" : ""}`;
+    section.dataset.category = catId;
+
+    const header = document.createElement("div");
+    header.className = "category-header";
+    header.innerHTML = `
+      <span class="category-toggle-icon">▼</span>
+      <span class="category-title">${CATEGORY_MAP[catId].name}</span>
+      <span class="category-badge">${catTabs.length}</span>
+    `;
+
+    header.addEventListener("click", () => {
+      collapsedCategories[catId] = !collapsedCategories[catId];
+      localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
+      renderTabs();
+    });
+
+    const itemsContainer = document.createElement("div");
+    itemsContainer.className = "category-items";
+
+    for (const tab of catTabs) {
+      const item = document.createElement("div");
+      item.className = `tab-item${tab.id === activeTabId ? " active" : ""}${tab.id === rightSplitTabId || tab.id === bottomSplitTabId ? " split-active" : ""}`;
+      item.dataset.id = tab.id;
+      item.innerHTML = `
+        <button class="tab-main" type="button">
+          <span class="tab-icon">${iconForTab(tab.name)}</span>
+          <span>${tab.name}</span>
+        </button>
+        <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
+      `;
+      item.querySelector(".tab-menu").addEventListener("click", (e) => {
+        e.stopPropagation();
+        openTabDialog(tab);
+      });
+      item.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest(".tab-menu")) return;
+        item.setPointerCapture(event.pointerId);
+        setWebviewPointerEvents(false);
+        pointerDrag = { id: tab.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, active: false };
+      });
+      itemsContainer.append(item);
+    }
+
+    section.append(header, itemsContainer);
+    elements.tabList.append(section);
+  }
+
+  // Cleanup viewports for deleted tabs
   document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
     if (!tabs.some((tab) => tab.id === viewport.dataset.id)) viewport.remove();
   });
 
-  activateTab(tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0].id);
+  // Activate active tab
+  const validActiveTabId = tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0]?.id;
+  if (validActiveTabId) {
+    activateTab(validActiveTabId);
+  }
 }
 
 function clearDragState() {
@@ -715,105 +794,120 @@ function activeWebview() {
   return document.querySelector(`.tab-viewport[data-id="${activeTabId}"] .tab-webview`);
 }
 
+let isActivatingTab = false;
 function activateTab(id) {
-  if (rightSplitTabId === id) {
-    rightSplitTabId = activeTabId;
-  } else if (bottomSplitTabId === id) {
-    bottomSplitTabId = activeTabId;
-  }
+  if (isActivatingTab) return;
+  isActivatingTab = true;
+  try {
+    if (rightSplitTabId === id) {
+      rightSplitTabId = activeTabId;
+    } else if (bottomSplitTabId === id) {
+      bottomSplitTabId = activeTabId;
+    }
 
-  // Prevent duplicate references
-  if (rightSplitTabId === bottomSplitTabId) {
-    bottomSplitTabId = null;
-  }
+    // Prevent duplicate references
+    if (rightSplitTabId === bottomSplitTabId) {
+      bottomSplitTabId = null;
+    }
 
-  activeTabId = id;
-  localStorage.setItem("personal_workbench_active", id);
-  const tab = tabs.find((candidate) => candidate.id === id);
-  if (!tab) return;
+    activeTabId = id;
+    localStorage.setItem("personal_workbench_active", id);
+    const tab = tabs.find((candidate) => candidate.id === id);
+    if (!tab) return;
 
-  document.querySelectorAll(".tab-item").forEach((item) => {
-    item.classList.toggle("active", item.dataset.id === id);
-    item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
-  });
+    // Auto-expand category if collapsed
+    const category = getTabCategory(tab);
+    if (collapsedCategories[category]) {
+      collapsedCategories[category] = false;
+      localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
+      renderTabs();
+    }
 
-  // Move viewports to their correct parent containers
-  document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
-    const vpId = viewport.dataset.id;
-    if (vpId === activeTabId) {
-      viewport.classList.add("active");
-      if (viewport.parentElement !== elements.webviewStack) {
-        elements.webviewStack.append(viewport);
+    document.querySelectorAll(".tab-item").forEach((item) => {
+      item.classList.toggle("active", item.dataset.id === id);
+      item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
+    });
+
+    // Move viewports to their correct parent containers
+    document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
+      const vpId = viewport.dataset.id;
+      if (vpId === activeTabId) {
+        viewport.classList.add("active");
+        if (viewport.parentElement !== elements.webviewStack) {
+          elements.webviewStack.append(viewport);
+        }
+      } else if (vpId === rightSplitTabId) {
+        viewport.classList.add("active");
+        if (viewport.parentElement !== elements.rightSidebarBody) {
+          elements.rightSidebarBody.append(viewport);
+        }
+      } else if (vpId === bottomSplitTabId) {
+        viewport.classList.add("active");
+        if (viewport.parentElement !== elements.bottomSidebarBody) {
+          elements.bottomSidebarBody.append(viewport);
+        }
+      } else {
+        viewport.classList.remove("active");
+        if (viewport.parentElement !== elements.webviewStack) {
+          elements.webviewStack.append(viewport);
+        }
       }
-    } else if (vpId === rightSplitTabId) {
-      viewport.classList.add("active");
-      if (viewport.parentElement !== elements.rightSidebarBody) {
-        elements.rightSidebarBody.append(viewport);
-      }
-    } else if (vpId === bottomSplitTabId) {
-      viewport.classList.add("active");
-      if (viewport.parentElement !== elements.bottomSidebarBody) {
-        elements.bottomSidebarBody.append(viewport);
-      }
-    } else {
-      viewport.classList.remove("active");
-      if (viewport.parentElement !== elements.webviewStack) {
-        elements.webviewStack.append(viewport);
+    });
+
+    elements.activeTitle.textContent = tab.name;
+    let currentUrl = tab.url || "";
+    if (tab.type === "web" || tab.type === "local-web" || !tab.type) {
+      try {
+        currentUrl = activeWebview()?.getURL?.() || tab.url || "";
+      } catch (error) {
+        console.warn("获取 Webview URL 失败:", error);
       }
     }
-  });
+    elements.addressInput.value = currentUrl;
+    updateActiveTabInfo();
+    fitWebviewZoom();
 
-  elements.activeTitle.textContent = tab.name;
-  let currentUrl = tab.url || "";
-  if (tab.type === "web" || tab.type === "local-web" || !tab.type) {
-    try {
-      currentUrl = activeWebview()?.getURL?.() || tab.url || "";
-    } catch (error) {
-      console.warn("获取 Webview URL 失败:", error);
+    // If CLI app, fit and focus it
+    if (tab.type === "cli-app") {
+      setTimeout(() => {
+        const termObj = tabTerminals.get(id);
+        if (termObj) {
+          termObj.fitAddon.fit();
+          termObj.terminal.focus();
+          window.workbench.resizeCliTerminal(id, {
+            cols: termObj.terminal.cols,
+            rows: termObj.terminal.rows
+          });
+        }
+      }, 100);
     }
-  }
-  elements.addressInput.value = currentUrl;
-  updateActiveTabInfo();
-  fitWebviewZoom();
 
-  // If CLI app, fit and focus it
-  if (tab.type === "cli-app") {
-    setTimeout(() => {
-      const termObj = tabTerminals.get(id);
-      if (termObj) {
-        termObj.fitAddon.fit();
-        termObj.terminal.focus();
-        window.workbench.resizeCliTerminal(id, {
-          cols: termObj.terminal.cols,
-          rows: termObj.terminal.rows
-        });
+    // Toggle visibility of embedded desktop applications
+    const visibleIds = [activeTabId, rightSplitTabId, bottomSplitTabId].filter(Boolean);
+    tabs.forEach((candidate) => {
+      if (candidate.type === "desktop-app" && candidate.embedMode) {
+        const isVisible = visibleIds.includes(candidate.id);
+        window.workbench.toggleEmbeddedWindowVisibility(candidate.id, isVisible);
+        if (isVisible) {
+          setTimeout(() => {
+            const viewport = document.querySelector(`.tab-viewport[data-id="${candidate.id}"]`);
+            const container = viewport?.querySelector(".desktop-embed-container");
+            if (container) {
+              const rect = container.getBoundingClientRect();
+              window.workbench.resizeEmbeddedWindow(candidate.id, {
+                x: rect.left,
+                y: rect.top,
+                width: rect.width,
+                height: rect.height
+              });
+            }
+          }, 200);
+        }
       }
-    }, 100);
+    });
+  } finally {
+    isActivatingTab = false;
   }
-
-  // Toggle visibility of embedded desktop applications
-  const visibleIds = [activeTabId, rightSplitTabId, bottomSplitTabId].filter(Boolean);
-  tabs.forEach((candidate) => {
-    if (candidate.type === "desktop-app" && candidate.embedMode) {
-      const isVisible = visibleIds.includes(candidate.id);
-      window.workbench.toggleEmbeddedWindowVisibility(candidate.id, isVisible);
-      if (isVisible) {
-        setTimeout(() => {
-          const viewport = document.querySelector(`.tab-viewport[data-id="${candidate.id}"]`);
-          const container = viewport?.querySelector(".desktop-embed-container");
-          if (container) {
-            const rect = container.getBoundingClientRect();
-            window.workbench.resizeEmbeddedWindow(candidate.id, {
-              x: rect.left,
-              y: rect.top,
-              width: rect.width,
-              height: rect.height
-            });
-          }
-        }, 200);
-      }
-    }
-  });
 }
 
 function fitWebviewZoom() {
@@ -1011,14 +1105,52 @@ function switchTaskModalView(mode) {
   elements.taskFormView?.classList.toggle("hidden", taskViewMode !== "form");
 }
 
-async function openTaskModal() {
-  if (elements.taskModal?.open) {
-    elements.taskModal.close();
+async function openTaskPanel() {
+  if (elements.taskPanel?.classList.contains("open")) {
+    closeTaskPanel();
     return;
   }
+  
+  // Record trigger element
+  if (elements.taskPanel) {
+    elements.taskPanel.dataset.triggerId = document.activeElement?.id || "";
+  }
+  
   await loadWeeklyTasks();
   switchTaskModalView("list");
-  elements.taskModal?.showModal();
+  
+  elements.taskPanel?.classList.add("open");
+  elements.taskPanelOverlay?.classList.add("open");
+  
+  // Disable webview pointer events to prevent interaction leakage
+  setWebviewPointerEvents(false);
+  
+  // Accessibility focus trap: focus close button
+  const closeBtn = elements.taskPanel?.querySelector(".task-close");
+  closeBtn?.focus();
+}
+
+function closeTaskPanel() {
+  elements.taskPanel?.classList.remove("open");
+  elements.taskPanelOverlay?.classList.remove("open");
+  
+  if (elements.taskPanel) {
+    elements.taskPanel.style.transform = "";
+  }
+  
+  // Re-enable webview pointer events
+  setWebviewPointerEvents(true);
+  
+  // Restore focus
+  if (elements.taskPanel) {
+    const triggerId = elements.taskPanel.dataset.triggerId;
+    if (triggerId) {
+      const triggerEl = document.getElementById(triggerId);
+      triggerEl?.focus();
+    }
+  }
+  
+  resetTaskForm();
 }
 
 function resetTaskForm() {
@@ -1204,7 +1336,7 @@ async function startTaskAutomation(id) {
   };
   await updateTaskFields(id, { status: "running", taskFolder });
   updateActiveTaskMenu(task);
-  elements.taskModal?.close();
+  closeTaskPanel();
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
 }
 
@@ -1457,7 +1589,7 @@ function moveTab(direction) {
 }
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
-elements.menuTaskButton?.addEventListener("click", openTaskModal);
+elements.menuTaskButton?.addEventListener("click", openTaskPanel);
 elements.menuTerminalButton?.addEventListener("click", () => toggleTerminal());
 elements.menuSettingsButton?.addEventListener("click", openSettings);
 elements.menuReloadButton?.addEventListener("click", () => activeWebview()?.reload?.());
@@ -1466,7 +1598,7 @@ document.querySelectorAll("[data-command]").forEach((button) => {
 });
 elements.activeTaskFinish?.addEventListener("click", () => finishActiveTask());
 elements.activeTaskHermes?.addEventListener("click", () => runHermesPrompt());
-window.workbench.onMenuToggleTasks(openTaskModal);
+window.workbench.onMenuToggleTasks(openTaskPanel);
 window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);
 elements.addNewTask?.addEventListener("click", () => {
@@ -1557,7 +1689,7 @@ elements.bottomSidebarClose.addEventListener("click", () => toggleBottomSidebar(
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
-document.querySelectorAll(".task-close").forEach((button) => button.addEventListener("click", () => elements.taskModal?.close()));
+document.querySelectorAll(".task-close").forEach((button) => button.addEventListener("click", closeTaskPanel));
 document.querySelectorAll(".task-cancel").forEach((button) => button.addEventListener("click", () => {
   resetTaskForm();
   switchTaskModalView("list");
@@ -1871,8 +2003,9 @@ document.addEventListener("pointermove", (event) => {
     
     // Initialize drag parameters on first movement
     pointerDrag.active = true;
-    const items = [...elements.tabList.querySelectorAll(".tab-item")];
-    const dragItem = elements.tabList.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+    const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
+    const categoryContainer = dragItem ? dragItem.closest(".category-items") : null;
+    const items = categoryContainer ? [...categoryContainer.querySelectorAll(".tab-item")] : (dragItem ? [dragItem] : []);
     const draggedIndex = items.indexOf(dragItem);
     const itemRects = items.map(item => item.getBoundingClientRect());
     const itemHeights = itemRects.map(r => r.height);
@@ -1972,14 +2105,30 @@ document.addEventListener("pointerup", (event) => {
         }
         activateTab(pointerDrag.id);
       } else {
-        // Dropped inside sidebar -> Reorder tabs
+        // Dropped inside sidebar -> Reorder tabs within category
         const draggedIndex = pointerDrag.draggedIndex;
         const insertIndex = pointerDrag.insertIndex;
         if (typeof draggedIndex === "number" && typeof insertIndex === "number" && draggedIndex !== insertIndex) {
-          const [movedTab] = tabs.splice(draggedIndex, 1);
-          tabs.splice(insertIndex, 0, movedTab);
-          saveTabs();
-          renderTabs();
+          const draggedTab = tabs.find(t => t.id === pointerDrag.id);
+          if (draggedTab) {
+            const category = getTabCategory(draggedTab);
+            const indices = [];
+            tabs.forEach((t, idx) => {
+              if (getTabCategory(t) === category) {
+                indices.push(idx);
+              }
+            });
+            const categoryTabs = indices.map(idx => tabs[idx]);
+            if (draggedIndex < categoryTabs.length && insertIndex < categoryTabs.length) {
+              const [movedTab] = categoryTabs.splice(draggedIndex, 1);
+              categoryTabs.splice(insertIndex, 0, movedTab);
+              indices.forEach((originalIdx, i) => {
+                tabs[originalIdx] = categoryTabs[i];
+              });
+              saveTabs();
+              renderTabs();
+            }
+          }
         }
       }
     } else {
@@ -2151,8 +2300,75 @@ window.workbench.onDragAddTab((payload) => {
   showToast(`已成功添加标签: ${name}`, "success");
 });
 
+// Close task panel on escape key
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && elements.taskPanel?.classList.contains("open")) {
+    const activeDialog = document.querySelector("dialog[open]");
+    if (!activeDialog) {
+      closeTaskPanel();
+      event.preventDefault();
+    }
+  }
+});
+
+// Close task panel on overlay click
+elements.taskPanelOverlay?.addEventListener("click", closeTaskPanel);
+
+function initTaskPanelDrag() {
+  let isDragging = false;
+  let startY = 0;
+  let startX = 0;
+  
+  const handle = document.querySelector(".task-panel-handle");
+  const panel = document.getElementById("task-manager-panel");
+  
+  if (!handle || !panel) return;
+  
+  handle.addEventListener("pointerdown", (e) => {
+    isDragging = true;
+    startY = e.clientY;
+    startX = e.clientX;
+    handle.setPointerCapture(e.pointerId);
+    panel.style.transition = "none"; // disable transition during drag
+  });
+  
+  handle.addEventListener("pointermove", (e) => {
+    if (!isDragging) return;
+    const diffY = e.clientY - startY;
+    if (diffY < 0) {
+      panel.style.transform = `translateY(${diffY}px)`;
+    }
+  });
+  
+  handle.addEventListener("pointerup", (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    handle.releasePointerCapture(e.pointerId);
+    panel.style.transition = ""; // restore transition
+    
+    const diffY = e.clientY - startY;
+    const diffX = e.clientX - startX;
+    const dragDistance = Math.hypot(diffX, diffY);
+    
+    if (dragDistance < 5) {
+      closeTaskPanel();
+    } else if (diffY <= -80) {
+      closeTaskPanel();
+    } else {
+      panel.style.transform = "";
+    }
+  });
+  
+  handle.addEventListener("pointercancel", () => {
+    isDragging = false;
+    panel.style.transition = "";
+    panel.style.transform = "";
+  });
+}
+
 initTerminal();
 renderTabs();
+initTaskPanelDrag();
 window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();

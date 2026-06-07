@@ -69,6 +69,90 @@
           </div>
           <div class="app-menu-right"></div>
         </nav>
+
+        <!-- 任务下拉抽屉 -->
+        <div id="task-panel-overlay" class="task-panel-overlay"></div>
+        <div id="task-manager-panel" class="task-panel">
+          <div class="task-panel-scroll-container">
+            <section id="task-list-view" class="task-modal-view">
+              <div class="modal-heading task-modal-heading">
+                <div>
+                  <span class="eyebrow">Weekly Tasks</span>
+                  <h2>本周任务列表</h2>
+                </div>
+                <button class="icon-button task-close" type="button" aria-label="关闭">×</button>
+              </div>
+              <div class="task-table-wrap" aria-label="任务列表">
+                <table class="task-table">
+                  <thead>
+                    <tr>
+                      <th>学校 / 课程</th>
+                      <th>类型</th>
+                      <th>数量</th>
+                      <th>状态</th>
+                      <th>负责人</th>
+                      <th>产物</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="task-table-body"></tbody>
+                </table>
+              </div>
+              <div class="task-list-footer">
+                <button id="btn-add-new-task" class="primary-button" type="button">添加任务</button>
+              </div>
+            </section>
+
+            <form id="task-form" class="task-modal-view">
+              <div class="modal-heading">
+                <div>
+                  <span class="eyebrow">Task Editor</span>
+                  <h2 id="task-form-title">添加任务</h2>
+                </div>
+                <button class="icon-button task-cancel" type="button" aria-label="返回任务列表">×</button>
+              </div>
+              <input id="task-id" type="hidden" />
+              <div id="task-form-view" class="task-form-grid">
+                <label>
+                  学校
+                  <input id="task-school" type="text" placeholder="清华大学" required />
+                </label>
+                <label>
+                  课程
+                  <input id="task-course" type="text" placeholder="高中体育教师" required />
+                </label>
+                <label>
+                  类型
+                  <select id="task-type">
+                    <option value="capability-setup">能力训练搭建</option>
+                    <option value="capability-edit">能力训练修改</option>
+                    <option value="capability-acceptance">能力训练验收</option>
+                    <option value="grading-setup">作业批阅搭建</option>
+                    <option value="grading-acceptance">作业批阅验收</option>
+                  </select>
+                </label>
+                <label>
+                  数量
+                  <input id="task-quantity" type="number" min="1" value="1" />
+                </label>
+                <label>
+                  负责人
+                  <input id="task-owner" type="text" placeholder="负责人" />
+                </label>
+              </div>
+              <div class="modal-actions">
+                <button id="task-reset-button" class="secondary-button" type="button">清空表单</button>
+                <span class="action-spacer"></span>
+                <button class="secondary-button task-cancel" type="button">取消</button>
+                <button class="primary-button" type="submit">保存任务</button>
+              </div>
+            </form>
+          </div>
+          <div class="task-panel-handle">
+            <span class="handle-bar"></span>
+          </div>
+        </div>
+
         <header class="topbar">
           <button id="sidebar-toggle" class="icon-button sidebar-toggle-button" type="button" aria-label="切换侧边栏" title="切换侧边栏" aria-expanded="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -272,81 +356,7 @@
     </dialog>
 
 
-    <dialog id="task-manager-modal" class="modal task-modal">
-      <section id="task-list-view" class="task-modal-view">
-        <div class="modal-heading task-modal-heading">
-          <div>
-            <span class="eyebrow">Weekly Tasks</span>
-            <h2>本周任务列表</h2>
-          </div>
-          <button class="icon-button task-close" type="button" aria-label="关闭">×</button>
-        </div>
-        <div class="task-table-wrap" aria-label="任务列表">
-          <table class="task-table">
-            <thead>
-              <tr>
-                <th>学校 / 课程</th>
-                <th>类型</th>
-                <th>数量</th>
-                <th>状态</th>
-                <th>负责人</th>
-                <th>产物</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="task-table-body"></tbody>
-          </table>
-        </div>
-        <div class="task-list-footer">
-          <button id="btn-add-new-task" class="primary-button" type="button">添加任务</button>
-        </div>
-      </section>
 
-      <form id="task-form" class="task-modal-view" method="dialog">
-        <div class="modal-heading">
-          <div>
-            <span class="eyebrow">Task Editor</span>
-            <h2 id="task-form-title">添加任务</h2>
-          </div>
-          <button class="icon-button task-cancel" type="button" aria-label="返回任务列表">×</button>
-        </div>
-        <input id="task-id" type="hidden" />
-        <div id="task-form-view" class="task-form-grid">
-          <label>
-            学校
-            <input id="task-school" type="text" placeholder="清华大学" required />
-          </label>
-          <label>
-            课程
-            <input id="task-course" type="text" placeholder="高中体育教师" required />
-          </label>
-          <label>
-            类型
-            <select id="task-type">
-              <option value="capability-setup">能力训练搭建</option>
-              <option value="capability-edit">能力训练修改</option>
-              <option value="capability-acceptance">能力训练验收</option>
-              <option value="grading-setup">作业批阅搭建</option>
-              <option value="grading-acceptance">作业批阅验收</option>
-            </select>
-          </label>
-          <label>
-            数量
-            <input id="task-quantity" type="number" min="1" value="1" />
-          </label>
-          <label>
-            负责人
-            <input id="task-owner" type="text" placeholder="负责人" />
-          </label>
-        </div>
-        <div class="modal-actions">
-          <button id="task-reset-button" class="secondary-button" type="button">清空表单</button>
-          <span class="action-spacer"></span>
-          <button class="secondary-button task-cancel" type="button">取消</button>
-          <button class="primary-button" type="submit">保存任务</button>
-        </div>
-      </form>
-    </dialog>
 
     <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
