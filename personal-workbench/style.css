@@ -492,3 +492,301 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 @media (max-width: 760px) {
   .task-form-grid { grid-template-columns: 1fr; }
 }
+
+/* --- Embedded Applications Styling --- */
+
+/* File Input Browse Group */
+.input-browse-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+.input-browse-group input {
+  flex: 1;
+  min-width: 0;
+}
+.browse-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  height: 38px;
+}
+
+/* 1. Desktop App Dashboard */
+.desktop-dashboard {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at top left, #f8fafc, #f1f5f9);
+  padding: 24px;
+  overflow-y: auto;
+}
+.desktop-card {
+  width: 100%;
+  max-width: 540px;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.06);
+  padding: 32px;
+}
+.desktop-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.6);
+  padding-bottom: 20px;
+  margin-bottom: 24px;
+}
+.desktop-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.desktop-title-wrap h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+.desktop-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 8px rgba(0, 0, 0, 0.1);
+}
+.desktop-indicator.stopped {
+  background: #ef4444;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
+}
+.desktop-indicator.running {
+  background: #10b981;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.6);
+  animation: pulse-green 1.8s infinite alternate;
+}
+@keyframes pulse-green {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  100% { transform: scale(1.15); opacity: 1; }
+}
+.desktop-status-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.desktop-info-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+.desktop-info-row strong {
+  color: var(--text-secondary);
+  font-weight: 500;
+  flex-shrink: 0;
+  width: 120px;
+}
+.desktop-info-row span {
+  color: var(--text-primary);
+  word-break: break-all;
+  text-align: right;
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12.5px;
+}
+.desktop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 28px;
+}
+.desktop-actions button {
+  padding: 10px 20px;
+  font-size: 13.5px;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+/* 2. CLI Terminal App */
+.cli-terminal-wrap {
+  flex: 1;
+  height: 100%;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+}
+.cli-terminal-container {
+  flex: 1;
+  background: #ffffff;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: inset 0 2px 8px rgba(15, 23, 42, 0.02);
+  overflow: hidden;
+}
+.cli-terminal-container .xterm {
+  height: 100%;
+}
+
+/* 3. Built-in Markdown Editor */
+.markdown-editor-container {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+}
+.md-toolbar {
+  height: 48px;
+  border-bottom: 1px solid var(--border-color);
+  background: #f8fafc;
+  padding-inline: 16px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.md-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: #ffffff;
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.md-btn:hover {
+  background: var(--accent-light);
+  color: var(--accent-strong);
+  border-color: rgba(59, 130, 246, 0.25);
+}
+.md-toolbar-spacer {
+  flex: 1;
+}
+.md-saved-status {
+  font-size: 11px;
+  color: #10b981;
+  font-weight: 500;
+}
+.md-work-area {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.md-textarea {
+  flex: 1;
+  height: 100%;
+  border: 0;
+  border-right: 1px solid var(--border-color);
+  padding: 20px;
+  font-family: "Cascadia Code", Consolas, Monaco, monospace;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: #fafbfe;
+  resize: none;
+  outline: none;
+}
+.md-preview-pane {
+  flex: 1;
+  height: 100%;
+  padding: 24px;
+  overflow-y: auto;
+  color: #1e293b;
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+.md-preview-pane h1 { font-size: 22px; font-weight: 700; margin-bottom: 16px; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+.md-preview-pane h2 { font-size: 18px; font-weight: 700; margin-top: 24px; margin-bottom: 12px; }
+.md-preview-pane h3 { font-size: 15px; font-weight: 600; margin-top: 18px; }
+.md-preview-pane p { margin-bottom: 14px; }
+.md-preview-pane code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 12.5px; }
+
+/* 4. Built-in Whiteboard */
+.whiteboard-container {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #f1f5f9;
+}
+.wb-toolbar {
+  height: 52px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border-color);
+  padding-inline: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.02);
+  z-index: 5;
+}
+.wb-color-picker {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  overflow: hidden;
+}
+.wb-brush-size {
+  height: 32px;
+  padding-inline: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.wb-btn {
+  height: 32px;
+  padding-inline: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wb-btn:hover {
+  background: #f8fafc;
+}
+.wb-btn.active {
+  background: var(--accent-light);
+  color: var(--accent-strong);
+  border-color: rgba(59, 130, 246, 0.3);
+  font-weight: 600;
+}
+.wb-toolbar-spacer {
+  flex: 1;
+}
+.wb-canvas-wrap {
+  flex: 1;
+  position: relative;
+  background: #ffffff;
+  overflow: hidden;
+  margin: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.03);
+}
+.wb-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}

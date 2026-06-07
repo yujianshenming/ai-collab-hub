@@ -1,9 +1,16 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const os = require("node:os");
+const { spawn, exec } = require("node:child_process");
+
+// Enforce single instance lock
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+}
 
 let mainWindow;
 let terminalProcess;
@@ -12,6 +19,170 @@ let activeTabInfo = { url: "", title: "" };
 let extensionResults = [];
 let localServer;
 let activeTaskFolder = "";
+const localAppsMap = new Map();
+const runningDesktopApps = new Map();
+const tabPtyProcesses = new Map();
+const embeddedWindows = new Map();
+
+let resolvedScriptPath = "";
+
+function getScriptPath() {
+  if (resolvedScriptPath) return resolvedScriptPath;
+
+  const sourcePath = path.join(__dirname, "window-binder.ps1");
+  if (app.isPackaged || __dirname.includes("app.asar")) {
+    const targetPath = path.join(app.getPath("userData"), "window-binder.ps1");
+    try {
+      const content = fs.readFileSync(sourcePath);
+      fs.writeFileSync(targetPath, content);
+      resolvedScriptPath = targetPath;
+      return targetPath;
+    } catch (err) {
+      console.warn("Failed to write window-binder.ps1 to userData, trying temp folder:", err);
+      try {
+        const tempPath = path.join(app.getPath("temp"), `personal-workbench-window-binder-${Date.now()}.ps1`);
+        const content = fs.readFileSync(sourcePath);
+        fs.writeFileSync(tempPath, content);
+        resolvedScriptPath = tempPath;
+        return tempPath;
+      } catch (tempErr) {
+        console.error("Critical: Failed to extract window-binder.ps1 to temp folder too:", tempErr);
+        return sourcePath;
+      }
+    }
+  } else {
+    resolvedScriptPath = sourcePath;
+    return sourcePath;
+  }
+}
+
+function runWindowBinder(argsArray) {
+  const scriptPath = getScriptPath();
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", scriptPath,
+    ...argsArray
+  ];
+  spawn("powershell.exe", args);
+}
+
+function bindWindow(tabId, pid, exePath, parentHwnd, rect) {
+  const scriptPath = getScriptPath();
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", scriptPath,
+    "-Action", "bind",
+    "-AppPid", String(pid),
+    "-ExePath", exePath,
+    "-ParentHWnd", String(parentHwnd),
+    "-X", String(Math.round(rect.x)),
+    "-Y", String(Math.round(rect.y)),
+    "-Width", String(Math.round(rect.width)),
+    "-Height", String(Math.round(rect.height))
+  ];
+  
+  const child = spawn("powershell.exe", args);
+  
+  let output = "";
+  let errorOutput = "";
+  child.stdout.on("data", (data) => {
+    output += data.toString();
+  });
+  child.stderr.on("data", (data) => {
+    errorOutput += data.toString();
+  });
+  
+  child.on("close", (code) => {
+    const hwndMatch = output.match(/BoundHWnd:(\d+)/);
+    const pidMatch = output.match(/BoundPid:(\d+)/);
+    
+    if (hwndMatch && hwndMatch[1]) {
+      const hwnd = hwndMatch[1];
+      embeddedWindows.set(tabId, hwnd);
+      
+      if (pidMatch && pidMatch[1]) {
+        const actualPid = parseInt(pidMatch[1], 10);
+        const appInfo = runningDesktopApps.get(tabId);
+        if (appInfo) {
+          appInfo.pid = actualPid;
+        }
+      }
+      
+      sendToRenderer(`desktop-app:embedded-bound:${tabId}`, { success: true });
+    } else {
+      const errMsg = errorOutput.trim() || "绑定窗口超时或未找到有效窗口句柄";
+      sendToRenderer(`desktop-app:embedded-bound:${tabId}`, { success: false, error: errMsg });
+    }
+  });
+}
+
+function handleCommandLineArgs(args) {
+  const appPath = app.getAppPath();
+  const candidates = args.slice(1).filter(arg => {
+    if (arg.startsWith("-")) return false;
+    if (arg === "." || arg === "index.html" || arg === "main.js") return false;
+    try {
+      if (path.resolve(arg) === path.resolve(appPath)) return false;
+    } catch {}
+    return /^(https?:\/\/)/i.test(arg) || fs.existsSync(arg);
+  });
+
+  if (candidates.length > 0) {
+    let targetPath = candidates[0];
+    let fileContent = "";
+    let isDirectory = false;
+
+    // 1. 解析 Windows 快捷方式 (.lnk) 到其真实目标
+    if (targetPath.toLowerCase().endsWith(".lnk")) {
+      try {
+        const details = shell.readShortcutLink(targetPath);
+        if (details.target && fs.existsSync(details.target)) {
+          targetPath = details.target;
+        }
+      } catch (err) {
+        console.error("解析快捷方式 .lnk 失败:", err);
+      }
+    }
+
+    // 2. 解析 Internet 快捷方式 (.url) 到其真实网页 URL
+    if (targetPath.toLowerCase().endsWith(".url")) {
+      try {
+        const content = fs.readFileSync(targetPath, "utf8");
+        const match = content.match(/URL=(.+)/i);
+        if (match && match[1]) {
+          targetPath = match[1].trim();
+        }
+      } catch (err) {
+        console.error("解析网页快捷方式 .url 失败:", err);
+      }
+    }
+
+    // 3. 判断是否为目录以及读取常用文本文件内容
+    if (fs.existsSync(targetPath)) {
+      const stat = fs.statSync(targetPath);
+      isDirectory = stat.isDirectory();
+      if (stat.isFile()) {
+        const lowerPath = targetPath.toLowerCase();
+        if (lowerPath.endsWith(".md") || lowerPath.endsWith(".txt") || lowerPath.endsWith(".json")) {
+          try {
+            fileContent = fs.readFileSync(targetPath, "utf8");
+          } catch (err) {
+            console.error("读取文本文件内容失败:", err);
+          }
+        }
+      }
+    }
+
+    // 4. 将富载荷传给渲染层
+    sendToRenderer("tab:add-dropped-item", {
+      path: targetPath,
+      content: fileContent,
+      isDirectory: isDirectory
+    });
+  }
+}
 const workbenchPartition = "persist:personal-workbench";
 const localServerPort = 38924;
 const downloadRoot = path.join(__dirname, "temp");
@@ -146,6 +317,47 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function getMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".mp4": "video/mp4",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+    ".eot": "application/vnd.ms-fontobject",
+    ".wasm": "application/wasm"
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+function serveFile(res, filePath) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal server error" }));
+      return;
+    }
+    const mime = getMimeType(filePath);
+    res.writeHead(200, { "Content-Type": mime });
+    res.end(data);
+  });
+}
+
 function startLocalServer() {
   if (localServer) return;
 
@@ -172,6 +384,45 @@ function startLocalServer() {
       if (url) filter.url = url;
       if (name) filter.name = name;
       sendJson(res, 200, await getWorkbenchCookies(filter));
+      return;
+    }
+
+    const localAppMatch = parsedUrl.pathname.match(/^\/local-apps\/([^/]+)\/(.*)$/);
+    if (localAppMatch) {
+      const tabId = localAppMatch[1];
+      let relPath = decodeURIComponent(localAppMatch[2] || "");
+      if (!relPath || relPath.endsWith("/")) {
+        relPath += "index.html";
+      }
+      const baseDir = localAppsMap.get(tabId);
+      if (!baseDir) {
+        sendJson(res, 404, { error: "Local app directory not registered" });
+        return;
+      }
+      
+      const targetPath = path.resolve(baseDir, relPath);
+      if (!targetPath.startsWith(path.resolve(baseDir))) {
+        sendJson(res, 403, { error: "Access denied" });
+        return;
+      }
+
+      if (!fs.existsSync(targetPath)) {
+        sendJson(res, 404, { error: "File not found" });
+        return;
+      }
+
+      const stat = fs.statSync(targetPath);
+      if (stat.isDirectory()) {
+        const indexPath = path.join(targetPath, "index.html");
+        if (fs.existsSync(indexPath)) {
+          serveFile(res, indexPath);
+        } else {
+          sendJson(res, 404, { error: "Index file not found in directory" });
+        }
+        return;
+      }
+
+      serveFile(res, targetPath);
       return;
     }
 
@@ -462,6 +713,221 @@ function registerIpc() {
     extensionResults = await loadConfiguredExtensions();
     return extensionResults;
   });
+
+  ipcMain.handle("dialog:select-folder", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openDirectory"]
+    });
+    if (result.canceled) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("dialog:select-file", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile"]
+    });
+    if (result.canceled) return null;
+    return result.filePaths[0];
+  });
+
+  ipcMain.handle("local-apps:register", (_event, tabId, baseDir) => {
+    if (tabId && baseDir) {
+      localAppsMap.set(String(tabId), String(baseDir));
+    }
+    return true;
+  });
+
+  ipcMain.handle("desktop-app:launch", async (_event, tabId, exePath, cwd, embedMode, rect) => {
+    const existing = runningDesktopApps.get(tabId);
+    if (existing) {
+      try {
+        process.kill(existing.pid, 0);
+        
+        // 如果程序已启动但未成功绑定窗口，重新尝试绑定
+        if (embedMode && rect && !embeddedWindows.has(tabId)) {
+          const buffer = mainWindow.getNativeWindowHandle();
+          const parentHwnd = buffer.length === 8 
+            ? buffer.readBigInt64LE(0).toString() 
+            : buffer.readInt32LE(0).toString();
+          bindWindow(tabId, existing.pid, exePath, parentHwnd, rect);
+        }
+        
+        return { success: true, pid: existing.pid };
+      } catch (e) {
+        embeddedWindows.delete(tabId);
+        runningDesktopApps.delete(tabId);
+      }
+    }
+
+    try {
+      const options = {};
+      if (cwd && fs.existsSync(cwd)) {
+        options.cwd = cwd;
+      } else {
+        try {
+          options.cwd = path.dirname(exePath);
+        } catch {}
+      }
+
+      const child = spawn(exePath, [], {
+        ...options,
+        detached: false,
+        stdio: "ignore"
+      });
+
+      const appInfo = {
+        pid: child.pid,
+        child: child
+      };
+      runningDesktopApps.set(tabId, appInfo);
+
+      child.on("exit", () => {
+        // 如果窗口已成功绑定，则包装/启动器进程的退出属于正常现象，不清理状态
+        if (embeddedWindows.has(tabId)) {
+          return;
+        }
+        embeddedWindows.delete(tabId);
+        runningDesktopApps.delete(tabId);
+        sendToRenderer(`desktop-app:status-change:${tabId}`, { running: false, pid: null });
+      });
+
+      child.on("error", (err) => {
+        if (embeddedWindows.has(tabId)) {
+          return;
+        }
+        embeddedWindows.delete(tabId);
+        runningDesktopApps.delete(tabId);
+        sendToRenderer(`desktop-app:status-change:${tabId}`, { running: false, pid: null, error: err.message });
+      });
+
+      if (embedMode && rect) {
+        const buffer = mainWindow.getNativeWindowHandle();
+        const parentHwnd = buffer.length === 8 
+          ? buffer.readBigInt64LE(0).toString() 
+          : buffer.readInt32LE(0).toString();
+        bindWindow(tabId, child.pid, exePath, parentHwnd, rect);
+      }
+
+      return { success: true, pid: child.pid };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle("desktop-app:status", (_event, tabId) => {
+    const appInfo = runningDesktopApps.get(tabId);
+    if (!appInfo) return { running: false, pid: null };
+    try {
+      process.kill(appInfo.pid, 0);
+      return { running: true, pid: appInfo.pid };
+    } catch {
+      embeddedWindows.delete(tabId);
+      runningDesktopApps.delete(tabId);
+      return { running: false, pid: null };
+    }
+  });
+
+  ipcMain.handle("desktop-app:kill", (_event, tabId) => {
+    const appInfo = runningDesktopApps.get(tabId);
+    if (!appInfo) return { success: false, error: "Not running" };
+    try {
+      process.kill(appInfo.pid, 9);
+    } catch (err) {
+      if (appInfo.child) {
+        try {
+          appInfo.child.kill();
+        } catch (e) {}
+      }
+    }
+    embeddedWindows.delete(tabId);
+    runningDesktopApps.delete(tabId);
+    return { success: true };
+  });
+
+  ipcMain.handle("desktop-app:resize-window", (_event, tabId, rect) => {
+    const childHwnd = embeddedWindows.get(tabId);
+    if (childHwnd && rect) {
+      runWindowBinder([
+        "-Action", "resize",
+        "-ChildHWnd", childHwnd,
+        "-X", String(Math.round(rect.x)),
+        "-Y", String(Math.round(rect.y)),
+        "-Width", String(Math.round(rect.width)),
+        "-Height", String(Math.round(rect.height))
+      ]);
+    }
+    return true;
+  });
+
+  ipcMain.handle("desktop-app:toggle-visibility", (_event, tabId, visible) => {
+    const childHwnd = embeddedWindows.get(tabId);
+    if (childHwnd) {
+      runWindowBinder([
+        "-Action", visible ? "show" : "hide",
+        "-ChildHWnd", childHwnd
+      ]);
+    }
+    return true;
+  });
+
+  ipcMain.on("cli-terminal:start", (event, tabId, command, cwd, size = {}) => {
+    if (tabPtyProcesses.has(tabId)) {
+      return;
+    }
+
+    const cols = Number(size.cols) || 80;
+    const rows = Number(size.rows) || 24;
+    const finalCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+
+    let ptyProcess;
+    try {
+      const args = ["/Q"];
+      if (command) {
+        args.push("/K", `chcp 65001>nul && ${command}`);
+      } else {
+        args.push("/K", "chcp 65001>nul");
+      }
+
+      ptyProcess = pty.spawn("cmd.exe", args, {
+        cols: Math.max(20, cols),
+        rows: Math.max(6, rows),
+        cwd: finalCwd,
+        env: { ...process.env, TERM: "xterm-256color" }
+      });
+    } catch (err) {
+      event.sender.send(`cli-terminal:data:${tabId}`, `\r\n[启动终端失败: ${err.message}]\r\n`);
+      return;
+    }
+
+    tabPtyProcesses.set(tabId, ptyProcess);
+
+    ptyProcess.onData((data) => {
+      event.sender.send(`cli-terminal:data:${tabId}`, data);
+    });
+
+    ptyProcess.onExit(({ exitCode }) => {
+      tabPtyProcesses.delete(tabId);
+      event.sender.send(`cli-terminal:data:${tabId}`, `\r\n[终端会话已退出，代码 ${exitCode ?? "未知"}]\r\n`);
+    });
+  });
+
+  ipcMain.on("cli-terminal:input", (_event, tabId, data) => {
+    const ptyProcess = tabPtyProcesses.get(tabId);
+    if (ptyProcess) {
+      ptyProcess.write(data);
+    }
+  });
+
+  ipcMain.on("cli-terminal:resize", (_event, tabId, size = {}) => {
+    const ptyProcess = tabPtyProcesses.get(tabId);
+    if (ptyProcess) {
+      const cols = Math.max(20, Number(size.cols) || 80);
+      const rows = Math.max(6, Number(size.rows) || 24);
+      try {
+        ptyProcess.resize(cols, rows);
+      } catch {}
+    }
+  });
 }
 
 app.whenReady().then(async () => {
@@ -469,6 +935,14 @@ app.whenReady().then(async () => {
   registerIpc();
   installEmbedHeaderFilter();
   installDownloadHandler();
+
+  app.on("second-instance", (event, commandLine) => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      handleCommandLineArgs(commandLine);
+    }
+  });
 
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
@@ -487,6 +961,11 @@ app.whenReady().then(async () => {
   extensionResults = await loadConfiguredExtensions();
   createWindow();
 
+  // Check if dragged onto icon on cold startup
+  setTimeout(() => {
+    handleCommandLineArgs(process.argv);
+  }, 1500);
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -495,5 +974,19 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   stopTerminal();
   stopLocalServer();
+  for (const appInfo of runningDesktopApps.values()) {
+    try {
+      process.kill(appInfo.pid, 9);
+    } catch {
+      if (appInfo.child) {
+        try { appInfo.child.kill(); } catch {}
+      }
+    }
+  }
+  runningDesktopApps.clear();
+  for (const ptyProc of tabPtyProcesses.values()) {
+    try { ptyProc.kill(); } catch {}
+  }
+  tabPtyProcesses.clear();
   if (process.platform !== "darwin") app.quit();
 });

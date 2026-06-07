@@ -146,9 +146,84 @@
           <input id="tab-name" type="text" maxlength="24" placeholder="例如：NotebookLM" required />
         </label>
         <label>
-          网页地址
-          <input id="tab-url" type="text" placeholder="https://example.com" required />
+          应用类型
+          <select id="tab-type">
+            <option value="web">在线网页</option>
+            <option value="local-web">本地 Web 项目</option>
+            <option value="desktop-app">本地可执行文件</option>
+            <option value="cli-app">命令行工具</option>
+            <option value="builtin">内置扩展小工具</option>
+          </select>
         </label>
+        
+        <!-- Web specific field -->
+        <div class="form-group-type" data-type="web">
+          <label>
+            网页地址
+            <input id="tab-url" type="text" placeholder="https://example.com" />
+          </label>
+        </div>
+
+        <!-- Local Web specific fields -->
+        <div class="form-group-type" data-type="local-web" style="display: none;">
+          <label>
+            本地项目目录
+            <div class="input-browse-group">
+              <input id="tab-local-path" type="text" placeholder="例如：E:\codes\my-app" />
+              <button id="tab-local-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+        </div>
+
+        <!-- Desktop App specific fields -->
+        <div class="form-group-type" data-type="desktop-app" style="display: none;">
+          <label>
+            程序文件路径
+            <div class="input-browse-group">
+              <input id="tab-exe-path" type="text" placeholder="例如：C:\Windows\System32\calc.exe" />
+              <button id="tab-exe-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+          <label style="margin-top: 10px; display: block;">
+            运行工作目录 (可选)
+            <div class="input-browse-group">
+              <input id="tab-exe-cwd" type="text" placeholder="例如：C:\Windows\System32" />
+              <button id="tab-exe-cwd-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+          <label style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input id="tab-exe-autolaunch" type="checkbox" style="width: auto; margin: 0;" /> 启动工作台时自动运行此程序
+          </label>
+          <label style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input id="tab-exe-embed" type="checkbox" style="width: auto; margin: 0;" /> 开启内部窗口嵌入模式 (仅限 Windows)
+          </label>
+        </div>
+
+        <!-- CLI App specific fields -->
+        <div class="form-group-type" data-type="cli-app" style="display: none;">
+          <label>
+            启动命令
+            <input id="tab-cli-command" type="text" placeholder="例如：npm run dev 或 ping 127.0.0.1" />
+          </label>
+          <label style="margin-top: 10px; display: block;">
+            运行工作目录 (可选)
+            <div class="input-browse-group">
+              <input id="tab-cli-cwd" type="text" placeholder="例如：E:\codes\my-app" />
+              <button id="tab-cli-cwd-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+        </div>
+
+        <!-- Builtin specific fields -->
+        <div class="form-group-type" data-type="builtin" style="display: none;">
+          <label>
+            内置工具类型
+            <select id="tab-builtin-type">
+              <option value="markdown">Markdown 编辑器</option>
+              <option value="whiteboard">简易画板白板</option>
+            </select>
+          </label>
+        </div>
         <div class="modal-actions">
           <button id="delete-tab-button" class="danger-button" type="button">删除标签</button>
           <button id="move-up-tab-button" class="secondary-button" type="button">↑ 上移</button>
