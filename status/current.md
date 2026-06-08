@@ -7,13 +7,13 @@
 Codex (等待 Antigravity 移交方案后执行代码重构)
 
 ## Last Updated
-2026-06-08 15:00
+2026-06-08 15:20
 
 ## Latest Summary
 1. **获取代码**：成功拉取了 Codex 先前提交的工作台自动化流水线和任务管理器首版代码（分支 `codex/personal-workbench`）。
 2. **重构规划**：在听取用户具体的交互改进意见后，Antigravity 制定了全新的第二阶段菜单栏与任务列表重构方案 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。先前由 Antigravity 自动提出的功能拓展方向（如一键 Git 同步、可视化进度条等）已被舍弃，完全遵循用户的实际意见。
 3. **数据修正**：更新了 [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json) 任务数据模板，移除了 `docPath` 属性。
-4. **知识库归档**：成功将《Codex 最全使用技巧，5000字长文！》文章抓取并分类导入到云端 [微信文章归档](https://notebooklm.google.com/notebook/54261b3c-4085-4b53-842d-f91024a2471f) 知识库中。
+4. **知识库归档**：成功将《Codex 最全使用技巧，5000字长文！》和《我知道的所有 Agentic Engineering 技巧（2026 年 6 月）》两篇文章抓取并分类导入到云端 [微信文章归档](https://notebooklm.google.com/notebook/54261b3c-4085-4b53-842d-f91024a2471f) 知识库中。
 
 ## Next Step
 1. Codex 本地拉取最新更改。
