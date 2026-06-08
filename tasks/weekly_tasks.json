@@ -5,10 +5,11 @@
     "course": "工程机器人现场编程",
     "taskType": "capability-setup",
     "quantity": 5,
-    "status": "pending",
+    "status": "completed",
     "owner": "李姝琦",
     "chatLogPath": "",
-    "reportPath": ""
+    "reportPath": "",
+    "taskFolder": ""
   },
   {
     "id": "task-1780650321123",
@@ -19,7 +20,8 @@
     "status": "pending",
     "owner": "赵俞蓉",
     "chatLogPath": "",
-    "reportPath": ""
+    "reportPath": "",
+    "taskFolder": ""
   },
   {
     "id": "task-1780650341199",
@@ -30,7 +32,8 @@
     "status": "pending",
     "owner": "李漫1",
     "chatLogPath": "",
-    "reportPath": ""
+    "reportPath": "",
+    "taskFolder": ""
   },
   {
     "id": "task-1780650363177",
@@ -41,6 +44,7 @@
     "status": "pending",
     "owner": "姜唯一",
     "chatLogPath": "",
-    "reportPath": ""
+    "reportPath": "",
+    "taskFolder": ""
   }
 ]
