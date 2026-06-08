@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check preload-popup.js && node --check renderer.js",
-    "test": "npm run check"
+    "test": "npm run check",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win portable"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -14,6 +16,24 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "electron": "^36.4.0"
+    "electron": "^36.4.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.personal.workbench",
+    "productName": "个人工作台",
+    "directories": {
+      "output": "build-output"
+    },
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "files": [
+      "**/*",
+      "!dist/*",
+      "!build-output/*"
+    ],
+    "asar": true
   }
 }

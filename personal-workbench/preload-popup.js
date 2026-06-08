@@ -1,5 +1,9 @@
 const { ipcRenderer } = require("electron");
 
+ipcRenderer.invoke("workbench:get-session-token").then((token) => {
+  window.__workbenchSessionToken = token;
+}).catch(() => {});
+
 function activeTab(callback) {
   const promise = ipcRenderer.invoke("workbench:get-active-tab-info").then((tabInfo) => ({
     id: 9999,

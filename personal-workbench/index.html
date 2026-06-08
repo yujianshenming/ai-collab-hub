@@ -69,6 +69,90 @@
           </div>
           <div class="app-menu-right"></div>
         </nav>
+
+        <!-- 任务下拉抽屉 -->
+        <div id="task-panel-overlay" class="task-panel-overlay"></div>
+        <div id="task-manager-panel" class="task-panel">
+          <div class="task-panel-scroll-container">
+            <section id="task-list-view" class="task-modal-view">
+              <div class="modal-heading task-modal-heading">
+                <div>
+                  <span class="eyebrow">Weekly Tasks</span>
+                  <h2>本周任务列表</h2>
+                </div>
+                <button class="icon-button task-close" type="button" aria-label="关闭">×</button>
+              </div>
+              <div class="task-table-wrap" aria-label="任务列表">
+                <table class="task-table">
+                  <thead>
+                    <tr>
+                      <th>学校 / 课程</th>
+                      <th>类型</th>
+                      <th>数量</th>
+                      <th>状态</th>
+                      <th>负责人</th>
+                      <th>产物</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="task-table-body"></tbody>
+                </table>
+              </div>
+              <div class="task-list-footer">
+                <button id="btn-add-new-task" class="primary-button" type="button">添加任务</button>
+              </div>
+            </section>
+
+            <form id="task-form" class="task-modal-view">
+              <div class="modal-heading">
+                <div>
+                  <span class="eyebrow">Task Editor</span>
+                  <h2 id="task-form-title">添加任务</h2>
+                </div>
+                <button class="icon-button task-cancel" type="button" aria-label="返回任务列表">×</button>
+              </div>
+              <input id="task-id" type="hidden" />
+              <div id="task-form-view" class="task-form-grid">
+                <label>
+                  学校
+                  <input id="task-school" type="text" placeholder="清华大学" required />
+                </label>
+                <label>
+                  课程
+                  <input id="task-course" type="text" placeholder="高中体育教师" required />
+                </label>
+                <label>
+                  类型
+                  <select id="task-type">
+                    <option value="capability-setup">能力训练搭建</option>
+                    <option value="capability-edit">能力训练修改</option>
+                    <option value="capability-acceptance">能力训练验收</option>
+                    <option value="grading-setup">作业批阅搭建</option>
+                    <option value="grading-acceptance">作业批阅验收</option>
+                  </select>
+                </label>
+                <label>
+                  数量
+                  <input id="task-quantity" type="number" min="1" value="1" />
+                </label>
+                <label>
+                  负责人
+                  <input id="task-owner" type="text" placeholder="负责人" />
+                </label>
+              </div>
+              <div class="modal-actions">
+                <button id="task-reset-button" class="secondary-button" type="button">清空表单</button>
+                <span class="action-spacer"></span>
+                <button class="secondary-button task-cancel" type="button">取消</button>
+                <button class="primary-button" type="submit">保存任务</button>
+              </div>
+            </form>
+          </div>
+          <div class="task-panel-handle">
+            <span class="handle-bar"></span>
+          </div>
+        </div>
+
         <header class="topbar">
           <button id="sidebar-toggle" class="icon-button sidebar-toggle-button" type="button" aria-label="切换侧边栏" title="切换侧边栏" aria-expanded="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -99,6 +183,15 @@
         </header>
 
         <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
+
+        <aside id="bottom-sidebar" class="bottom-sidebar">
+          <div id="bottom-sidebar-resizer" class="bottom-sidebar-resizer" title="拖动调整分屏高度"></div>
+          <header class="bottom-sidebar-header">
+            <strong id="bottom-sidebar-title">底部分屏视图</strong>
+            <button id="bottom-sidebar-close" class="icon-button" type="button" aria-label="关闭分屏" title="关闭分屏">×</button>
+          </header>
+          <div id="bottom-sidebar-body" class="bottom-sidebar-body"></div >
+        </aside>
 
         <section id="terminal-panel" class="terminal-panel" aria-label="命令提示符终端">
           <div id="terminal-resizer" class="terminal-resizer" title="拖动调整终端高度"></div>
@@ -131,6 +224,13 @@
       </div>
     </div>
 
+    <div id="split-drag-overlay-bottom" class="split-drag-overlay-bottom">
+      <div class="split-drag-box">
+        <span class="split-drag-icon">◫</span>
+        <span class="split-drag-text">释放以开启底部分屏</span>
+      </div>
+    </div>
+
     <dialog id="tab-dialog" class="modal">
       <form id="tab-form" method="dialog">
         <div class="modal-heading">
@@ -146,9 +246,84 @@
           <input id="tab-name" type="text" maxlength="24" placeholder="例如：NotebookLM" required />
         </label>
         <label>
-          网页地址
-          <input id="tab-url" type="text" placeholder="https://example.com" required />
+          应用类型
+          <select id="tab-type">
+            <option value="web">在线网页</option>
+            <option value="local-web">本地 Web 项目</option>
+            <option value="desktop-app">本地可执行文件</option>
+            <option value="cli-app">命令行工具</option>
+            <option value="builtin">内置扩展小工具</option>
+          </select>
         </label>
+        
+        <!-- Web specific field -->
+        <div class="form-group-type" data-type="web">
+          <label>
+            网页地址
+            <input id="tab-url" type="text" placeholder="https://example.com" />
+          </label>
+        </div>
+
+        <!-- Local Web specific fields -->
+        <div class="form-group-type" data-type="local-web" style="display: none;">
+          <label>
+            本地项目目录
+            <div class="input-browse-group">
+              <input id="tab-local-path" type="text" placeholder="例如：E:\codes\my-app" />
+              <button id="tab-local-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+        </div>
+
+        <!-- Desktop App specific fields -->
+        <div class="form-group-type" data-type="desktop-app" style="display: none;">
+          <label>
+            程序文件路径
+            <div class="input-browse-group">
+              <input id="tab-exe-path" type="text" placeholder="例如：C:\Windows\System32\calc.exe" />
+              <button id="tab-exe-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+          <label style="margin-top: 10px; display: block;">
+            运行工作目录 (可选)
+            <div class="input-browse-group">
+              <input id="tab-exe-cwd" type="text" placeholder="例如：C:\Windows\System32" />
+              <button id="tab-exe-cwd-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+          <label style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input id="tab-exe-autolaunch" type="checkbox" style="width: auto; margin: 0;" /> 启动工作台时自动运行此程序
+          </label>
+          <label style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input id="tab-exe-embed" type="checkbox" style="width: auto; margin: 0;" /> 开启内部窗口嵌入模式 (仅限 Windows)
+          </label>
+        </div>
+
+        <!-- CLI App specific fields -->
+        <div class="form-group-type" data-type="cli-app" style="display: none;">
+          <label>
+            启动命令
+            <input id="tab-cli-command" type="text" placeholder="例如：npm run dev 或 ping 127.0.0.1" />
+          </label>
+          <label style="margin-top: 10px; display: block;">
+            运行工作目录 (可选)
+            <div class="input-browse-group">
+              <input id="tab-cli-cwd" type="text" placeholder="例如：E:\codes\my-app" />
+              <button id="tab-cli-cwd-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+        </div>
+
+        <!-- Builtin specific fields -->
+        <div class="form-group-type" data-type="builtin" style="display: none;">
+          <label>
+            内置工具类型
+            <select id="tab-builtin-type">
+              <option value="markdown">Markdown 编辑器</option>
+              <option value="whiteboard">简易画板白板</option>
+            </select>
+          </label>
+        </div>
         <div class="modal-actions">
           <button id="delete-tab-button" class="danger-button" type="button">删除标签</button>
           <button id="move-up-tab-button" class="secondary-button" type="button">↑ 上移</button>
@@ -181,81 +356,7 @@
     </dialog>
 
 
-    <dialog id="task-manager-modal" class="modal task-modal">
-      <section id="task-list-view" class="task-modal-view">
-        <div class="modal-heading task-modal-heading">
-          <div>
-            <span class="eyebrow">Weekly Tasks</span>
-            <h2>本周任务列表</h2>
-          </div>
-          <button class="icon-button task-close" type="button" aria-label="关闭">×</button>
-        </div>
-        <div class="task-table-wrap" aria-label="任务列表">
-          <table class="task-table">
-            <thead>
-              <tr>
-                <th>学校 / 课程</th>
-                <th>类型</th>
-                <th>数量</th>
-                <th>状态</th>
-                <th>负责人</th>
-                <th>产物</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="task-table-body"></tbody>
-          </table>
-        </div>
-        <div class="task-list-footer">
-          <button id="btn-add-new-task" class="primary-button" type="button">添加任务</button>
-        </div>
-      </section>
 
-      <form id="task-form" class="task-modal-view" method="dialog">
-        <div class="modal-heading">
-          <div>
-            <span class="eyebrow">Task Editor</span>
-            <h2 id="task-form-title">添加任务</h2>
-          </div>
-          <button class="icon-button task-cancel" type="button" aria-label="返回任务列表">×</button>
-        </div>
-        <input id="task-id" type="hidden" />
-        <div id="task-form-view" class="task-form-grid">
-          <label>
-            学校
-            <input id="task-school" type="text" placeholder="清华大学" required />
-          </label>
-          <label>
-            课程
-            <input id="task-course" type="text" placeholder="高中体育教师" required />
-          </label>
-          <label>
-            类型
-            <select id="task-type">
-              <option value="capability-setup">能力训练搭建</option>
-              <option value="capability-edit">能力训练修改</option>
-              <option value="capability-acceptance">能力训练验收</option>
-              <option value="grading-setup">作业批阅搭建</option>
-              <option value="grading-acceptance">作业批阅验收</option>
-            </select>
-          </label>
-          <label>
-            数量
-            <input id="task-quantity" type="number" min="1" value="1" />
-          </label>
-          <label>
-            负责人
-            <input id="task-owner" type="text" placeholder="负责人" />
-          </label>
-        </div>
-        <div class="modal-actions">
-          <button id="task-reset-button" class="secondary-button" type="button">清空表单</button>
-          <span class="action-spacer"></span>
-          <button class="secondary-button task-cancel" type="button">取消</button>
-          <button class="primary-button" type="submit">保存任务</button>
-        </div>
-      </form>
-    </dialog>
 
     <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
     <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
