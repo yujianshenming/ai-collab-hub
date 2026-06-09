@@ -140,3 +140,25 @@
 5. **任务暂停**：点击运行中任务的“暂停”，顶部横幅消失，任务状态变为“已暂停”（橙黄色 Badge），按钮变为“继续”。任务临时文件夹**不应被清理**。
 6. **任务继续**：点击暂停中任务的“继续”，如果此时无其他活跃任务，则正常恢复执行（横幅重新显现），状态还原；若此时有其他任务正在运行，则弹出防冲突警告并拦截。
 
+---
+
+## 5. Windows 启动控制台附加冲突（AttachConsole failed）排查与建议
+
+在非交互式命令行沙箱或某些特定的 Terminal 包装环境（例如通过 `npm start` 脚本包装器启动）下启动 Electron 应用时，可能会在创建 `node-pty` 终端实例时抛出如下错误并导致应用闪退：
+```text
+C:\Users\24391\.gemini\antigravity\scratch\ai-collab-hub\personal-workbench\node_modules\node-pty\lib\conpty_console_list_agent.js:13
+var consoleProcessList = getConsoleProcessList(shellPid);
+                         ^
+Error: AttachConsole failed
+```
+* **原因分析**：这是由于 `node-pty` 在 Windows 环境下，尝试获取终端子进程列表时调用了 Windows 原生的 `AttachConsole` API。若 Electron 进程是通过命令行工具（如 npm 包装器）启动，且控制台会话被外部父环境拦截/捕获，极易产生控制台会话占用冲突，导致 API 执行失败。
+* **解决与排查建议**：
+  1. **避开 npm 包装器启动**：不要在沙箱命令行中执行 `npm start`。应当直接使用 Electron 的本地可执行文件或者以 detached 进程方式启动，例如：
+     ```powershell
+     # 1. 命令行中直接调用本地 Electron 二进制启动
+     .\node_modules\.bin\electron.cmd .
+     
+     # 2. 或是通过 PowerShell 起独立分离窗口启动（推荐，已验证能完全避免控制台冲突）
+     Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory "C:\Users\24391\.gemini\antigravity\scratch\ai-collab-hub\personal-workbench"
+     ```
+  2. **加固未捕获异常处理**：建议 Codex 可以考虑在进程层面或 PTY 终端初始化代码外侧捕获此类未捕获错误，防止因为单个终端进程获取列表失败而直接导致整个 Electron 主窗口闪退崩溃。

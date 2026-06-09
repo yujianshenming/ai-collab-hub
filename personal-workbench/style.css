@@ -358,7 +358,6 @@ button { cursor: pointer; }
 .status-running { color: #1d4ed8; background: #eff6ff; }
 .status-evaluating { color: #7e22ce; background: #faf5ff; }
 .status-completed { color: #15803d; background: #f0fdf4; }
-.status-paused { color: #b45309; background: #fffbeb; }
 .task-path { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .task-actions .secondary-button, .task-actions .danger-button { padding: 7px 9px; font-size: 10px; }
