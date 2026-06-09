@@ -1107,6 +1107,7 @@ function taskStatusLabel(status) {
     pending: "待处理",
     running: "进行中",
     evaluating: "评估中",
+    paused: "已暂停",
     completed: "已完成"
   }[status] || "待处理";
 }
@@ -1184,7 +1185,8 @@ function normalizeWeeklyTask(task = {}) {
     owner: task.owner || "",
     chatLogPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
-    taskFolder: task.taskFolder || ""
+    taskFolder: task.taskFolder || "",
+    step: task.step || "testing"
   };
 }
 
@@ -1237,13 +1239,25 @@ function renderWeeklyTasks() {
       <td><span class="task-path" title="${escapeHtml([task.chatLogPath, task.reportPath].filter(Boolean).join("\\n"))}">${escapeHtml(taskArtifactSummary(task))}</span></td>
       <td>
         <div class="task-actions">
-          <button class="secondary-button task-run" type="button">执行</button>
+          ${(task.status === "running" || task.status === "evaluating")
+            ? `<button class="secondary-button task-pause" type="button">暂停</button>`
+            : (task.status === "paused"
+              ? `<button class="secondary-button task-resume" type="button">继续</button>`
+              : `<button class="secondary-button task-run" type="button">执行</button>`)}
           <button class="secondary-button task-edit" type="button">编辑</button>
           <button class="danger-button task-delete" type="button">删除</button>
         </div>
       </td>
     `;
-    row.querySelector(".task-run").addEventListener("click", () => startTaskAutomation(task.id));
+    const runBtn = row.querySelector(".task-run");
+    if (runBtn) runBtn.addEventListener("click", () => startTaskAutomation(task.id));
+    
+    const pauseBtn = row.querySelector(".task-pause");
+    if (pauseBtn) pauseBtn.addEventListener("click", () => pauseTaskAutomation(task.id));
+    
+    const resumeBtn = row.querySelector(".task-resume");
+    if (resumeBtn) resumeBtn.addEventListener("click", () => resumeTaskAutomation(task.id));
+
     row.querySelector(".task-edit").addEventListener("click", () => editWeeklyTask(task.id));
     row.querySelector(".task-delete").addEventListener("click", () => deleteWeeklyTask(task.id));
     elements.taskTableBody.append(row);
@@ -1334,6 +1348,10 @@ function activateOrCreateTab(id, name, url) {
 }
 
 async function startTaskAutomation(id) {
+  if (pipelineState.active) {
+    showToast("当前已有正在运行的任务，请先暂停或结束当前任务。", "error");
+    return;
+  }
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
   const taskFolder = await window.workbench.prepareTaskFolder(task);
@@ -1350,6 +1368,63 @@ async function startTaskAutomation(id) {
   updateActiveTaskMenu(task);
   closeTaskPanel();
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
+}
+
+async function pauseTaskAutomation(id) {
+  const task = weeklyTasks.find((t) => t.id === id);
+  if (!task) return;
+  
+  if (pipelineState.active && pipelineState.taskId === id) {
+    task.chatLogPath = pipelineState.chatPath || "";
+    task.reportPath = pipelineState.reportPath || "";
+    task.taskFolder = pipelineState.taskFolder || "";
+    task.step = pipelineState.step || "testing";
+  }
+  
+  task.status = "paused";
+  
+  pipelineState = {
+    active: false,
+    taskId: null,
+    step: "idle",
+    chatPath: "",
+    reportPath: "",
+    taskFolder: "",
+    uploadQueue: []
+  };
+  
+  updateActiveTaskMenu(null);
+  await persistWeeklyTasks();
+  renderWeeklyTasks();
+  showToast(`任务已暂停：${task.school || ""} ${task.course || ""}`, "success");
+}
+
+async function resumeTaskAutomation(id) {
+  const task = weeklyTasks.find((t) => t.id === id);
+  if (!task) return;
+  
+  if (pipelineState.active) {
+    showToast("当前已有正在运行的任务，请先暂停或结束当前任务。", "error");
+    return;
+  }
+  
+  pipelineState = {
+    active: true,
+    taskId: id,
+    step: task.step || "testing",
+    chatPath: task.chatLogPath || "",
+    reportPath: task.reportPath || "",
+    taskFolder: task.taskFolder || "",
+    uploadQueue: []
+  };
+  
+  const nextStatus = (task.step === "evaluating") ? "evaluating" : "running";
+  task.status = nextStatus;
+  
+  updateActiveTaskMenu(task);
+  await persistWeeklyTasks();
+  renderWeeklyTasks();
+  showToast(`任务已恢复执行：${task.school || ""} ${task.course || ""}`, "success");
 }
 
 async function handleDownloadCompleted(download) {
