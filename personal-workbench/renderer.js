@@ -221,6 +221,15 @@ function setWebviewPointerEvents(enabled) {
   });
 }
 
+function isLocalLoopbackUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return ["localhost", "127.0.0.1"].includes(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function swapTabs(id1, id2) {
   const idx1 = tabs.findIndex((t) => t.id === id1);
   const idx2 = tabs.findIndex((t) => t.id === id2);
@@ -264,9 +273,12 @@ function createTabViewport(tab) {
     webview.addEventListener("did-navigate-in-page", () => updateAddressFromWebview(webview));
     webview.addEventListener("dom-ready", () => {
       fitWebviewZoom();
-      window.workbench.getSessionToken().then((token) => {
-        webview.executeJavaScript(`window.__workbenchSessionToken = "${token}";`).catch(() => {});
-      });
+      const currentUrl = webview.getURL() || tab.url || "";
+      if (type === "local-web" || isLocalLoopbackUrl(currentUrl)) {
+        window.workbench.getSessionToken().then((token) => {
+          webview.executeJavaScript(`window.__workbenchSessionToken = ${JSON.stringify(token)};`).catch(() => {});
+        });
+      }
     });
     setupWebviewUploadInterceptor(webview);
     webview.addEventListener("page-title-updated", (event) => {
@@ -2319,8 +2331,8 @@ document.addEventListener("click", (event) => {
   if (!panel?.classList.contains("open")) return;
 
   const taskButton = elements.menuTaskButton;
-  const target = event.target;
-  if (panel.contains(target) || taskButton?.contains(target)) return;
+  const path = event.composedPath();
+  if (path.includes(panel) || path.includes(taskButton)) return;
 
   closeTaskPanel();
 });

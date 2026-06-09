@@ -513,8 +513,10 @@ function startLocalServer() {
         return;
       }
       
-      const targetPath = path.resolve(baseDir, relPath);
-      if (!targetPath.startsWith(path.resolve(baseDir))) {
+      const resolvedBase = path.resolve(baseDir);
+      const targetPath = path.resolve(resolvedBase, relPath);
+      const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : `${resolvedBase}${path.sep}`;
+      if (targetPath !== resolvedBase && !targetPath.startsWith(baseWithSep)) {
         sendJson(res, 403, { error: "Access denied" });
         return;
       }
