@@ -1,101 +1,79 @@
-# 任务系统下拉菜单交互优化需求文档
+# 任务系统与安全问题修复需求文档
 
-为了解决当前工作台中任务面板遮挡其他按钮（如顶栏的“终端”等）以及优化下拉交互体验，本文件详细规范了需要对代码进行的具体修改。
-
----
-
-## 1. 痛点与问题分析
-
-1. **关闭状态下的顶栏按钮遮挡**：
-   - **原因**：`.task-panel` 默认处于关闭状态时使用 `transform: translateY(-100%)` 移出屏幕。然而，虽然它在视觉上不可见，但由于未设置 `visibility: hidden` 或 `pointer-events: none`，且它的 `z-index: 100` 极高，因此它在物理上仍然悬浮在 `top: 34px` 以上的区域（正好重叠在高度为 `34px` 的顶栏上）。这导致鼠标在顶栏上悬停或点击时，所有的指针事件都被不可见的任务面板拦截，从而无法点击“终端”等其他顶栏按钮。
-2. **面板展开时无法点击外部收回**：
-   - **原因**：当前的遮罩层 `.task-panel-overlay` 的 `top` 设为 `34px`，避开了顶栏。这样点击顶栏的“终端”等按钮时不会触发遮罩层的关闭事件。并且，原先没有监听全局 `document` 级别的点击事件。
-3. **多余的拖拽交互**：
-   - 用户期望的交互是：**点击“任务”按钮自动下拉/滑出，再次点击或点击面板外部自动收回**，类似于手机的下拉菜单，但不需要手动下拉拖拽。当前的拖拽手柄 `.task-panel-handle` 是多余的。
+在第一阶段编码完成后，我们对工作台进行了严格审查与验证。以下是发现的缺陷及整改要求，请 Codex 进行修复。
 
 ---
 
-## 2. 期望的交互与技术方案
+## 1. 任务面板（Task Panel）交互边缘缺陷修复
 
-请 Codex 按照以下步骤修改代码：
+### 1.1 缺陷现象：点击删除任务时，面板会意外收起
+* **原因分析**：
+  在任务面板内，用户点击“删除任务”按钮（`.task-delete`）后，底层数据发生改变并重新渲染表格，这导致原有的删除按钮 DOM 节点被销毁（离线化）。
+  在事件冒泡到 `document` 时，`event.target` 指向的该按钮已经不在文档树中。此时，`panel.contains(target)` 会返回 `false`，从而误判为“点击了面板外部”，非预期地触发了 `closeTaskPanel()` 并关闭了下拉抽屉。
+* **修改方案 (`renderer.js`)**：
+  不使用 `panel.contains(target)` 进行简单判断，而是改用现代 Web API `event.composedPath()`。它可以获取完整的事件冒泡路径。只要冒泡路径中包含面板元素或“任务”按钮，即说明点击起源于它们内部，不应关闭面板。
+  
+  请修改 `renderer.js` 中的全局点击监听器：
+  ```javascript
+  document.addEventListener("click", (event) => {
+    const panel = elements.taskPanel;
+    if (!panel?.classList.contains("open")) return;
 
-### 2.1 CSS 优化 (`style.css`)
+    const taskButton = elements.menuTaskButton;
+    // 使用 composedPath 获取事件冒泡路径，防止子元素销毁后导致判定失效
+    const path = event.composedPath();
+    if (path.includes(panel) || path.includes(taskButton)) return;
 
-1. **避免关闭时拦截鼠标事件**：
-   为 `.task-panel` 增加默认的隐藏属性，并在 `.task-panel.open` 时启用。为了让滑出/滑入的动画依然能够流畅播放，需要利用 CSS 对 `visibility` 属性的过渡支持。
-   
-   修改 `.task-panel` 及 `.task-panel.open`：
-   ```css
-   .task-panel {
-     position: absolute;
-     top: 34px;
-     left: 0;
-     right: 0;
-     max-height: 80vh;
-     background-color: rgba(255, 255, 255, 0.96);
-     border-bottom: 1px solid var(--border-color);
-     box-shadow: 0 15px 35px rgba(15, 23, 42, 0.08);
-     backdrop-filter: blur(20px);
-     z-index: 100;
-     transform: translateY(-100%);
-     /* 增加对 visibility 的 transition 支持 */
-     transition: transform 350ms cubic-bezier(0.16, 1, 0.3, 1), visibility 350ms;
-     overflow: hidden;
-     display: flex;
-     flex-direction: column;
-     
-     /* 新增：默认隐藏且不拦截事件 */
-     visibility: hidden;
-     pointer-events: none;
-   }
-   
-   .task-panel.open {
-     transform: translateY(0);
-     /* 新增：打开时可见且允许事件 */
-     visibility: visible;
-     pointer-events: auto;
-   }
-   ```
-
-2. **隐藏/停用拖拽手柄**：
-   通过 CSS 隐藏 `.task-panel-handle` 元素。
-   ```css
-   .task-panel-handle {
-     display: none !important;
-   }
-   ```
+    closeTaskPanel();
+  });
+  ```
 
 ---
 
-### 2.2 JavaScript 交互优化 (`renderer.js`)
+## 2. 系统高危安全漏洞修复
 
-1. **停用并清理拖拽事件**：
-   在 `renderer.js` 中，注销或删除在底部调用的 `initTaskPanelDrag();`。如果可以，也可直接删除或注释掉整个 `initTaskPanelDrag()` 函数的定义。
+### 2.1 修复 Session Token 泄露给第三方网站的风险
+* **漏洞描述**：
+  在 `renderer.js` 中，当 `dom-ready` 触发时，无差别地为所有 webview 注入了 `window.__workbenchSessionToken`。当用户在工作台打开不受信任的第三方网站（如 `type === "web"`）时，该网站的脚本即可获取该 Token，并通过本地 HTTP API 发送请求，接管本地服务或读取机密 Cookie。
+* **修改方案 (`renderer.js`)**：
+  仅在受信的本地 Web 应用（`type === "local-web"`）或访问本地服务的 webview 中注入 Token。
+  
+  请修改 `renderer.js` 中注入 Token 的逻辑：
+  ```javascript
+  webview.addEventListener("dom-ready", () => {
+    fitWebviewZoom();
+    const url = webview.getURL() || "";
+    // 仅在 local-web 应用或以本地服务 URL 开头时注入安全 Token
+    if (tab.type === "local-web" || url.startsWith("http://127.0.0.1:38924")) {
+      window.workbench.getSessionToken().then((token) => {
+        webview.executeJavaScript(`window.__workbenchSessionToken = "${token}";`).catch(() => {});
+      });
+    }
+  });
+  ```
 
-2. **点击面板外部自动收回**：
-   在 `renderer.js` 中，添加一个全局的 `document` 点击事件监听器。当点击事件发生在任务面板外部时，如果面板是打开状态，则自动将其关闭。
-   
-   在 `renderer.js` 的事件绑定区域（例如靠近 `elements.taskPanelOverlay?.addEventListener("click", closeTaskPanel);` 的地方）添加如下代码：
-   ```javascript
-   // 点击面板外部（包括顶栏其他按钮、侧边栏、终端等）时自动收回
-   document.addEventListener("click", (event) => {
-     const panel = document.getElementById("task-manager-panel");
-     const taskBtn = document.getElementById("menu-task-button");
-     
-     if (panel && panel.classList.contains("open")) {
-       // 如果点击目标既不在面板内，也不是任务按钮本身（或其子元素），则收起面板
-       if (!panel.contains(event.target) && event.target !== taskBtn && !taskBtn.contains(event.target)) {
-         closeTaskPanel();
-       }
-     }
-   });
-   ```
+### 2.2 修复静态文件服务路径穿越漏洞（Directory Traversal）
+* **漏洞描述**：
+  在 `main.js` 的 `/local-apps` 文件服务中，路径穿越校验使用了 `!targetPath.startsWith(path.resolve(baseDir))`。因为匹配没有加上路径分隔符，导致“同名前缀目录穿越”。例如，若 `baseDir` 为 `C:\Users\Public`，则攻击者可以读取 `C:\Users\Public-Secret\data.txt`。
+* **修改方案 (`main.js`)**：
+  在比对路径前缀时，必须追加平台目录分隔符 `path.sep`。
+  
+  请修改 `main.js` 中静态文件请求处理的相关路径安全比对逻辑（约第 517 行）：
+  ```javascript
+  const targetPath = path.resolve(baseDir, relPath);
+  const resolvedBase = path.resolve(baseDir);
+  // 确保比对前缀包含分隔符，保障绝对限定在目标目录树下
+  const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
+  if (!targetPath.startsWith(baseWithSep) && targetPath !== resolvedBase) {
+    sendJson(res, 403, { error: "Access denied" });
+    return;
+  }
+  ```
 
 ---
 
 ## 3. 验收标准
-1. 点击“任务”按钮，面板平滑滑下展示。
-2. 再次点击“任务”按钮，面板平滑收回。
-3. 面板展开时，点击界面上任何其他区域（顶栏的“终端”按钮、侧边栏、背景遮罩等），面板平滑收起。特别地，点击“终端”按钮不仅能收回面板，还应该能直接触发终端的打开/切换。
-4. 当面板关闭时，鼠标经过顶栏按钮（编辑、视图、终端等）能够正常显示悬停效果，且点击它们可以正常触发功能，没有任何遮挡和事件拦截。
-5. 面板底部不再显示拖动条，且不再支持拖动操作。
+1. 点击面板内删除任务，删除成功且面板**保持展开**。
+2. 面板关闭时点击顶栏“终端”或侧边栏正常工作，无点击失效或遮挡问题。
+3. 加载普通网页（如 `http://baidu.com`）时，其 `window.__workbenchSessionToken` 应该为 `undefined`，不可泄露凭证。
+4. 静态文件目录不可被穿越到具有同名前缀的邻近文件夹。
