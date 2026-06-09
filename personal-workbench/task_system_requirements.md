@@ -36,15 +36,21 @@
 * **漏洞描述**：
   在 `renderer.js` 中，当 `dom-ready` 触发时，无差别地为所有 webview 注入了 `window.__workbenchSessionToken`。当用户在工作台打开不受信任的第三方网站（如 `type === "web"`）时，该网站的脚本即可获取该 Token，并通过本地 HTTP API 发送请求，接管本地服务或读取机密 Cookie。
 * **修改方案 (`renderer.js`)**：
-  仅在受信的本地 Web 应用（`type === "local-web"`）或访问本地服务的 webview 中注入 Token。
+  仅在受信的本地 Web 应用（`type === "local-web"`）或访问本地服务器（如 `localhost` 或 `127.0.0.1` 的任意端口，用于支持开发者在其他端口启动本地服务进行跨会话通信）的 webview 中注入 Token。
   
   请修改 `renderer.js` 中注入 Token 的逻辑：
   ```javascript
   webview.addEventListener("dom-ready", () => {
     fitWebviewZoom();
     const url = webview.getURL() || "";
-    // 仅在 local-web 应用或以本地服务 URL 开头时注入安全 Token
-    if (tab.type === "local-web" || url.startsWith("http://127.0.0.1:38924")) {
+    const isLocalUrl = url.startsWith("http://127.0.0.1") || 
+                       url.startsWith("http://localhost") || 
+                       url.startsWith("https://127.0.0.1") || 
+                       url.startsWith("https://localhost");
+                       
+    // 仅在 local-web 应用或以本地环回地址 (localhost/127.0.0.1) 开头的服务中注入安全 Token
+    // 这既保证了跨会话数据流通总线 (SSE/State) 的正常使用，又避免了向外网第三方站点泄漏凭证
+    if (tab.type === "local-web" || isLocalUrl) {
       window.workbench.getSessionToken().then((token) => {
         webview.executeJavaScript(`window.__workbenchSessionToken = "${token}";`).catch(() => {});
       });
