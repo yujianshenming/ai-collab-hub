@@ -78,8 +78,65 @@
 
 ---
 
-## 3. 验收标准
+## 3. 新增任务暂停（Pause）与继续（Resume）功能
+
+为了支持多任务切换和挂起，需要为任务管理面板增加“暂停”和“继续”机制：
+
+### 3.1 状态与按钮渲染变化 (`renderer.js`)
+- 在 `taskStatusLabel` 中增加 `paused: "已暂停"` 状态。
+- 在 `renderWeeklyTasks()` 渲染任务动作时：
+  - 如果任务处于正在进行（`running`）或评估中（`evaluating`），不显示“执行”按钮，而是显示一个**“暂停”**按钮，点击调用 `pauseTaskAutomation(task.id)`。
+  - 如果任务处于已暂停（`paused`），不显示“执行”按钮，而是显示一个**“继续”**按钮，点击调用 `resumeTaskAutomation(task.id)`。
+  - 其他状态显示默认的**“执行”**按钮。
+
+### 3.2 样式支持 (`style.css`)
+- 在 `style.css` 中，为已暂停状态的 Badge 添加样式：
+  ```css
+  .status-paused {
+    color: #b45309;
+    background: #fffbeb;
+  }
+  ```
+
+### 3.3 逻辑方法实现 (`renderer.js`)
+- **防冲突检查**：在 `startTaskAutomation` 和 `resumeTaskAutomation` 入口处判断。如果当前有正在运行的活跃任务 (`pipelineState.active` 为 true)，应使用 `showToast` 提示：“当前已有正在运行的任务，请先暂停或结束当前任务。”并中断操作。
+- **暂停逻辑 `pauseTaskAutomation(id)`**：
+  1. 查找任务。如果 `pipelineState.active && pipelineState.taskId === id`，将当前的全局管线状态暂存入该任务对象：
+     ```javascript
+     task.chatLogPath = pipelineState.chatPath || "";
+     task.reportPath = pipelineState.reportPath || "";
+     task.taskFolder = pipelineState.taskFolder || "";
+     task.step = pipelineState.step || "testing";
+     ```
+  2. 将 `task.status` 设为 `"paused"`。
+  3. 重置全局 `pipelineState` 为未激活（`active: false, taskId: null, step: "idle", ...`）。
+  4. 调用 `updateActiveTaskMenu(null)` 隐藏进行中横幅。
+  5. 调用 `persistWeeklyTasks()` 和 `renderWeeklyTasks()`。
+- **继续逻辑 `resumeTaskAutomation(id)`**：
+  1. 检查防冲突限制。
+  2. 从任务中提取保存的字段并还原 `pipelineState`：
+     ```javascript
+     pipelineState = {
+       active: true,
+       taskId: id,
+       step: task.step || "testing",
+       chatPath: task.chatLogPath || "",
+       reportPath: task.reportPath || "",
+       taskFolder: task.taskFolder || "",
+       uploadQueue: []
+     };
+     ```
+  3. 还原任务状态：如果 `task.step === "evaluating"` 则设为 `"evaluating"`，否则设为 `"running"`。
+  4. 调用 `updateActiveTaskMenu(task)` 浮现横幅。
+  5. 调用 `persistWeeklyTasks()` 和 `renderWeeklyTasks()`。
+
+---
+
+## 4. 验收标准
 1. 点击面板内删除任务，删除成功且面板**保持展开**。
 2. 面板关闭时点击顶栏“终端”或侧边栏正常工作，无点击失效或遮挡问题。
 3. 加载普通网页（如 `http://baidu.com`）时，其 `window.__workbenchSessionToken` 应该为 `undefined`，不可泄露凭证。
 4. 静态文件目录不可被穿越到具有同名前缀的邻近文件夹。
+5. **任务暂停**：点击运行中任务的“暂停”，顶部横幅消失，任务状态变为“已暂停”（橙黄色 Badge），按钮变为“继续”。任务临时文件夹**不应被清理**。
+6. **任务继续**：点击暂停中任务的“继续”，如果此时无其他活跃任务，则正常恢复执行（横幅重新显现），状态还原；若此时有其他任务正在运行，则弹出防冲突警告并拦截。
+
