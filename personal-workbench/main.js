@@ -32,6 +32,25 @@ const sseClients = [];
 const sharedStateMap = new Map();
 let heartbeatInterval = null;
 
+function isAttachConsoleError(error) {
+  return /AttachConsole failed/i.test(String(error?.message || error || ""));
+}
+
+function reportTerminalError(error, channel = "terminal:data") {
+  const message = error?.message || String(error);
+  console.warn("Terminal initialization failed:", message);
+  sendToRenderer(channel, `\r\n[启动终端失败: ${message}]\r\n`);
+}
+
+process.on("uncaughtException", (error) => {
+  if (isAttachConsoleError(error)) {
+    reportTerminalError(error);
+    return;
+  }
+  console.error("Unhandled main process exception:", error);
+  throw error;
+});
+
 
 let resolvedScriptPath = "";
 
@@ -286,12 +305,18 @@ function startTerminal(size = {}) {
   if (terminalProcess) return;
 
   updateTerminalSize(size);
-  terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
-    cols: lastTerminalSize.cols,
-    rows: lastTerminalSize.rows,
-    cwd: os.homedir(),
-    env: { ...process.env, TERM: "xterm-256color" }
-  });
+  try {
+    terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
+      cols: lastTerminalSize.cols,
+      rows: lastTerminalSize.rows,
+      cwd: os.homedir(),
+      env: { ...process.env, TERM: "xterm-256color" }
+    });
+  } catch (error) {
+    terminalProcess = null;
+    reportTerminalError(error);
+    return;
+  }
 
   terminalProcess.onData((data) => sendToRenderer("terminal:data", data));
   terminalProcess.onExit(({ exitCode }) => {
