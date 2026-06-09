@@ -2314,61 +2314,19 @@ document.addEventListener("keydown", (event) => {
 // Close task panel on overlay click
 elements.taskPanelOverlay?.addEventListener("click", closeTaskPanel);
 
-function initTaskPanelDrag() {
-  let isDragging = false;
-  let startY = 0;
-  let startX = 0;
-  
-  const handle = document.querySelector(".task-panel-handle");
-  const panel = document.getElementById("task-manager-panel");
-  
-  if (!handle || !panel) return;
-  
-  handle.addEventListener("pointerdown", (e) => {
-    isDragging = true;
-    startY = e.clientY;
-    startX = e.clientX;
-    handle.setPointerCapture(e.pointerId);
-    panel.style.transition = "none"; // disable transition during drag
-  });
-  
-  handle.addEventListener("pointermove", (e) => {
-    if (!isDragging) return;
-    const diffY = e.clientY - startY;
-    if (diffY < 0) {
-      panel.style.transform = `translateY(${diffY}px)`;
-    }
-  });
-  
-  handle.addEventListener("pointerup", (e) => {
-    if (!isDragging) return;
-    isDragging = false;
-    handle.releasePointerCapture(e.pointerId);
-    panel.style.transition = ""; // restore transition
-    
-    const diffY = e.clientY - startY;
-    const diffX = e.clientX - startX;
-    const dragDistance = Math.hypot(diffX, diffY);
-    
-    if (dragDistance < 5) {
-      closeTaskPanel();
-    } else if (diffY <= -80) {
-      closeTaskPanel();
-    } else {
-      panel.style.transform = "";
-    }
-  });
-  
-  handle.addEventListener("pointercancel", () => {
-    isDragging = false;
-    panel.style.transition = "";
-    panel.style.transform = "";
-  });
-}
+document.addEventListener("click", (event) => {
+  const panel = elements.taskPanel;
+  if (!panel?.classList.contains("open")) return;
+
+  const taskButton = elements.menuTaskButton;
+  const target = event.target;
+  if (panel.contains(target) || taskButton?.contains(target)) return;
+
+  closeTaskPanel();
+});
 
 initTerminal();
 renderTabs();
-initTaskPanelDrag();
 window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();
