@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("workbench", {
     ipcRenderer.on("task-folder-changed", listener);
     return () => ipcRenderer.removeListener("task-folder-changed", listener);
   },
+  pickSystemFiles: () => ipcRenderer.invoke("dialog:pick-files"),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

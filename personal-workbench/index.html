@@ -306,6 +306,26 @@
       </form>
     </dialog>
 
+    <dialog id="file-pick-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <span class="eyebrow">File Bus</span>
+          <h2>选择要注入的任务文件</h2>
+        </div>
+        <button id="file-pick-close" class="icon-button" type="button" aria-label="取消">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="helper-text">当前网页请求选择文件。从任务文件夹中勾选要上传的文件（可多选），或改用系统选择器。</p>
+      <div id="file-pick-list" class="file-pick-list"></div>
+      <div class="modal-actions">
+        <button id="file-pick-system" class="secondary-button" type="button">改用系统选择器</button>
+        <span class="action-spacer"></span>
+        <button id="file-pick-cancel" class="secondary-button" type="button">取消</button>
+        <button id="file-pick-inject" class="primary-button" type="button" disabled>注入所选文件</button>
+      </div>
+    </dialog>
+
     <dialog id="tab-dialog" class="modal">
       <form id="tab-form" method="dialog">
         <div class="modal-heading">

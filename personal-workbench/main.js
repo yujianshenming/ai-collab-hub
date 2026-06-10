@@ -986,6 +986,13 @@ function registerIpc() {
     } catch {}
     return entries;
   });
+  // 上传浮层 fallback：系统文件选择器（用户主动选择，结果直接回注 webview）
+  ipcMain.handle("dialog:pick-files", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile", "multiSelections"]
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
   // 托盘文件操作：打开 / 资源管理器定位 / 删除，全部限制在 temp/tasks 内
   ipcMain.handle("tasks:file-action", (_event, payload = {}) => {
     const target = resolveTaskPath(payload.filePath);

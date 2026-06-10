@@ -1376,6 +1376,45 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 .ra-act:hover { background: var(--bg-sunken); color: var(--text-primary); }
 .ra-act.danger:hover { background: var(--danger-bg); color: var(--danger); }
 
+/* ===== 上传注入浮层 ===== */
+.file-pick-list { max-height: 320px; overflow-y: auto; margin: 4px 0 2px; }
+.fp-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 9px;
+  margin-bottom: 7px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+.fp-row:hover { border-color: var(--border-strong); }
+.fp-row.selected { border-color: var(--primary); background: var(--primary-light); }
+.fp-check {
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  color: transparent;
+  background: var(--bg-surface);
+}
+.fp-row.selected .fp-check { background: var(--primary); border-color: var(--primary); color: white; }
+.fp-empty {
+  padding: 22px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  border: 1px dashed var(--border-color);
+  border-radius: 10px;
+}
+
 /* 底部操作区 */
 .rail-actions {
   flex: 0 0 auto;

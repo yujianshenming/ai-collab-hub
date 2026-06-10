@@ -131,7 +131,13 @@ const elements = {
   railArtifacts: document.querySelector("#rail-artifacts"),
   railHermes: document.querySelector("#rail-hermes"),
   railPause: document.querySelector("#rail-pause"),
-  railFinish: document.querySelector("#rail-finish")
+  railFinish: document.querySelector("#rail-finish"),
+  filePickDialog: document.querySelector("#file-pick-dialog"),
+  filePickList: document.querySelector("#file-pick-list"),
+  filePickInject: document.querySelector("#file-pick-inject"),
+  filePickSystem: document.querySelector("#file-pick-system"),
+  filePickCancel: document.querySelector("#file-pick-cancel"),
+  filePickClose: document.querySelector("#file-pick-close")
 };
 
 function readTabs() {
@@ -1796,12 +1802,99 @@ async function updateTaskFields(id, fields) {
 
 function setupWebviewUploadInterceptor(webview) {
   webview.addEventListener("select-file-dialog", (event) => {
-    if (!pipelineState.active || !pipelineState.uploadQueue.length) return;
-    const nextPath = pipelineState.uploadQueue.shift();
-    if (!nextPath) return;
+    // 无活动任务：不拦截，保持系统选择器原行为
+    if (!pipelineState.active) return;
+    // 评估流水线自动注入优先（现有行为不变，不弹浮层）
+    if (pipelineState.uploadQueue.length) {
+      const nextPath = pipelineState.uploadQueue.shift();
+      if (!nextPath) return;
+      event.preventDefault();
+      event.callback([nextPath]);
+      return;
+    }
     event.preventDefault();
-    event.callback([nextPath]);
+    if (pendingFilePick) {
+      // 已有未完成的选择请求，直接取消新请求防止回调悬挂
+      event.callback([]);
+      return;
+    }
+    openFilePickOverlay(event.callback);
   });
+}
+
+// ===== 全局上传注入浮层 =====
+let pendingFilePick = null;
+let filePickSelection = new Set();
+
+function resolveFilePick(paths) {
+  const callback = pendingFilePick;
+  pendingFilePick = null;
+  if (callback) {
+    try { callback(paths); } catch (error) { console.warn("文件注入回调失败:", error); }
+  }
+  if (elements.filePickDialog.open) elements.filePickDialog.close();
+}
+
+function updateFilePickInjectButton() {
+  elements.filePickInject.disabled = !filePickSelection.size;
+  elements.filePickInject.textContent = filePickSelection.size
+    ? `注入所选文件 (${filePickSelection.size})`
+    : "注入所选文件";
+}
+
+async function openFilePickOverlay(callback) {
+  pendingFilePick = callback;
+  filePickSelection = new Set();
+  updateFilePickInjectButton();
+  elements.filePickList.replaceChildren();
+
+  const folder = pipelineState.taskFolder || "";
+  let files = [];
+  if (folder) {
+    try {
+      files = (await window.workbench.listTaskFiles(folder)) || [];
+    } catch (error) {
+      console.warn("读取任务文件失败:", error);
+    }
+  }
+  if (!pendingFilePick) return;
+
+  if (files.length) {
+    for (const file of files.sort((a, b) => b.mtime - a.mtime)) {
+      const row = document.createElement("button");
+      row.className = "fp-row";
+      row.type = "button";
+      row.innerHTML = `
+        <span class="fp-check" aria-hidden="true">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+        <span class="ra-ico">${fileKindSvg(file.name)}</span>
+        <span class="ra-info">
+          <span class="ra-name">${escapeHtml(file.relPath || file.name)}</span>
+          <span class="ra-sub">${escapeHtml(`${formatFileSize(file.size)} · ${formatFileTime(file.mtime)}`)}</span>
+        </span>
+      `;
+      row.addEventListener("click", () => {
+        if (filePickSelection.has(file.path)) {
+          filePickSelection.delete(file.path);
+          row.classList.remove("selected");
+        } else {
+          filePickSelection.add(file.path);
+          row.classList.add("selected");
+        }
+        updateFilePickInjectButton();
+      });
+      elements.filePickList.append(row);
+    }
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "fp-empty";
+    empty.textContent = "任务文件夹暂无文件。可改用系统选择器。";
+    elements.filePickList.append(empty);
+  }
+
+  setWebviewPointerEvents(false);
+  elements.filePickDialog.showModal();
 }
 
 function findTabByUrlPart(part) {
@@ -2178,6 +2271,29 @@ elements.railPause?.addEventListener("click", () => {
   if (pipelineState.taskId) pauseTaskAutomation(pipelineState.taskId);
 });
 elements.railFinish?.addEventListener("click", () => finishActiveTask());
+elements.filePickInject?.addEventListener("click", () => {
+  if (filePickSelection.size) resolveFilePick([...filePickSelection]);
+});
+elements.filePickSystem?.addEventListener("click", async () => {
+  try {
+    const paths = await window.workbench.pickSystemFiles();
+    resolveFilePick(Array.isArray(paths) ? paths : []);
+  } catch (error) {
+    console.error("系统选择器调用失败:", error);
+    resolveFilePick([]);
+  }
+});
+elements.filePickCancel?.addEventListener("click", () => resolveFilePick([]));
+elements.filePickClose?.addEventListener("click", () => resolveFilePick([]));
+// ESC / dialog 关闭 = 取消本次选择；恢复 webview 指针事件
+elements.filePickDialog?.addEventListener("close", () => {
+  setWebviewPointerEvents(true);
+  if (pendingFilePick) {
+    const callback = pendingFilePick;
+    pendingFilePick = null;
+    try { callback([]); } catch {}
+  }
+});
 document.querySelector("#sidebar-toggle").addEventListener("click", () => {
   setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
 });
