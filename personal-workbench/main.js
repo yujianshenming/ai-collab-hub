@@ -877,6 +877,15 @@ function registerIpc() {
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return res;
   });
+  // 打开任务产物文件夹：仅允许 temp/tasks 下的路径，防止路径穿越
+  ipcMain.handle("tasks:open-folder", (_event, folderPath) => {
+    const tasksRoot = path.resolve(downloadRoot, "tasks");
+    const target = path.resolve(String(folderPath || ""));
+    if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return false;
+    if (!fs.existsSync(target)) return false;
+    shell.openPath(target);
+    return true;
+  });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
     return getWorkbenchCookies(details);

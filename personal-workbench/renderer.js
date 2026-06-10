@@ -2,17 +2,38 @@ const DEFAULT_TABS = [
   { id: "evaluation", name: "评估", url: "https://www.wl363eval.top/" }
 ];
 
+// 流水线 5 步统一模型：所有 stepper/进度条/芯片均从此常量派生，禁止散落硬编码
+const PIPELINE_STEPS = [
+  { key: "prepare",    name: "准备",        desc: "建立任务文件夹" },
+  { key: "testing",    name: "本地测试",    desc: "生成 dialogue.json" },
+  { key: "evaluating", name: "评估上传",    desc: "评估平台自动注入" },
+  { key: "report",     name: "捕获报告",    desc: "自动拦截下载归档" },
+  { key: "hermes",     name: "Hermes 诊断", desc: "一键载入产物路径" }
+];
+
+// 历史数据中的旧步骤值归一映射到统一 key
+function normalizePipelineStep(step) {
+  if (step === "analysis") return "report";
+  return PIPELINE_STEPS.some((item) => item.key === step) ? step : "testing";
+}
+
+function pipelineStepIndex(step) {
+  return PIPELINE_STEPS.findIndex((item) => item.key === normalizePipelineStep(step));
+}
+
+// 任务中心作为特殊内置视图的伪标签 id
+const TASK_CENTER_ID = "__taskcenter__";
+
 const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
 let tabs = readTabs();
-let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
+let activeTabId = TASK_CENTER_ID;
 let rightSplitTabId = null;
 let bottomSplitTabId = null;
 let terminal;
 let fitAddon;
 let pointerDrag = null;
 let weeklyTasks = [];
-let taskViewMode = "list";
 let pipelineState = {
   active: false,
   taskId: null,
@@ -71,22 +92,32 @@ const elements = {
   bottomSidebarTitle: document.querySelector("#bottom-sidebar-title"),
   bottomSidebarClose: document.querySelector("#bottom-sidebar-close"),
   bottomSidebarBody: document.querySelector("#bottom-sidebar-body"),
-  taskPanel: document.querySelector("#task-manager-panel"),
-  taskPanelOverlay: document.querySelector("#task-panel-overlay"),
-  taskListView: document.querySelector("#task-list-view"),
-  taskFormView: document.querySelector("#task-form"),
-  taskFormTitle: document.querySelector("#task-form-title"),
-  taskForm: document.querySelector("#task-form"),
-  taskTableBody: document.querySelector("#task-table-body"),
-  addNewTask: document.querySelector("#btn-add-new-task"),
-  menuTaskButton: document.querySelector("#menu-task-button"),
-  menuTerminalButton: document.querySelector("#menu-terminal-button"),
+  workspace: document.querySelector(".workspace"),
+  crumbSub: document.querySelector("#crumb-sub"),
+  addressBar: document.querySelector("#address-bar"),
+  reloadButton: document.querySelector("#reload-button"),
+  menuMorePop: document.querySelector("#menu-more-pop"),
+  menuMoreButton: document.querySelector("#menu-more-button"),
   menuSettingsButton: document.querySelector("#menu-settings-button"),
   menuReloadButton: document.querySelector("#menu-reload-button"),
-  activeTaskBanner: document.querySelector("#active-task-banner"),
-  activeTaskText: document.querySelector("#active-task-text"),
-  activeTaskFinish: document.querySelector("#active-task-finish"),
-  activeTaskHermes: document.querySelector("#active-task-hermes")
+  navTaskCenter: document.querySelector("#nav-task-center"),
+  taskCenterBadge: document.querySelector("#task-center-badge"),
+  taskCenterView: document.querySelector("#task-center-view"),
+  homeWeekSub: document.querySelector("#home-week-sub"),
+  statTotal: document.querySelector("#stat-total"),
+  statRunning: document.querySelector("#stat-running"),
+  statPaused: document.querySelector("#stat-paused"),
+  statCompleted: document.querySelector("#stat-completed"),
+  focusCard: document.querySelector("#focus-card"),
+  taskGridActive: document.querySelector("#task-grid-active"),
+  taskGridDone: document.querySelector("#task-grid-done"),
+  taskDialog: document.querySelector("#task-dialog"),
+  taskFormTitle: document.querySelector("#task-form-title"),
+  taskForm: document.querySelector("#task-form"),
+  addNewTask: document.querySelector("#btn-add-new-task"),
+  sbTerminal: document.querySelector("#sb-terminal"),
+  sbTaskChip: document.querySelector("#sb-task-chip"),
+  sbTaskChipText: document.querySelector("#sb-task-chip-text")
 };
 
 function readTabs() {
@@ -152,7 +183,7 @@ function renderTabs() {
     const header = document.createElement("div");
     header.className = "category-header";
     header.innerHTML = `
-      <span class="category-toggle-icon">▼</span>
+      <span class="category-toggle-icon"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></span>
       <span class="category-title">${CATEGORY_MAP[catId].name}</span>
       <span class="category-badge">${catTabs.length}</span>
     `;
@@ -175,7 +206,9 @@ function renderTabs() {
           <span class="tab-icon">${iconForTab(tab.name)}</span>
           <span>${tab.name}</span>
         </button>
-        <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
+        <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
       `;
       item.querySelector(".tab-menu").addEventListener("click", (e) => {
         e.stopPropagation();
@@ -199,11 +232,46 @@ function renderTabs() {
     if (!tabs.some((tab) => tab.id === viewport.dataset.id)) viewport.remove();
   });
 
-  // Activate active tab
-  const validActiveTabId = tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0]?.id;
+  updateSidebarPulse();
+
+  // Activate active tab（任务中心是合法的特殊视图）
+  const validActiveTabId = activeTabId === TASK_CENTER_ID || tabs.some((tab) => tab.id === activeTabId)
+    ? activeTabId
+    : tabs[0]?.id;
   if (validActiveTabId) {
     activateTab(validActiveTabId);
   }
+}
+
+// 流程当前停留的标签页（评估上传 → 评估平台标签；Hermes 诊断 → Hermes 标签）
+function pipelineFocusTabId() {
+  if (!pipelineState.active) return null;
+  const step = normalizePipelineStep(pipelineState.step);
+  if (step === "evaluating") {
+    const evalTab = tabs.find((tab) => tab.id === "evaluation") || findTabByUrlPart("wl363eval");
+    return evalTab?.id || null;
+  }
+  if (step === "hermes") {
+    return findTabByUrlPart("hermes")?.id || null;
+  }
+  return null;
+}
+
+function updateSidebarPulse() {
+  const focusTabId = pipelineFocusTabId();
+  document.querySelectorAll(".tab-item").forEach((item) => {
+    const existing = item.querySelector(".running-pulse");
+    if (item.dataset.id === focusTabId) {
+      if (!existing) {
+        const dot = document.createElement("span");
+        dot.className = "running-pulse";
+        dot.title = "任务流程正在此页进行";
+        item.append(dot);
+      }
+    } else if (existing) {
+      existing.remove();
+    }
+  });
 }
 
 function clearDragState() {
@@ -261,11 +329,11 @@ function createTabViewport(tab) {
     webview.setAttribute("webpreferences", "contextIsolation=no");
 
     webview.addEventListener("did-start-loading", () => {
-      if (tab.id === activeTabId) document.querySelector("#reload-button").textContent = "×";
+      if (tab.id === activeTabId) elements.reloadButton.classList.add("loading");
     });
     webview.addEventListener("did-stop-loading", () => {
       if (tab.id === activeTabId) {
-        document.querySelector("#reload-button").textContent = "↻";
+        elements.reloadButton.classList.remove("loading");
         updateAddressFromWebview(webview);
       }
     });
@@ -811,32 +879,39 @@ function activateTab(id) {
   if (isActivatingTab) return;
   isActivatingTab = true;
   try {
-    if (rightSplitTabId === id) {
-      rightSplitTabId = activeTabId;
-    } else if (bottomSplitTabId === id) {
-      bottomSplitTabId = activeTabId;
-    }
+    const isTaskCenter = id === TASK_CENTER_ID;
+    if (!isTaskCenter) {
+      if (rightSplitTabId === id) {
+        rightSplitTabId = activeTabId === TASK_CENTER_ID ? null : activeTabId;
+      } else if (bottomSplitTabId === id) {
+        bottomSplitTabId = activeTabId === TASK_CENTER_ID ? null : activeTabId;
+      }
 
-    // Prevent duplicate references
-    if (rightSplitTabId === bottomSplitTabId) {
-      bottomSplitTabId = null;
+      // Prevent duplicate references
+      if (rightSplitTabId && rightSplitTabId === bottomSplitTabId) {
+        bottomSplitTabId = null;
+      }
     }
 
     activeTabId = id;
     localStorage.setItem("personal_workbench_active", id);
-    const tab = tabs.find((candidate) => candidate.id === id);
-    if (!tab) return;
+    const tab = isTaskCenter ? null : tabs.find((candidate) => candidate.id === id);
+    if (!isTaskCenter && !tab) return;
 
     // Auto-expand category if collapsed
-    const category = getTabCategory(tab);
-    if (collapsedCategories[category]) {
-      collapsedCategories[category] = false;
-      localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
-      renderTabs();
+    if (tab) {
+      const category = getTabCategory(tab);
+      if (collapsedCategories[category]) {
+        collapsedCategories[category] = false;
+        localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
+        renderTabs();
+      }
     }
 
+    elements.workspace.classList.toggle("task-center-active", isTaskCenter);
+    elements.navTaskCenter?.classList.toggle("active", isTaskCenter);
     document.querySelectorAll(".tab-item").forEach((item) => {
-      item.classList.toggle("active", item.dataset.id === id);
+      item.classList.toggle("active", !isTaskCenter && item.dataset.id === id);
       item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
     });
 
@@ -866,21 +941,15 @@ function activateTab(id) {
       }
     });
 
-    elements.activeTitle.textContent = tab.name;
-    let currentUrl = tab.url || "";
-    if (tab.type === "web" || tab.type === "local-web" || !tab.type) {
-      try {
-        currentUrl = activeWebview()?.getURL?.() || tab.url || "";
-      } catch (error) {
-        console.warn("获取 Webview URL 失败:", error);
-      }
+    updateTopbarForActive(tab);
+    if (isTaskCenter) {
+      renderTaskCenter();
     }
-    elements.addressInput.value = currentUrl;
     updateActiveTabInfo();
     fitWebviewZoom();
 
     // If CLI app, fit and focus it
-    if (tab.type === "cli-app") {
+    if (tab && tab.type === "cli-app") {
       setTimeout(() => {
         const termObj = tabTerminals.get(id);
         if (termObj) {
@@ -922,6 +991,31 @@ function activateTab(id) {
   }
 }
 
+// 顶栏面包屑与地址栏显隐：任务中心隐藏地址栏，webview 标签显示地址栏
+function updateTopbarForActive(tab = null) {
+  if (!tab) {
+    const total = weeklyTasks.length;
+    const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
+    elements.activeTitle.textContent = "任务中心";
+    elements.crumbSub.textContent = `本周 ${total} 项 · 进行中 ${running} 项`;
+    elements.addressBar.style.display = "";
+    return;
+  }
+  elements.activeTitle.textContent = tab.name;
+  const isWebTab = tab.type === "web" || tab.type === "local-web" || !tab.type;
+  elements.crumbSub.textContent = CATEGORY_MAP[getTabCategory(tab)]?.name || "";
+  elements.addressBar.style.display = isWebTab ? "flex" : "none";
+  if (isWebTab) {
+    let currentUrl = tab.url || "";
+    try {
+      currentUrl = activeWebview()?.getURL?.() || tab.url || "";
+    } catch (error) {
+      console.warn("获取 Webview URL 失败:", error);
+    }
+    elements.addressInput.value = currentUrl;
+  }
+}
+
 function fitWebviewZoom() {
   document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
     const webview = viewport.querySelector(".tab-webview");
@@ -947,6 +1041,10 @@ function updateAddressFromWebview(webview) {
 }
 
 function updateActiveTabInfo() {
+  if (activeTabId === TASK_CENTER_ID) {
+    window.workbench.updateActiveTabInfo({ url: "", title: "任务中心" });
+    return;
+  }
   const tab = tabs.find((candidate) => candidate.id === activeTabId);
   let activeUrl = "";
   try {
@@ -1031,6 +1129,7 @@ function initTerminal() {
 function toggleTerminal(force) {
   const open = typeof force === "boolean" ? force : !elements.terminalPanel.classList.contains("open");
   elements.terminalPanel.classList.toggle("open", open);
+  elements.sbTerminal?.classList.toggle("on", open);
   if (open) {
     setTimeout(() => {
       fitAddon.fit();
@@ -1076,20 +1175,37 @@ function taskTypeLabel(type) {
 function updateActiveTaskMenu(task = null) {
   if (!task) {
     window.workbench.updateActiveTaskInfo({});
-    elements.activeTaskBanner.hidden = true;
-    elements.activeTaskText.textContent = "";
-    elements.activeTaskHermes.hidden = true;
+  } else {
+    window.workbench.updateActiveTaskInfo({
+      school: task.school || "",
+      course: task.course || "",
+      taskType: task.taskType || "",
+      taskTypeLabel: taskTypeLabel(task.taskType),
+      folderPath: pipelineState.taskFolder || task.taskFolder || ""
+    });
+  }
+  updateStatusbarChip(task);
+  updateSidebarPulse();
+  renderTaskCenter();
+}
+
+// 学校名缩写：去掉常见后缀，保留前 6 个字符
+function schoolShortName(school = "") {
+  const trimmed = school.replace(/(职业技术学院|职业学院|大学|学院)$/, "") || school;
+  return trimmed.slice(0, 6);
+}
+
+function updateStatusbarChip(task = null) {
+  const active = Boolean(task && pipelineState.active);
+  elements.sbTaskChip.hidden = !active;
+  if (!active) {
+    elements.sbTaskChipText.textContent = "";
     return;
   }
-  elements.activeTaskText.textContent = `🏃 正在进行任务: ${task.school || ""} - ${task.course || ""} (${taskTypeLabel(task.taskType)})`;
-  elements.activeTaskBanner.hidden = false;
-  window.workbench.updateActiveTaskInfo({
-    school: task.school || "",
-    course: task.course || "",
-    taskType: task.taskType || "",
-    taskTypeLabel: taskTypeLabel(task.taskType),
-    folderPath: pipelineState.taskFolder || task.taskFolder || ""
-  });
+  const index = pipelineStepIndex(pipelineState.step);
+  const stepName = PIPELINE_STEPS[index]?.name || "";
+  elements.sbTaskChipText.textContent =
+    `${schoolShortName(task.school)} · ${task.course || ""} — ${stepName} ${index + 1}/${PIPELINE_STEPS.length}`;
 }
 
 async function finishActiveTask() {
@@ -1112,57 +1228,24 @@ function taskStatusLabel(status) {
   }[status] || "待处理";
 }
 
-function switchTaskModalView(mode) {
-  taskViewMode = mode === "form" ? "form" : "list";
-  elements.taskListView?.classList.toggle("hidden", taskViewMode !== "list");
-  elements.taskFormView?.classList.toggle("hidden", taskViewMode !== "form");
+// 任务表单：居中 dialog（复用原字段与校验）
+function openTaskForm(task = null) {
+  resetTaskForm();
+  if (task) {
+    document.querySelector("#task-id").value = task.id;
+    document.querySelector("#task-school").value = task.school || "";
+    document.querySelector("#task-course").value = task.course || "";
+    document.querySelector("#task-type").value = task.taskType || "capability-setup";
+    document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
+    document.querySelector("#task-owner").value = task.owner || "";
+    elements.taskFormTitle.textContent = "编辑任务";
+  }
+  elements.taskDialog.showModal();
+  document.querySelector("#task-school").focus();
 }
 
-async function openTaskPanel() {
-  if (elements.taskPanel?.classList.contains("open")) {
-    closeTaskPanel();
-    return;
-  }
-  
-  // Record trigger element
-  if (elements.taskPanel) {
-    elements.taskPanel.dataset.triggerId = document.activeElement?.id || "";
-  }
-  
-  await loadWeeklyTasks();
-  switchTaskModalView("list");
-  
-  elements.taskPanel?.classList.add("open");
-  elements.taskPanelOverlay?.classList.add("open");
-  
-  // Disable webview pointer events to prevent interaction leakage
-  setWebviewPointerEvents(false);
-  
-  // Accessibility focus trap: focus close button
-  const closeBtn = elements.taskPanel?.querySelector(".task-close");
-  closeBtn?.focus();
-}
-
-function closeTaskPanel() {
-  elements.taskPanel?.classList.remove("open");
-  elements.taskPanelOverlay?.classList.remove("open");
-  
-  if (elements.taskPanel) {
-    elements.taskPanel.style.transform = "";
-  }
-  
-  // Re-enable webview pointer events
-  setWebviewPointerEvents(true);
-  
-  // Restore focus
-  if (elements.taskPanel) {
-    const triggerId = elements.taskPanel.dataset.triggerId;
-    if (triggerId) {
-      const triggerEl = document.getElementById(triggerId);
-      triggerEl?.focus();
-    }
-  }
-  
+function closeTaskForm() {
+  elements.taskDialog.close();
   resetTaskForm();
 }
 
@@ -1186,13 +1269,13 @@ function normalizeWeeklyTask(task = {}) {
     chatLogPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
     taskFolder: task.taskFolder || "",
-    step: task.step || "testing"
+    step: normalizePipelineStep(task.step)
   };
 }
 
 async function persistWeeklyTasks() {
   weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks.map(normalizeWeeklyTask));
-  renderWeeklyTasks();
+  renderTaskCenter();
 }
 
 async function loadWeeklyTasks() {
@@ -1203,58 +1286,211 @@ async function loadWeeklyTasks() {
     weeklyTasks = [];
     showToast("读取任务列表失败", "error");
   }
-  renderWeeklyTasks();
+  renderTaskCenter();
 }
 
-function taskArtifactSummary(task) {
-  const parts = [];
-  if (task.chatLogPath) parts.push("对话");
-  if (task.reportPath) parts.push("报告");
-  return parts.join(" / ") || "-";
+function getIsoWeekNumber(date = new Date()) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNumber = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNumber);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  return Math.ceil(((target - yearStart) / 86400000 + 1) / 7);
 }
 
-function renderWeeklyTasks() {
-  if (!elements.taskTableBody) return;
-  elements.taskTableBody.replaceChildren();
+// 任务当前进度：返回 { index, label, ratio, barClass }
+function taskProgressInfo(task) {
+  if (task.status === "completed") {
+    return { label: `${PIPELINE_STEPS.length}/${PIPELINE_STEPS.length} 全部完成`, ratio: 1, barClass: "full" };
+  }
+  if (task.status === "pending") {
+    return { label: `0/${PIPELINE_STEPS.length} 未开始`, ratio: 0, barClass: "" };
+  }
+  const isActiveTask = pipelineState.active && pipelineState.taskId === task.id;
+  const step = isActiveTask ? pipelineState.step : task.step;
+  const index = pipelineStepIndex(step);
+  const stepNumber = index + 1;
+  return {
+    label: `${stepNumber}/${PIPELINE_STEPS.length} ${PIPELINE_STEPS[index]?.name || ""}`,
+    ratio: stepNumber / PIPELINE_STEPS.length,
+    barClass: task.status === "paused" ? "warn" : ""
+  };
+}
 
-  if (!weeklyTasks.length) {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td class="task-empty" colspan="7">暂无任务。点击下方按钮添加本周任务。</td>`;
-    elements.taskTableBody.append(row);
+function svgIcon(name, size = 14) {
+  const bodies = {
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    dots: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+    folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+  };
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${bodies[name] || ""}</svg>`;
+}
+
+function pipelineStepperHtml(currentStep) {
+  const currentIndex = pipelineStepIndex(currentStep);
+  return `<div class="pipeline">${PIPELINE_STEPS.map((step, index) => {
+    const state = index < currentIndex ? "done" : (index === currentIndex ? "now" : "");
+    const dot = index < currentIndex ? svgIcon("check", 12) : String(index + 1);
+    return `
+      <div class="pl-step ${state}">
+        <div class="pl-dot">${dot}</div>
+        <div class="pl-name">${escapeHtml(step.name)}</div>
+        <div class="pl-sub">${escapeHtml(step.desc)}</div>
+      </div>`;
+  }).join("")}</div>`;
+}
+
+function renderFocusCard() {
+  const card = elements.focusCard;
+  const task = pipelineState.active ? weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) : null;
+  if (!task) {
+    card.hidden = true;
+    card.replaceChildren();
     return;
   }
+  const folder = pipelineState.taskFolder || task.taskFolder || "";
+  card.innerHTML = `
+    <div class="focus-head">
+      <span class="live-dot"></span>
+      <h2>${escapeHtml(task.school)} · ${escapeHtml(task.course)}</h2>
+      <span class="chip">${escapeHtml(taskTypeLabel(task.taskType))} × ${Number(task.quantity) || 1}</span>
+      <div class="actions">
+        <button class="btn btn-ghost btn-sm focus-pause" type="button">暂停</button>
+        <button class="btn btn-ghost btn-sm focus-detail" type="button">查看详情</button>
+      </div>
+    </div>
+    <div class="focus-meta">负责人 ${escapeHtml(task.owner || "未指定")} · 任务文件夹 <code>${escapeHtml(folder || "尚未创建")}</code></div>
+    ${pipelineStepperHtml(pipelineState.step)}
+  `;
+  card.querySelector(".focus-pause").addEventListener("click", () => pauseTaskAutomation(task.id));
+  card.querySelector(".focus-detail").addEventListener("click", () => {
+    if (folder) window.workbench.openTaskFolder(folder);
+  });
+  card.hidden = false;
+}
 
-  for (const task of weeklyTasks) {
-    const row = document.createElement("tr");
-    row.dataset.id = task.id;
-    row.innerHTML = `
-      <td>
+function closeAllCardMenus() {
+  document.querySelectorAll(".tc-menu-pop.open").forEach((pop) => pop.classList.remove("open"));
+}
+
+function taskCardElement(task) {
+  const card = document.createElement("div");
+  card.className = `task-card${task.status === "completed" ? " completed" : ""}`;
+  card.dataset.id = task.id;
+  const progress = taskProgressInfo(task);
+  const chips = [];
+  if (task.chatLogPath) chips.push('<span class="file-chip">dialogue.json</span>');
+  if (task.reportPath) chips.push('<span class="file-chip">eval_report.pdf</span>');
+  const chipsHtml = chips.length ? chips.join("") : '<span class="file-chip empty">尚无产物</span>';
+
+  let mainAction = "";
+  if (task.status === "paused") {
+    mainAction = '<button class="btn btn-teal btn-sm task-resume" type="button">继续</button>';
+  } else if (task.status === "completed") {
+    mainAction = '<button class="btn btn-ghost btn-sm task-open-folder" type="button">打开产物文件夹</button>';
+  } else {
+    mainAction = '<button class="btn btn-cta btn-sm task-run" type="button">执行</button>';
+  }
+
+  card.innerHTML = `
+    <div class="tc-top">
+      <div class="tc-title">
         <strong>${escapeHtml(task.school)}</strong>
-        <span>${escapeHtml(task.course)}</span>
-      </td>
-      <td>${escapeHtml(taskTypeLabel(task.taskType))}</td>
-      <td>${Number(task.quantity) || 1}</td>
-      <td><span class="task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span></td>
-      <td>${escapeHtml(task.owner)}</td>
-      <td><span class="task-path" title="${escapeHtml([task.chatLogPath, task.reportPath].filter(Boolean).join("\\n"))}">${escapeHtml(taskArtifactSummary(task))}</span></td>
-      <td>
-        <div class="task-actions">
-          ${(task.status === "running" || task.status === "evaluating")
-            ? `<button class="secondary-button task-pause" type="button">暂停</button>`
-            : (task.status === "paused"
-              ? `<button class="secondary-button task-resume" type="button">继续</button>`
-              : `<button class="secondary-button task-run" type="button">执行</button>`)}
-          <button class="secondary-button task-edit" type="button">编辑</button>
-          <button class="danger-button task-delete" type="button">删除</button>
+        <span>${escapeHtml(task.course)} · ${escapeHtml(taskTypeLabel(task.taskType))}</span>
+      </div>
+      <span class="tc-status task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span>
+    </div>
+    <div class="tc-meta"><span>负责人 <b>${escapeHtml(task.owner || "未指定")}</b></span><span>数量 <b>${Number(task.quantity) || 1}</b></span></div>
+    <div class="tc-progress">
+      <div class="tc-bar ${progress.barClass}"><i style="width:${Math.round(progress.ratio * 100)}%"></i></div>
+      <span>${escapeHtml(progress.label)}</span>
+    </div>
+    <div class="tc-files">${chipsHtml}</div>
+    <div class="tc-foot">
+      ${mainAction}
+      <span class="spacer"></span>
+      <div class="tc-menu-wrap">
+        <button class="icon-button tc-menu-toggle" type="button" title="更多操作" aria-label="更多操作">${svgIcon("dots")}</button>
+        <div class="tc-menu-pop">
+          <button class="task-edit" type="button">编辑</button>
+          <button class="task-delete danger" type="button">删除</button>
         </div>
-      </td>
-    `;
-    row.querySelector(".task-run")?.addEventListener("click", () => startTaskAutomation(task.id));
-    row.querySelector(".task-pause")?.addEventListener("click", () => pauseTaskAutomation(task.id));
-    row.querySelector(".task-resume")?.addEventListener("click", () => resumeTaskAutomation(task.id));
-    row.querySelector(".task-edit").addEventListener("click", () => editWeeklyTask(task.id));
-    row.querySelector(".task-delete").addEventListener("click", () => deleteWeeklyTask(task.id));
-    elements.taskTableBody.append(row);
+      </div>
+    </div>
+  `;
+
+  card.querySelector(".task-run")?.addEventListener("click", () => startTaskAutomation(task.id));
+  card.querySelector(".task-resume")?.addEventListener("click", () => resumeTaskAutomation(task.id));
+  card.querySelector(".task-open-folder")?.addEventListener("click", () => {
+    if (task.taskFolder) {
+      window.workbench.openTaskFolder(task.taskFolder);
+    } else {
+      showToast("该任务没有记录产物文件夹", "error");
+    }
+  });
+  const menuPop = card.querySelector(".tc-menu-pop");
+  card.querySelector(".tc-menu-toggle").addEventListener("click", () => {
+    const willOpen = !menuPop.classList.contains("open");
+    closeAllCardMenus();
+    menuPop.classList.toggle("open", willOpen);
+  });
+  card.querySelector(".task-edit").addEventListener("click", () => {
+    closeAllCardMenus();
+    editWeeklyTask(task.id);
+  });
+  card.querySelector(".task-delete").addEventListener("click", () => {
+    closeAllCardMenus();
+    deleteWeeklyTask(task.id);
+  });
+  return card;
+}
+
+// 任务中心首页整体渲染：统计卡 + 聚焦卡 + 任务卡片网格 + 角标/芯片
+function renderTaskCenter() {
+  if (!elements.taskCenterView) return;
+
+  const total = weeklyTasks.length;
+  const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
+  const paused = weeklyTasks.filter((task) => task.status === "paused").length;
+  const completed = weeklyTasks.filter((task) => task.status === "completed").length;
+
+  elements.statTotal.textContent = String(total);
+  elements.statRunning.textContent = String(running);
+  elements.statPaused.textContent = String(paused);
+  elements.statCompleted.textContent = String(completed);
+  elements.homeWeekSub.textContent = `${new Date().getFullYear()} 年第 ${getIsoWeekNumber()} 周 · 任务文档目录已挂载`;
+
+  const pendingCount = total - completed;
+  elements.taskCenterBadge.hidden = pendingCount <= 0;
+  elements.taskCenterBadge.textContent = String(pendingCount);
+
+  renderFocusCard();
+
+  // 进行中/评估中任务只出现在聚焦卡；网格仅展示 待处理+已暂停 / 已完成
+  const activeGroup = weeklyTasks.filter((task) => task.status === "pending" || task.status === "paused");
+  const doneGroup = weeklyTasks.filter((task) => task.status === "completed");
+
+  elements.taskGridActive.replaceChildren();
+  if (activeGroup.length) {
+    activeGroup.forEach((task) => elements.taskGridActive.append(taskCardElement(task)));
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "task-grid-empty";
+    empty.textContent = "暂无待处理任务。点击右上角「添加任务」开始。";
+    elements.taskGridActive.append(empty);
+  }
+
+  elements.taskGridDone.replaceChildren();
+  if (doneGroup.length) {
+    doneGroup.forEach((task) => elements.taskGridDone.append(taskCardElement(task)));
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "task-grid-empty";
+    empty.textContent = "本周还没有已完成的任务。";
+    elements.taskGridDone.append(empty);
+  }
+
+  if (activeTabId === TASK_CENTER_ID) {
+    updateTopbarForActive(null);
   }
 }
 
@@ -1286,14 +1522,7 @@ async function upsertWeeklyTask(task) {
 function editWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
-  document.querySelector("#task-id").value = task.id;
-  document.querySelector("#task-school").value = task.school || "";
-  document.querySelector("#task-course").value = task.course || "";
-  document.querySelector("#task-type").value = task.taskType || "capability-setup";
-  document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
-  document.querySelector("#task-owner").value = task.owner || "";
-  if (elements.taskFormTitle) elements.taskFormTitle.textContent = "编辑任务";
-  switchTaskModalView("form");
+  openTaskForm(task);
 }
 
 async function deleteWeeklyTask(id) {
@@ -1361,7 +1590,6 @@ async function startTaskAutomation(id) {
   };
   await updateTaskFields(id, { status: "running", taskFolder });
   updateActiveTaskMenu(task);
-  closeTaskPanel();
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
 }
 
@@ -1414,7 +1642,8 @@ async function handleDownloadCompleted(download) {
   if (download.type === "chat") {
     pipelineState.chatPath = download.path;
     pipelineState.step = "evaluating";
-    await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path });
+    const task = await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path, step: "evaluating" });
+    updateActiveTaskMenu(task);
     activateOrCreateTab("evaluation", "评估", "https://www.wl363eval.top/");
     setTimeout(() => runEvaluationUpload(), 1200);
     return;
@@ -1422,10 +1651,10 @@ async function handleDownloadCompleted(download) {
 
   if (download.type === "report") {
     pipelineState.reportPath = download.path;
-    pipelineState.step = "analysis";
-    await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path });
-    elements.activeTaskHermes.hidden = false;
-    showToast("评估报告已保存，可加载至 Hermes 后确认发送。", "success");
+    pipelineState.step = "report";
+    const task = await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path, step: "report" });
+    updateActiveTaskMenu(task);
+    showToast("评估报告已保存，可在任务舱「加载至 Hermes」后确认发送。", "success");
   }
 }
 
@@ -1454,6 +1683,10 @@ function runHermesPrompt() {
   if (!hermesTab) {
     showToast("报告已记录。未找到 Hermes 标签页，请打开后粘贴自动分析提示。", "success");
     return;
+  }
+  if (pipelineState.active) {
+    pipelineState.step = "hermes";
+    updateActiveTaskMenu(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
   }
   activateTab(hermesTab.id);
   const promptText = [
@@ -1657,22 +1890,31 @@ function moveTab(direction) {
 }
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
-elements.menuTaskButton?.addEventListener("click", openTaskPanel);
-elements.menuTerminalButton?.addEventListener("click", () => toggleTerminal());
-elements.menuSettingsButton?.addEventListener("click", openSettings);
-elements.menuReloadButton?.addEventListener("click", () => activeWebview()?.reload?.());
-document.querySelectorAll("[data-command]").forEach((button) => {
-  button.addEventListener("click", () => document.execCommand(button.dataset.command));
+elements.menuSettingsButton?.addEventListener("click", () => {
+  elements.menuMorePop.classList.remove("open");
+  openSettings();
 });
-elements.activeTaskFinish?.addEventListener("click", () => finishActiveTask());
-elements.activeTaskHermes?.addEventListener("click", () => runHermesPrompt());
-window.workbench.onMenuToggleTasks(openTaskPanel);
+elements.menuReloadButton?.addEventListener("click", () => {
+  elements.menuMorePop.classList.remove("open");
+  activeWebview()?.reload?.();
+});
+document.querySelectorAll("[data-command]").forEach((button) => {
+  button.addEventListener("click", () => {
+    elements.menuMorePop.classList.remove("open");
+    document.execCommand(button.dataset.command);
+  });
+});
+// 「⋯ 更多」popover：click 展开 + 外点关闭（composedPath 判定）
+elements.menuMoreButton?.addEventListener("click", () => {
+  elements.menuMorePop.classList.toggle("open");
+});
+window.workbench.onMenuToggleTasks(() => activateTab(TASK_CENTER_ID));
 window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);
-elements.addNewTask?.addEventListener("click", () => {
-  resetTaskForm();
-  switchTaskModalView("form");
-});
+elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
+elements.addNewTask?.addEventListener("click", () => openTaskForm());
+elements.sbTerminal?.addEventListener("click", () => toggleTerminal());
+elements.sbTaskChip?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
 document.querySelector("#sidebar-toggle").addEventListener("click", () => {
   setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
 });
@@ -1757,11 +1999,7 @@ elements.bottomSidebarClose.addEventListener("click", () => toggleBottomSidebar(
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
-document.querySelectorAll(".task-close").forEach((button) => button.addEventListener("click", closeTaskPanel));
-document.querySelectorAll(".task-cancel").forEach((button) => button.addEventListener("click", () => {
-  resetTaskForm();
-  switchTaskModalView("list");
-}));
+document.querySelectorAll(".task-cancel").forEach((button) => button.addEventListener("click", closeTaskForm));
 
 elements.taskForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1771,9 +2009,8 @@ elements.taskForm?.addEventListener("submit", async (event) => {
     return;
   }
   await upsertWeeklyTask(task);
-  resetTaskForm();
+  closeTaskForm();
   showToast("任务已保存", "success");
-  switchTaskModalView("list");
 });
 
 document.querySelector("#task-reset-button")?.addEventListener("click", resetTaskForm);
@@ -2368,33 +2605,22 @@ window.workbench.onDragAddTab((payload) => {
   showToast(`已成功添加标签: ${name}`, "success");
 });
 
-// Close task panel on escape key
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && elements.taskPanel?.classList.contains("open")) {
-    const activeDialog = document.querySelector("dialog[open]");
-    if (!activeDialog) {
-      closeTaskPanel();
-      event.preventDefault();
-    }
-  }
-});
-
-// Close task panel on overlay click
-elements.taskPanelOverlay?.addEventListener("click", closeTaskPanel);
-
+// 全局外点关闭：「⋯ 更多」popover 与任务卡「⋯」菜单（composedPath 判定，覆盖 webview 边界）
 document.addEventListener("click", (event) => {
-  const panel = elements.taskPanel;
-  if (!panel?.classList.contains("open")) return;
-
-  const taskButton = elements.menuTaskButton;
   const path = event.composedPath();
-  if (path.includes(panel) || path.includes(taskButton)) return;
-
-  closeTaskPanel();
+  if (elements.menuMorePop?.classList.contains("open")
+    && !path.includes(elements.menuMorePop) && !path.includes(elements.menuMoreButton)) {
+    elements.menuMorePop.classList.remove("open");
+  }
+  const openMenu = document.querySelector(".tc-menu-pop.open");
+  if (openMenu && !path.some((node) => node instanceof Element && node.classList?.contains("tc-menu-wrap"))) {
+    closeAllCardMenus();
+  }
 });
 
 initTerminal();
 renderTabs();
+activateTab(TASK_CENTER_ID);
 window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();
