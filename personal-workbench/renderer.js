@@ -1691,6 +1691,7 @@ function taskCardElement(task) {
       <div class="tc-menu-wrap">
         <button class="icon-button tc-menu-toggle" type="button" title="更多操作" aria-label="更多操作">${svgIcon("dots")}</button>
         <div class="tc-menu-pop">
+          ${task.status === "completed" ? '<button class="task-reopen" type="button">重新打开任务</button>' : ""}
           <button class="task-edit" type="button">编辑</button>
           <button class="task-delete danger" type="button">删除</button>
         </div>
@@ -1712,6 +1713,10 @@ function taskCardElement(task) {
     const willOpen = !menuPop.classList.contains("open");
     closeAllCardMenus();
     menuPop.classList.toggle("open", willOpen);
+  });
+  card.querySelector(".task-reopen")?.addEventListener("click", () => {
+    closeAllCardMenus();
+    reopenWeeklyTask(task.id);
   });
   card.querySelector(".task-edit").addEventListener("click", () => {
     closeAllCardMenus();
@@ -1803,6 +1808,14 @@ function editWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
   openTaskForm(task);
+}
+
+// 重新打开已完成任务：仅回退状态到待处理；任务文件夹与产物（chatLogPath/reportPath）全部保留
+async function reopenWeeklyTask(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task || task.status !== "completed") return;
+  await updateTaskFields(id, { status: "pending" });
+  showToast("任务已重新打开", "success");
 }
 
 async function deleteWeeklyTask(id) {
