@@ -34,6 +34,7 @@ let terminal;
 let fitAddon;
 let pointerDrag = null;
 let weeklyTasks = [];
+let taskRailCollapsed = false;
 let pipelineState = {
   active: false,
   taskId: null,
@@ -117,7 +118,20 @@ const elements = {
   addNewTask: document.querySelector("#btn-add-new-task"),
   sbTerminal: document.querySelector("#sb-terminal"),
   sbTaskChip: document.querySelector("#sb-task-chip"),
-  sbTaskChipText: document.querySelector("#sb-task-chip-text")
+  sbTaskChipText: document.querySelector("#sb-task-chip-text"),
+  taskRail: document.querySelector("#task-rail"),
+  railHandle: document.querySelector("#rail-handle"),
+  railHandleText: document.querySelector("#rail-handle-text"),
+  railRingBar: document.querySelector("#rail-ring-bar"),
+  railCollapse: document.querySelector("#rail-collapse"),
+  railTitle: document.querySelector("#rail-title"),
+  railStepBadge: document.querySelector("#rail-step-badge"),
+  railOwner: document.querySelector("#rail-owner"),
+  railSteps: document.querySelector("#rail-steps"),
+  railArtifacts: document.querySelector("#rail-artifacts"),
+  railHermes: document.querySelector("#rail-hermes"),
+  railPause: document.querySelector("#rail-pause"),
+  railFinish: document.querySelector("#rail-finish")
 };
 
 function readTabs() {
@@ -1172,7 +1186,8 @@ function taskTypeLabel(type) {
   }[type] || type || "未分类";
 }
 
-function updateActiveTaskMenu(task = null) {
+// 任务舱状态接线总入口：横幅已删除，统一驱动 任务舱 + 状态栏芯片 + 侧边栏脉冲点 + 任务中心
+function updateTaskRail(task = null) {
   if (!task) {
     window.workbench.updateActiveTaskInfo({});
   } else {
@@ -1184,9 +1199,111 @@ function updateActiveTaskMenu(task = null) {
       folderPath: pipelineState.taskFolder || task.taskFolder || ""
     });
   }
+  renderTaskRail(task);
   updateStatusbarChip(task);
   updateSidebarPulse();
   renderTaskCenter();
+}
+
+const RAIL_RING_CIRCUMFERENCE = 50.27;
+
+function railStepsHtml(currentStep) {
+  const currentIndex = pipelineStepIndex(currentStep);
+  return PIPELINE_STEPS.map((step, index) => {
+    const state = index < currentIndex ? "done" : (index === currentIndex ? "now" : "");
+    const dot = index < currentIndex ? svgIcon("check", 11) : String(index + 1);
+    const desc = step.desc.replace(/(dialogue\.json|eval_report\.pdf)/g, "<code>$1</code>");
+    return `
+      <div class="rail-step ${state}">
+        <div class="rs-dot">${dot}</div>
+        <div>
+          <div class="rs-name">${escapeHtml(step.name)}</div>
+          <div class="rs-desc">${desc}</div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function railArtifactRow({ key, name, sub, ready }) {
+  return `
+    <div class="rail-artifact ${ready ? "ready" : "waiting"}" data-key="${key}">
+      <span class="ra-ico">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </span>
+      <span class="ra-info">
+        <span class="ra-name">${escapeHtml(name)}</span>
+        <span class="ra-sub">${escapeHtml(sub)}</span>
+      </span>
+      <span class="ra-badge">${ready ? "就绪" : "等待"}</span>
+    </div>`;
+}
+
+function renderRailArtifacts(task) {
+  const folder = pipelineState.taskFolder || task.taskFolder || "";
+  elements.railArtifacts.innerHTML = [
+    railArtifactRow({ key: "doc", name: "任务文档", sub: folder ? "检测任务文件夹中…" : "任务文件夹未创建", ready: false }),
+    railArtifactRow({ key: "chat", name: "dialogue.json", sub: pipelineState.chatPath || "本地测试下载后归档", ready: Boolean(pipelineState.chatPath) }),
+    railArtifactRow({ key: "report", name: "eval_report.pdf", sub: pipelineState.reportPath || "评估平台报告自动拦截", ready: Boolean(pipelineState.reportPath) })
+  ].join("");
+  refreshRailDocArtifact(folder);
+}
+
+// 异步检测任务文件夹内的任务文档（docx/pdf/md/txt，排除产物文件）
+async function refreshRailDocArtifact(folder) {
+  if (!folder) return;
+  let docName = "";
+  try {
+    const files = await window.workbench.listTaskFolder(folder);
+    docName = (files || []).find((file) =>
+      /\.(docx?|pdf|md|txt)$/i.test(file) && !/^dialogue\.json$/i.test(file) && !/^eval_report/i.test(file)
+    ) || "";
+  } catch (error) {
+    console.warn("检测任务文档失败:", error);
+  }
+  const row = elements.railArtifacts.querySelector('[data-key="doc"]');
+  if (!row) return;
+  row.classList.toggle("ready", Boolean(docName));
+  row.classList.toggle("waiting", !docName);
+  row.querySelector(".ra-badge").textContent = docName ? "就绪" : "等待";
+  row.querySelector(".ra-sub").textContent = docName || "任务文件夹内未检测到文档";
+  if (docName) row.querySelector(".ra-name").textContent = docName;
+}
+
+// 任务舱渲染：展开态主体 + 收起态把手；无活动任务时整体隐藏
+function renderTaskRail(task = null) {
+  const active = Boolean(task && pipelineState.active);
+  elements.appShell.classList.toggle("rail-open", active && !taskRailCollapsed);
+  elements.appShell.classList.toggle("rail-collapsed", active && taskRailCollapsed);
+  if (!active) return;
+
+  const index = pipelineStepIndex(pipelineState.step);
+  const stepNumber = index + 1;
+  const stepName = PIPELINE_STEPS[index]?.name || "";
+
+  elements.railTitle.textContent = `${task.school || ""} · ${task.course || ""}`;
+  elements.railStepBadge.textContent = `步骤 ${stepNumber}/${PIPELINE_STEPS.length} · ${stepName}`;
+  elements.railOwner.textContent = `负责人 ${task.owner || "未指定"}`;
+  elements.railSteps.innerHTML = railStepsHtml(pipelineState.step);
+  renderRailArtifacts(task);
+
+  const reportReady = Boolean(pipelineState.reportPath || task.reportPath);
+  elements.railHermes.disabled = !reportReady;
+  elements.railHermes.title = reportReady ? "将产物路径载入 Hermes 输入框" : "捕获报告后激活";
+
+  elements.railRingBar.style.strokeDashoffset =
+    String(RAIL_RING_CIRCUMFERENCE * (1 - stepNumber / PIPELINE_STEPS.length));
+  elements.railHandleText.textContent = `任务 ${stepNumber}/${PIPELINE_STEPS.length}`;
+}
+
+function expandTaskRail() {
+  if (!pipelineState.active) return;
+  taskRailCollapsed = false;
+  renderTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
+}
+
+function collapseTaskRail() {
+  taskRailCollapsed = true;
+  renderTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
 }
 
 // 学校名缩写：去掉常见后缀，保留前 6 个字符
@@ -1212,7 +1329,7 @@ async function finishActiveTask() {
   const taskId = pipelineState.taskId;
   const folderPath = pipelineState.taskFolder;
   pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-  updateActiveTaskMenu(null);
+  updateTaskRail(null);
   if (taskId) await updateTaskFields(taskId, { status: "completed", chatLogPath: "", reportPath: "", taskFolder: "" });
   if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
   showToast("任务已结束，临时文件已清理", "success");
@@ -1531,7 +1648,7 @@ async function deleteWeeklyTask(id) {
   const folderPath = pipelineState.taskId === id ? pipelineState.taskFolder : task?.taskFolder || "";
   if (pipelineState.taskId === id) {
     pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-    updateActiveTaskMenu(null);
+    updateTaskRail(null);
   }
   if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
   await persistWeeklyTasks();
@@ -1589,7 +1706,8 @@ async function startTaskAutomation(id) {
     uploadQueue: []
   };
   await updateTaskFields(id, { status: "running", taskFolder });
-  updateActiveTaskMenu(task);
+  taskRailCollapsed = false;
+  updateTaskRail(task);
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
 }
 
@@ -1606,7 +1724,7 @@ async function pauseTaskAutomation(id) {
 
   task.status = "paused";
   pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-  updateActiveTaskMenu(null);
+  updateTaskRail(null);
   await persistWeeklyTasks();
   showToast(`任务已暂停：${task.school || ""} ${task.course || ""}`, "success");
 }
@@ -1632,7 +1750,8 @@ async function resumeTaskAutomation(id) {
 
   const nextStatus = pipelineState.step === "evaluating" ? "evaluating" : "running";
   await updateTaskFields(id, { status: nextStatus });
-  updateActiveTaskMenu(task);
+  taskRailCollapsed = false;
+  updateTaskRail(task);
   showToast(`任务已恢复执行：${task.school || ""} ${task.course || ""}`, "success");
 }
 
@@ -1643,7 +1762,7 @@ async function handleDownloadCompleted(download) {
     pipelineState.chatPath = download.path;
     pipelineState.step = "evaluating";
     const task = await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path, step: "evaluating" });
-    updateActiveTaskMenu(task);
+    updateTaskRail(task);
     activateOrCreateTab("evaluation", "评估", "https://www.wl363eval.top/");
     setTimeout(() => runEvaluationUpload(), 1200);
     return;
@@ -1653,7 +1772,7 @@ async function handleDownloadCompleted(download) {
     pipelineState.reportPath = download.path;
     pipelineState.step = "report";
     const task = await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path, step: "report" });
-    updateActiveTaskMenu(task);
+    updateTaskRail(task);
     showToast("评估报告已保存，可在任务舱「加载至 Hermes」后确认发送。", "success");
   }
 }
@@ -1686,7 +1805,7 @@ function runHermesPrompt() {
   }
   if (pipelineState.active) {
     pipelineState.step = "hermes";
-    updateActiveTaskMenu(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
+    updateTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
   }
   activateTab(hermesTab.id);
   const promptText = [
@@ -1914,7 +2033,14 @@ window.workbench.onMenuOpenSettings(openSettings);
 elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
 elements.sbTerminal?.addEventListener("click", () => toggleTerminal());
-elements.sbTaskChip?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
+elements.sbTaskChip?.addEventListener("click", expandTaskRail);
+elements.railHandle?.addEventListener("click", expandTaskRail);
+elements.railCollapse?.addEventListener("click", collapseTaskRail);
+elements.railHermes?.addEventListener("click", () => runHermesPrompt());
+elements.railPause?.addEventListener("click", () => {
+  if (pipelineState.taskId) pauseTaskAutomation(pipelineState.taskId);
+});
+elements.railFinish?.addEventListener("click", () => finishActiveTask());
 document.querySelector("#sidebar-toggle").addEventListener("click", () => {
   setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
 });

@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("workbench", {
   prepareTaskFolder: (task) => ipcRenderer.invoke("tasks:prepare-folder", task),
   cleanupTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:cleanup-folder", folderPath),
   openTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:open-folder", folderPath),
+  listTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:list-folder", folderPath),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

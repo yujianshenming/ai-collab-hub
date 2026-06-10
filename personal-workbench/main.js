@@ -886,6 +886,18 @@ function registerIpc() {
     shell.openPath(target);
     return true;
   });
+  // 列出任务文件夹内文件名（任务舱产物检测用），同样限制在 temp/tasks 内
+  ipcMain.handle("tasks:list-folder", (_event, folderPath) => {
+    const tasksRoot = path.resolve(downloadRoot, "tasks");
+    const target = path.resolve(String(folderPath || ""));
+    if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return [];
+    if (!fs.existsSync(target)) return [];
+    try {
+      return fs.readdirSync(target);
+    } catch {
+      return [];
+    }
+  });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
     return getWorkbenchCookies(details);

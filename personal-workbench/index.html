@@ -201,6 +201,42 @@
         </header>
         <div id="right-sidebar-body" class="right-sidebar-body"></div>
       </aside>
+
+      <aside id="task-rail" class="task-rail" aria-label="任务舱">
+        <button id="rail-handle" class="rail-handle" type="button" title="展开任务舱" aria-label="展开任务舱">
+          <svg class="rail-ring" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+            <circle class="rail-ring-track" cx="10" cy="10" r="8" fill="none" stroke-width="2.5"/>
+            <circle id="rail-ring-bar" class="rail-ring-bar" cx="10" cy="10" r="8" fill="none" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <span id="rail-handle-text" class="rail-handle-text">任务</span>
+        </button>
+        <div class="rail-body">
+          <header class="rail-head">
+            <span class="eyebrow">ACTIVE TASK</span>
+            <button id="rail-collapse" class="icon-button" type="button" aria-label="收起任务舱" title="收起任务舱">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </header>
+          <h2 id="rail-title" class="rail-title"></h2>
+          <div class="rail-meta">
+            <span id="rail-step-badge" class="rail-step-badge"></span>
+            <span id="rail-owner" class="rail-owner"></span>
+          </div>
+          <div class="rail-scroll">
+            <div class="rail-section-label">执行流程</div>
+            <div id="rail-steps" class="rail-steps"></div>
+            <div class="rail-section-label">任务产物</div>
+            <div id="rail-artifacts" class="rail-artifacts"></div>
+          </div>
+          <div class="rail-actions">
+            <button id="rail-hermes" class="btn btn-teal" type="button">加载至 Hermes</button>
+            <div class="rail-actions-row">
+              <button id="rail-pause" class="btn btn-ghost rail-btn-warn" type="button">暂停任务</button>
+              <button id="rail-finish" class="btn btn-ghost rail-btn-danger" type="button">结束任务</button>
+            </div>
+          </div>
+        </div>
+      </aside>
     </div>
 
     <div id="split-drag-overlay" class="split-drag-overlay">
