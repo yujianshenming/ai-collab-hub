@@ -88,6 +88,7 @@ const elements = {
   rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
   rightSidebarClose: document.querySelector("#right-sidebar-close"),
+  rightSidebarBody: document.querySelector("#right-sidebar-body"),
   bottomSidebar: document.querySelector("#bottom-sidebar"),
   bottomSidebarResizer: document.querySelector("#bottom-sidebar-resizer"),
   bottomSidebarTitle: document.querySelector("#bottom-sidebar-title"),
