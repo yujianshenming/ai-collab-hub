@@ -1358,6 +1358,24 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 }
 .rail-artifact.ready .ra-badge { background: var(--ok-bg); color: var(--ok); }
 
+/* 托盘悬停操作区：默认隐藏，悬停时替换徽章位置 */
+.rail-artifact .ra-actions { display: none; flex: 0 0 auto; gap: 2px; align-items: center; }
+.rail-artifact:hover .ra-actions { display: inline-flex; }
+.rail-artifact:hover .ra-badge { display: none; }
+.ra-act {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.ra-act:hover { background: var(--bg-sunken); color: var(--text-primary); }
+.ra-act.danger:hover { background: var(--danger-bg); color: var(--danger); }
+
 /* 底部操作区 */
 .rail-actions {
   flex: 0 0 auto;

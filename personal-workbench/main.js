@@ -659,38 +659,96 @@ function classifyDownload(filename) {
   return { type: "generic", folder: "downloads" };
 }
 
-function cleanupTaskFolder(folderPath) {
+// temp/tasks 防穿越校验：合法返回绝对路径，否则返回 null（所有任务文件 IPC 统一走这里）
+function resolveTaskPath(candidate) {
   const tasksRoot = path.resolve(downloadRoot, "tasks");
-  const target = path.resolve(String(folderPath || ""));
-  if (!target.startsWith(`${tasksRoot}${path.sep}`)) return false;
+  const target = path.resolve(String(candidate || ""));
+  if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return null;
+  return target;
+}
+
+function cleanupTaskFolder(folderPath) {
+  const target = resolveTaskPath(folderPath);
+  if (!target || target === path.resolve(downloadRoot, "tasks")) return false;
   if (!fs.existsSync(target)) return false;
   fs.rmSync(target, { recursive: true, force: true });
-  if (activeTaskFolder && path.resolve(activeTaskFolder) === target) activeTaskFolder = "";
+  if (activeTaskFolder && path.resolve(activeTaskFolder) === target) {
+    activeTaskFolder = "";
+    watchActiveTaskFolder();
+  }
   return true;
+}
+
+// 活动任务文件夹监听：500ms 防抖推送托盘刷新
+let taskFolderWatcher = null;
+let taskFolderWatchTimer = null;
+function watchActiveTaskFolder() {
+  if (taskFolderWatcher) {
+    try { taskFolderWatcher.close(); } catch {}
+    taskFolderWatcher = null;
+  }
+  clearTimeout(taskFolderWatchTimer);
+  if (!activeTaskFolder || !fs.existsSync(activeTaskFolder)) return;
+  try {
+    taskFolderWatcher = fs.watch(activeTaskFolder, { recursive: true }, () => {
+      clearTimeout(taskFolderWatchTimer);
+      taskFolderWatchTimer = setTimeout(() => {
+        sendToRenderer("task-folder-changed", { folderPath: activeTaskFolder });
+      }, 500);
+    });
+  } catch (error) {
+    console.warn("监听任务文件夹失败:", error);
+  }
+}
+
+// 重名文件追加 " (2)"、" (3)" 后缀
+function dedupeFileName(dir, filename) {
+  const extension = path.extname(filename);
+  const base = path.basename(filename, extension);
+  let candidate = filename;
+  let counter = 2;
+  while (fs.existsSync(path.join(dir, candidate))) {
+    candidate = `${base} (${counter})${extension}`;
+    counter += 1;
+  }
+  return candidate;
 }
 
 function installDownloadHandler() {
   workbenchSession().on("will-download", (_event, item) => {
     const filename = safeDownloadName(item.getFilename());
     const classification = classifyDownload(filename);
-    const saveDir = activeTaskFolder && classification.type !== "generic"
-      ? activeTaskFolder
-      : path.join(downloadRoot, classification.folder);
-    fs.mkdirSync(saveDir, { recursive: true });
     const extension = path.extname(filename) || ".bin";
-    const archiveName = {
-      chat: "dialogue.json",
-      report: `eval_report${extension}`
-    }[classification.type] || `${Date.now()}_${filename}`;
+    let saveDir;
+    let archiveName;
+    if (activeTaskFolder) {
+      // 活动任务期间：所有下载汇入任务文件夹；eval_report/dialogue 特殊归档命名优先
+      saveDir = activeTaskFolder;
+      fs.mkdirSync(saveDir, { recursive: true });
+      archiveName = {
+        chat: "dialogue.json",
+        report: `eval_report${extension}`
+      }[classification.type] || dedupeFileName(saveDir, filename);
+    } else {
+      // 无活动任务：行为与现状一致
+      saveDir = path.join(downloadRoot, classification.folder);
+      fs.mkdirSync(saveDir, { recursive: true });
+      archiveName = {
+        chat: "dialogue.json",
+        report: `eval_report${extension}`
+      }[classification.type] || `${Date.now()}_${filename}`;
+    }
     const savePath = path.join(saveDir, archiveName);
     item.setSavePath(savePath);
 
+    const captured = Boolean(activeTaskFolder);
     item.once("done", (_doneEvent, state) => {
       if (state !== "completed") return;
       sendToRenderer("download-completed", {
         type: classification.type,
         path: savePath,
-        filename
+        filename,
+        captured
       });
     });
   });
@@ -830,7 +888,10 @@ function registerIpc() {
     broadcastToSse("active-tab-changed", activeTabInfo);
   });
   ipcMain.on("task:active-update", (_event, info = {}) => {
-    activeTaskFolder = String(info.folderPath || "");
+    // 活动任务文件夹必须位于 temp/tasks 下，非法路径一律视为无活动任务
+    const validated = info.folderPath ? resolveTaskPath(info.folderPath) : null;
+    activeTaskFolder = validated && fs.existsSync(validated) ? validated : "";
+    watchActiveTaskFolder();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
   });
   ipcMain.on("tabs:list-update", (_event, list = []) => {
@@ -869,6 +930,7 @@ function registerIpc() {
     const folderPath = path.join(downloadRoot, "tasks", folderName);
     fs.mkdirSync(folderPath, { recursive: true });
     activeTaskFolder = folderPath;
+    watchActiveTaskFolder();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return folderPath;
   });
@@ -879,24 +941,69 @@ function registerIpc() {
   });
   // 打开任务产物文件夹：仅允许 temp/tasks 下的路径，防止路径穿越
   ipcMain.handle("tasks:open-folder", (_event, folderPath) => {
-    const tasksRoot = path.resolve(downloadRoot, "tasks");
-    const target = path.resolve(String(folderPath || ""));
-    if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return false;
-    if (!fs.existsSync(target)) return false;
+    const target = resolveTaskPath(folderPath);
+    if (!target || !fs.existsSync(target)) return false;
     shell.openPath(target);
     return true;
   });
   // 列出任务文件夹内文件名（任务舱产物检测用），同样限制在 temp/tasks 内
   ipcMain.handle("tasks:list-folder", (_event, folderPath) => {
-    const tasksRoot = path.resolve(downloadRoot, "tasks");
-    const target = path.resolve(String(folderPath || ""));
-    if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return [];
-    if (!fs.existsSync(target)) return [];
+    const target = resolveTaskPath(folderPath);
+    if (!target || !fs.existsSync(target)) return [];
     try {
       return fs.readdirSync(target);
     } catch {
       return [];
     }
+  });
+  // 托盘文件列表：任务文件夹下全部文件（子文件夹仅展开一层，不递归深层）
+  ipcMain.handle("tasks:list-files", (_event, folderPath) => {
+    const target = resolveTaskPath(folderPath);
+    if (!target || !fs.existsSync(target)) return [];
+    const entries = [];
+    const pushFile = (absPath, relPath) => {
+      try {
+        const stat = fs.statSync(absPath);
+        if (stat.isDirectory()) return;
+        entries.push({ name: path.basename(absPath), relPath, path: absPath, size: stat.size, mtime: stat.mtimeMs });
+      } catch {}
+    };
+    try {
+      for (const entry of fs.readdirSync(target)) {
+        const absPath = path.join(target, entry);
+        let stat;
+        try { stat = fs.statSync(absPath); } catch { continue; }
+        if (stat.isDirectory()) {
+          try {
+            for (const child of fs.readdirSync(absPath)) {
+              pushFile(path.join(absPath, child), `${entry}/${child}`);
+            }
+          } catch {}
+        } else {
+          pushFile(absPath, entry);
+        }
+      }
+    } catch {}
+    return entries;
+  });
+  // 托盘文件操作：打开 / 资源管理器定位 / 删除，全部限制在 temp/tasks 内
+  ipcMain.handle("tasks:file-action", (_event, payload = {}) => {
+    const target = resolveTaskPath(payload.filePath);
+    if (!target || target === path.resolve(downloadRoot, "tasks") || !fs.existsSync(target)) return false;
+    const action = String(payload.action || "");
+    if (action === "open") {
+      shell.openPath(target);
+      return true;
+    }
+    if (action === "reveal") {
+      shell.showItemInFolder(target);
+      return true;
+    }
+    if (action === "delete") {
+      fs.rmSync(target, { recursive: true, force: true });
+      return true;
+    }
+    return false;
   });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {

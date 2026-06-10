@@ -1224,49 +1224,181 @@ function railStepsHtml(currentStep) {
   }).join("");
 }
 
-function railArtifactRow({ key, name, sub, ready }) {
-  return `
-    <div class="rail-artifact ${ready ? "ready" : "waiting"}" data-key="${key}">
-      <span class="ra-ico">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      </span>
-      <span class="ra-info">
-        <span class="ra-name">${escapeHtml(name)}</span>
-        <span class="ra-sub">${escapeHtml(sub)}</span>
-      </span>
-      <span class="ra-badge">${ready ? "就绪" : "等待"}</span>
-    </div>`;
+function isImageFile(name) {
+  return /\.(png|jpe?g|webp)$/i.test(name);
 }
 
-function renderRailArtifacts(task) {
-  const folder = pipelineState.taskFolder || task.taskFolder || "";
-  elements.railArtifacts.innerHTML = [
-    railArtifactRow({ key: "doc", name: "任务文档", sub: folder ? "检测任务文件夹中…" : "任务文件夹未创建", ready: false }),
-    railArtifactRow({ key: "chat", name: "dialogue.json", sub: pipelineState.chatPath || "本地测试下载后归档", ready: Boolean(pipelineState.chatPath) }),
-    railArtifactRow({ key: "report", name: "eval_report.pdf", sub: pipelineState.reportPath || "评估平台报告自动拦截", ready: Boolean(pipelineState.reportPath) })
-  ].join("");
-  refreshRailDocArtifact(folder);
+function isTaskDocFile(name) {
+  return /\.(docx?|pdf|md|txt)$/i.test(name) && !/^dialogue\.json$/i.test(name) && !/^eval_report/i.test(name);
 }
 
-// 异步检测任务文件夹内的任务文档（docx/pdf/md/txt，排除产物文件）
-async function refreshRailDocArtifact(folder) {
-  if (!folder) return;
-  let docName = "";
-  try {
-    const files = await window.workbench.listTaskFolder(folder);
-    docName = (files || []).find((file) =>
-      /\.(docx?|pdf|md|txt)$/i.test(file) && !/^dialogue\.json$/i.test(file) && !/^eval_report/i.test(file)
-    ) || "";
-  } catch (error) {
-    console.warn("检测任务文档失败:", error);
+function fileKindSvg(name) {
+  const bodies = {
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+    json: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 13a1.5 1.5 0 0 0 0 3"/><path d="M14 13a1.5 1.5 0 0 1 0 3"/>',
+    pdf: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/>',
+    word: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l1.5 5L12 13l2.5 5L16 13"/>',
+    other: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
+  };
+  const kind = isImageFile(name) ? "image"
+    : /\.json$/i.test(name) ? "json"
+    : /\.pdf$/i.test(name) ? "pdf"
+    : /\.docx?$/i.test(name) ? "word"
+    : "other";
+  return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${bodies[kind]}</svg>`;
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatFileTime(mtime) {
+  const date = new Date(mtime);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function railActionButton({ title, svg, onClick, danger = false }) {
+  const button = document.createElement("button");
+  button.className = `ra-act${danger ? " danger" : ""}`;
+  button.type = "button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = svg;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+async function runTaskFileAction(action, file) {
+  if (action === "copy") {
+    try {
+      await navigator.clipboard.writeText(file.path);
+      showToast("绝对路径已复制", "success");
+    } catch {
+      showToast("复制路径失败", "error");
+    }
+    return;
   }
-  const row = elements.railArtifacts.querySelector('[data-key="doc"]');
-  if (!row) return;
-  row.classList.toggle("ready", Boolean(docName));
-  row.classList.toggle("waiting", !docName);
-  row.querySelector(".ra-badge").textContent = docName ? "就绪" : "等待";
-  row.querySelector(".ra-sub").textContent = docName || "任务文件夹内未检测到文档";
-  if (docName) row.querySelector(".ra-name").textContent = docName;
+  if (action === "delete" && !window.confirm(`确认删除 ${file.name}？此操作不可恢复。`)) return;
+  const ok = await window.workbench.taskFileAction(action, file.path);
+  if (!ok) {
+    showToast("文件操作失败（文件可能已不存在）", "error");
+  } else if (action === "delete") {
+    showToast(`已删除 ${file.name}`, "success");
+  }
+  if (action === "delete") refreshRailTray();
+}
+
+// 托盘文件行：图标 + 名称 + 大小/时间 + 悬停操作区
+function railFileRow(file, { badge = "", waiting = false } = {}) {
+  const row = document.createElement("div");
+  row.className = `rail-artifact ${waiting ? "waiting" : "ready"}`;
+  row.innerHTML = `
+    <span class="ra-ico">${fileKindSvg(file.name)}</span>
+    <span class="ra-info">
+      <span class="ra-name">${escapeHtml(file.name)}</span>
+      <span class="ra-sub">${escapeHtml(file.sub)}</span>
+    </span>
+  `;
+  if (badge) {
+    const badgeEl = document.createElement("span");
+    badgeEl.className = "ra-badge";
+    badgeEl.textContent = badge;
+    row.append(badgeEl);
+  }
+  if (!waiting) {
+    const actions = document.createElement("span");
+    actions.className = "ra-actions";
+    actions.append(
+      railActionButton({
+        title: "打开",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+        onClick: () => runTaskFileAction("open", file)
+      }),
+      railActionButton({
+        title: "在资源管理器中定位",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+        onClick: () => runTaskFileAction("reveal", file)
+      }),
+      railActionButton({
+        title: "复制绝对路径",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+        onClick: () => runTaskFileAction("copy", file)
+      }),
+      railActionButton({
+        title: "删除",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+        onClick: () => runTaskFileAction("delete", file),
+        danger: true
+      })
+    );
+    row.append(actions);
+  }
+  return row;
+}
+
+let railTrayToken = 0;
+
+// 任务文件托盘：关键产物置顶（含就绪/等待徽章），其余文件按修改时间倒序
+async function renderRailTray(task) {
+  const folder = pipelineState.taskFolder || task.taskFolder || "";
+  const token = ++railTrayToken;
+  let files = [];
+  if (folder) {
+    try {
+      files = (await window.workbench.listTaskFiles(folder)) || [];
+    } catch (error) {
+      console.warn("读取任务文件托盘失败:", error);
+    }
+  }
+  if (token !== railTrayToken || !elements.railArtifacts) return;
+
+  const docFile = files.find((file) => isTaskDocFile(file.name));
+  const chatFile = files.find((file) => /^dialogue\.json$/i.test(file.name));
+  const reportFile = files.find((file) => /^eval_report/i.test(file.name));
+  const keyPaths = new Set([docFile, chatFile, reportFile].filter(Boolean).map((file) => file.path));
+
+  elements.railArtifacts.replaceChildren();
+  const pinned = [
+    { file: docFile, placeholder: "任务文档", waitSub: folder ? "任务文件夹内未检测到文档" : "任务文件夹未创建" },
+    { file: chatFile, placeholder: "dialogue.json", waitSub: "本地测试下载后归档" },
+    { file: reportFile, placeholder: "eval_report.pdf", waitSub: "评估平台报告自动拦截" }
+  ];
+  for (const item of pinned) {
+    if (item.file) {
+      elements.railArtifacts.append(railFileRow(
+        { ...item.file, sub: `${formatFileSize(item.file.size)} · ${formatFileTime(item.file.mtime)}` },
+        { badge: "就绪" }
+      ));
+    } else {
+      elements.railArtifacts.append(railFileRow(
+        { name: item.placeholder, sub: item.waitSub },
+        { badge: "等待", waiting: true }
+      ));
+    }
+  }
+
+  const rest = files
+    .filter((file) => !keyPaths.has(file.path))
+    .sort((a, b) => b.mtime - a.mtime);
+  for (const file of rest) {
+    elements.railArtifacts.append(railFileRow(
+      { ...file, sub: `${formatFileSize(file.size)} · ${formatFileTime(file.mtime)}` }
+    ));
+  }
+}
+
+// 托盘单独刷新（fs.watch 推送 / 文件操作后调用，不重渲整个任务舱）
+function refreshRailTray() {
+  if (!pipelineState.active) return;
+  const task = weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId);
+  if (task) renderRailTray(task);
 }
 
 // 任务舱渲染：展开态主体 + 收起态把手；无活动任务时整体隐藏
@@ -1284,7 +1416,7 @@ function renderTaskRail(task = null) {
   elements.railStepBadge.textContent = `步骤 ${stepNumber}/${PIPELINE_STEPS.length} · ${stepName}`;
   elements.railOwner.textContent = `负责人 ${task.owner || "未指定"}`;
   elements.railSteps.innerHTML = railStepsHtml(pipelineState.step);
-  renderRailArtifacts(task);
+  renderRailTray(task);
 
   const reportReady = Boolean(pipelineState.reportPath || task.reportPath);
   elements.railHermes.disabled = !reportReady;
@@ -1757,6 +1889,11 @@ async function resumeTaskAutomation(id) {
 
 async function handleDownloadCompleted(download) {
   if (!pipelineState.active || !pipelineState.taskId) return;
+
+  if (download.type === "generic") {
+    if (download.captured) showToast(`已捕获到任务文件夹: ${download.filename}`, "success");
+    return;
+  }
 
   if (download.type === "chat") {
     pipelineState.chatPath = download.path;
@@ -2751,4 +2888,5 @@ window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
+window.workbench.onTaskFolderChanged(() => refreshRailTray());
 window.workbench.getExtensions().then(({ results }) => renderExtensionsInTopbar(results));
