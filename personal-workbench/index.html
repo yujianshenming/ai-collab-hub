@@ -88,6 +88,7 @@
               </button>
               <div id="menu-more-pop" class="menu-pop">
                 <button id="menu-settings-button" type="button">扩展设置</button>
+                <button id="menu-prefs-button" type="button">工作台偏好</button>
                 <button data-command="copy" type="button">复制</button>
                 <button data-command="paste" type="button">粘贴</button>
                 <button data-command="selectAll" type="button">全选</button>
@@ -302,6 +303,38 @@
           <span class="action-spacer"></span>
           <button class="secondary-button task-cancel" type="button">取消</button>
           <button class="primary-button" type="submit">保存任务</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="prefs-dialog" class="modal">
+      <form id="prefs-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Preferences</span>
+            <h2>工作台偏好</h2>
+          </div>
+          <button class="icon-button prefs-close" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="helper-text">图片「裁切去水印」的默认参数：从所选方向裁掉固定像素，生成 _cropped 新文件，原图保留。</p>
+        <label>
+          裁切方向
+          <select id="pref-crop-side">
+            <option value="bottom">底部</option>
+            <option value="top">顶部</option>
+            <option value="right">右侧</option>
+          </select>
+        </label>
+        <label>
+          裁切像素
+          <input id="pref-crop-pixels" type="number" min="1" max="2000" value="100" required />
+        </label>
+        <div class="modal-actions">
+          <span class="action-spacer"></span>
+          <button class="secondary-button prefs-close" type="button">取消</button>
+          <button class="primary-button" type="submit">保存偏好</button>
         </div>
       </form>
     </dialog>

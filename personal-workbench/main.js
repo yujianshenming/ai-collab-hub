@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -659,6 +659,25 @@ function classifyDownload(filename) {
   return { type: "generic", folder: "downloads" };
 }
 
+// 工作台偏好：裁切方向 + 像素数，持久化到 userData/workbench-prefs.json
+function workbenchPrefsPath() {
+  return path.join(app.getPath("userData"), "workbench-prefs.json");
+}
+
+function normalizeWorkbenchPrefs(prefs = {}) {
+  const side = ["bottom", "top", "right"].includes(prefs.cropSide) ? prefs.cropSide : "bottom";
+  const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
+  return { cropSide: side, cropPixels: pixels };
+}
+
+function loadWorkbenchPrefs() {
+  try {
+    return normalizeWorkbenchPrefs(JSON.parse(fs.readFileSync(workbenchPrefsPath(), "utf8")));
+  } catch {
+    return { cropSide: "bottom", cropPixels: 100 };
+  }
+}
+
 // temp/tasks 防穿越校验：合法返回绝对路径，否则返回 null（所有任务文件 IPC 统一走这里）
 function resolveTaskPath(candidate) {
   const tasksRoot = path.resolve(downloadRoot, "tasks");
@@ -992,6 +1011,46 @@ function registerIpc() {
       properties: ["openFile", "multiSelections"]
     });
     return result.canceled ? [] : result.filePaths;
+  });
+  // 工作台偏好：读取 / 保存（持久化到 userData）
+  ipcMain.handle("prefs:get-workbench", () => loadWorkbenchPrefs());
+  ipcMain.handle("prefs:set-workbench", (_event, prefs) => {
+    const normalized = normalizeWorkbenchPrefs(prefs);
+    try {
+      fs.writeFileSync(workbenchPrefsPath(), JSON.stringify(normalized, null, 2));
+    } catch (error) {
+      console.warn("保存工作台偏好失败:", error);
+    }
+    return normalized;
+  });
+  // 图片裁切去水印：nativeImage 实现，生成 原名_cropped 新文件，原图保留
+  ipcMain.handle("tasks:crop-image", (_event, filePath) => {
+    const target = resolveTaskPath(filePath);
+    if (!target || !fs.existsSync(target)) return { ok: false, error: "文件不存在或越出任务目录" };
+    if (!/\.(png|jpe?g|webp)$/i.test(target)) return { ok: false, error: "仅支持 png/jpg/jpeg/webp 图片" };
+    const prefs = loadWorkbenchPrefs();
+    const image = nativeImage.createFromPath(target);
+    if (image.isEmpty()) return { ok: false, error: "图片读取失败" };
+    const { width, height } = image.getSize();
+    const limit = prefs.cropSide === "right" ? width : height;
+    const pixels = Math.min(prefs.cropPixels, limit - 1);
+    if (pixels <= 0) return { ok: false, error: "图片尺寸过小，无法裁切" };
+    const rect = { x: 0, y: 0, width, height };
+    if (prefs.cropSide === "bottom") rect.height = height - pixels;
+    else if (prefs.cropSide === "top") { rect.y = pixels; rect.height = height - pixels; }
+    else rect.width = width - pixels;
+    const cropped = image.crop(rect);
+    const extension = path.extname(target);
+    // nativeImage 无法编码 webp，webp 源输出为 png
+    const outExtension = /\.jpe?g$/i.test(extension) ? extension : /\.webp$/i.test(extension) ? ".png" : extension;
+    const outPath = path.join(path.dirname(target), `${path.basename(target, extension)}_cropped${outExtension}`);
+    const buffer = /\.jpe?g$/i.test(outExtension) ? cropped.toJPEG(90) : cropped.toPNG();
+    try {
+      fs.writeFileSync(outPath, buffer);
+    } catch (error) {
+      return { ok: false, error: `写入失败: ${error.message}` };
+    }
+    return { ok: true, path: outPath };
   });
   // 托盘文件操作：打开 / 资源管理器定位 / 删除，全部限制在 temp/tasks 内
   ipcMain.handle("tasks:file-action", (_event, payload = {}) => {

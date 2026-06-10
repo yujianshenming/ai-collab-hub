@@ -23,6 +23,9 @@ contextBridge.exposeInMainWorld("workbench", {
     return () => ipcRenderer.removeListener("task-folder-changed", listener);
   },
   pickSystemFiles: () => ipcRenderer.invoke("dialog:pick-files"),
+  cropImage: (filePath) => ipcRenderer.invoke("tasks:crop-image", filePath),
+  getWorkbenchPrefs: () => ipcRenderer.invoke("prefs:get-workbench"),
+  setWorkbenchPrefs: (prefs) => ipcRenderer.invoke("prefs:set-workbench", prefs),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

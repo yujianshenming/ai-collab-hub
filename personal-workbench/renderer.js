@@ -137,7 +137,12 @@ const elements = {
   filePickInject: document.querySelector("#file-pick-inject"),
   filePickSystem: document.querySelector("#file-pick-system"),
   filePickCancel: document.querySelector("#file-pick-cancel"),
-  filePickClose: document.querySelector("#file-pick-close")
+  filePickClose: document.querySelector("#file-pick-close"),
+  menuPrefsButton: document.querySelector("#menu-prefs-button"),
+  prefsDialog: document.querySelector("#prefs-dialog"),
+  prefsForm: document.querySelector("#prefs-form"),
+  prefCropSide: document.querySelector("#pref-crop-side"),
+  prefCropPixels: document.querySelector("#pref-crop-pixels")
 };
 
 function readTabs() {
@@ -1291,6 +1296,16 @@ async function runTaskFileAction(action, file) {
     }
     return;
   }
+  if (action === "crop") {
+    const result = await window.workbench.cropImage(file.path);
+    if (result?.ok) {
+      showToast(`裁切完成：${result.path.split(/[\\/]/).pop()}`, "success");
+    } else {
+      showToast(`裁切失败：${result?.error || "未知错误"}`, "error");
+    }
+    refreshRailTray();
+    return;
+  }
   if (action === "delete" && !window.confirm(`确认删除 ${file.name}？此操作不可恢复。`)) return;
   const ok = await window.workbench.taskFileAction(action, file.path);
   if (!ok) {
@@ -1336,7 +1351,16 @@ function railFileRow(file, { badge = "", waiting = false } = {}) {
         title: "复制绝对路径",
         svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
         onClick: () => runTaskFileAction("copy", file)
-      }),
+      })
+    );
+    if (isImageFile(file.name)) {
+      actions.append(railActionButton({
+        title: "裁切去水印",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>',
+        onClick: () => runTaskFileAction("crop", file)
+      }));
+    }
+    actions.append(
       railActionButton({
         title: "删除",
         svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
@@ -2246,6 +2270,31 @@ elements.menuSettingsButton?.addEventListener("click", () => {
 elements.menuReloadButton?.addEventListener("click", () => {
   elements.menuMorePop.classList.remove("open");
   activeWebview()?.reload?.();
+});
+// 工作台偏好：裁切方向 + 像素数
+elements.menuPrefsButton?.addEventListener("click", async () => {
+  elements.menuMorePop.classList.remove("open");
+  try {
+    const prefs = await window.workbench.getWorkbenchPrefs();
+    elements.prefCropSide.value = prefs?.cropSide || "bottom";
+    elements.prefCropPixels.value = prefs?.cropPixels || 100;
+  } catch {
+    elements.prefCropSide.value = "bottom";
+    elements.prefCropPixels.value = 100;
+  }
+  elements.prefsDialog.showModal();
+});
+document.querySelectorAll(".prefs-close").forEach((button) =>
+  button.addEventListener("click", () => elements.prefsDialog.close())
+);
+elements.prefsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await window.workbench.setWorkbenchPrefs({
+    cropSide: elements.prefCropSide.value,
+    cropPixels: Number(elements.prefCropPixels.value)
+  });
+  elements.prefsDialog.close();
+  showToast("工作台偏好已保存", "success");
 });
 document.querySelectorAll("[data-command]").forEach((button) => {
   button.addEventListener("click", () => {
