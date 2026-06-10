@@ -1194,8 +1194,110 @@ function taskTypeLabel(type) {
     "capability-edit": "能力训练修改",
     "capability-acceptance": "能力训练验收",
     "grading-setup": "作业批阅搭建",
-    "grading-acceptance": "作业批阅验收"
+    "grading-acceptance": "作业批阅验收",
+    "grading-edit": "作业批阅修改"
   }[type] || type || "未分类";
+}
+
+// ============ 待做任务.txt 解析（纯函数，无副作用，供测试注入） ============
+
+// 任务类型关键词 → 内部枚举（含 V3.2 新增的 grading-edit）
+const TODO_TYPE_MAP = [
+  ["能力训练搭建", "capability-setup"],
+  ["能力训练修改", "capability-edit"],
+  ["能力训练验收", "capability-acceptance"],
+  ["作业批阅搭建", "grading-setup"],
+  ["作业批阅验收", "grading-acceptance"],
+  ["作业批阅修改", "grading-edit"]
+];
+const TODO_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+// 括号备注 → 子任务标记：{ 编号: "done"|"unconfirmed" }；无法识别返回 null
+function parseSubtaskNote(text) {
+  const marks = {};
+  let matched = false;
+  const splitNums = (raw) => raw.split(/[/、,，\s]+/).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+  const doneMatch = text.match(/已完成任务([\d/、,，\s]+)/) || text.match(/任务([\d/、,，\s]+)已完成/);
+  if (doneMatch) {
+    for (const n of splitNums(doneMatch[1])) marks[n] = "done";
+    matched = true;
+  }
+  const unconfirmedMatch = text.match(/任务([\d/、,，\s]+)待确认/) || text.match(/待确认任务([\d/、,，\s]+)/);
+  if (unconfirmedMatch) {
+    for (const n of splitNums(unconfirmedMatch[1])) marks[n] = "unconfirmed";
+    matched = true;
+  }
+  return matched ? marks : null;
+}
+
+// 行模式：学校《课程》 [任务类型] [N个] [状态(可带括号备注)] [负责人] [星期]
+// 返回 { tasks: [...], unparsed: [原文行] }；字段间空格数量容错
+function parseTodoLines(text) {
+  const tasks = [];
+  const unparsed = [];
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const head = line.match(/^(.+?)《([^》]+)》(.*)$/);
+    if (!head) {
+      unparsed.push(line);
+      continue;
+    }
+    const school = head[1].trim();
+    const course = head[2].trim();
+    let rest = head[3];
+
+    let taskType = "";
+    for (const [keyword, value] of TODO_TYPE_MAP) {
+      if (rest.includes(keyword)) {
+        taskType = value;
+        rest = rest.replace(keyword, " ");
+        break;
+      }
+    }
+
+    let quantity = 1;
+    const quantityMatch = rest.match(/(\d+)个/);
+    if (quantityMatch) {
+      quantity = Math.max(1, Number(quantityMatch[1]));
+      rest = rest.replace(quantityMatch[0], " ");
+    }
+
+    let status = "pending";
+    let note = "";
+    let subtaskMarks = null;
+    const statusMatch = rest.match(/(已完成|未完成|未提交)\s*(（[^）]*）|\([^)]*\))?/);
+    if (statusMatch) {
+      status = statusMatch[1] === "已完成" ? "completed" : statusMatch[1] === "未提交" ? "unsubmitted" : "pending";
+      if (statusMatch[2]) {
+        const inner = statusMatch[2].slice(1, -1).trim();
+        subtaskMarks = parseSubtaskNote(inner);
+        if (!subtaskMarks) note = inner;
+      }
+      rest = rest.replace(statusMatch[0], " ");
+    }
+
+    let weekday = "";
+    const weekdayMatch = rest.match(/周[一二三四五六日]/);
+    if (weekdayMatch) {
+      weekday = weekdayMatch[0];
+      rest = rest.replace(weekdayMatch[0], " ");
+    }
+
+    const owner = rest.trim().split(/\s+/).filter(Boolean)[0] || "";
+    tasks.push({ school, course, taskType, quantity, status, owner, weekday, note, subtaskMarks });
+  }
+  return { tasks, unparsed };
+}
+window.parseTodoLines = parseTodoLines;
+
+// 子任务标记 + 数量 → subtasks 数组（index 从 1 起，未标记默认 pending）
+function subtasksFromMarks(quantity, marks) {
+  const list = [];
+  for (let index = 1; index <= Math.max(1, Number(quantity) || 1); index += 1) {
+    list.push({ index, status: marks?.[index] || "pending" });
+  }
+  return list;
 }
 
 // 任务舱状态接线总入口：横幅已删除，统一驱动 任务舱 + 状态栏芯片 + 侧边栏脉冲点 + 任务中心
@@ -1537,15 +1639,32 @@ function resetTaskForm() {
   if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
 }
 
+// 子任务清单与 quantity 联动：长度不足补 pending，超出截断；index 重排为 1..N
+function normalizeSubtasks(subtasks, quantity) {
+  const count = Math.max(1, Number(quantity) || 1);
+  const source = Array.isArray(subtasks) ? subtasks : [];
+  const list = [];
+  for (let index = 1; index <= count; index += 1) {
+    const status = source[index - 1]?.status;
+    list.push({ index, status: ["pending", "done", "unconfirmed"].includes(status) ? status : "pending" });
+  }
+  return list;
+}
+
 function normalizeWeeklyTask(task = {}) {
+  const quantity = Math.max(1, Number(task.quantity) || 1);
   return {
     id: task.id || `task-${Date.now()}`,
     school: task.school || "",
     course: task.course || "",
-    taskType: task.taskType || "capability-setup",
-    quantity: Math.max(1, Number(task.quantity) || 1),
+    // 允许空字符串（txt 导入未匹配到类型时留空，预览中标黄提醒）
+    taskType: typeof task.taskType === "string" ? task.taskType : "capability-setup",
+    quantity,
     status: task.status || "pending",
     owner: task.owner || "",
+    weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
+    note: task.note || "",
+    subtasks: normalizeSubtasks(task.subtasks, quantity),
     chatLogPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
     taskFolder: task.taskFolder || "",
@@ -1790,6 +1909,9 @@ function taskFromForm() {
     quantity: Math.max(1, Number(document.querySelector("#task-quantity").value) || 1),
     status: existing.status || "pending",
     owner: document.querySelector("#task-owner").value.trim(),
+    weekday: existing.weekday || "",
+    note: existing.note || "",
+    subtasks: existing.subtasks || [],
     chatLogPath: existing.chatLogPath || "",
     reportPath: existing.reportPath || "",
     taskFolder: existing.taskFolder || "",

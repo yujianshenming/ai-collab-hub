@@ -104,10 +104,16 @@
               <h1>本周任务</h1>
               <p id="home-week-sub"></p>
             </div>
-            <button id="btn-add-new-task" class="btn btn-cta" type="button">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              添加任务
-            </button>
+            <div class="home-head-actions">
+              <button id="btn-import-todo" class="btn btn-ghost" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                从待做任务导入
+              </button>
+              <button id="btn-add-new-task" class="btn btn-cta" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                添加任务
+              </button>
+            </div>
           </div>
 
           <div class="stat-row">
@@ -287,6 +293,7 @@
               <option value="capability-acceptance">能力训练验收</option>
               <option value="grading-setup">作业批阅搭建</option>
               <option value="grading-acceptance">作业批阅验收</option>
+              <option value="grading-edit">作业批阅修改</option>
             </select>
           </label>
           <label>
@@ -330,6 +337,13 @@
         <label>
           裁切像素
           <input id="pref-crop-pixels" type="number" min="1" max="2000" value="100" required />
+        </label>
+        <label>
+          待做任务.txt 路径
+          <span class="pref-path-row">
+            <code id="pref-todo-path" class="pref-path">未设置</code>
+            <button id="pref-todo-change" class="secondary-button" type="button">更改</button>
+          </span>
         </label>
         <div class="modal-actions">
           <span class="action-spacer"></span>

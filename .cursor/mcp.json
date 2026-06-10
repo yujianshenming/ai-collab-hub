@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "kc-mcp": {
+      "command": "node",
+      "args": [
+        "C:/Users/24391/.cursor/kc-mcp/mcp-server.cjs",
+        "--queue-root=C:/Users/24391/.cursor/kc-mcp-messages"
+      ],
+      "env": {
+        "KC_POLL_TICK_MS": "240000"
+      }
+    }
+  }
+}

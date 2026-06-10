@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("workbench", {
   cropImage: (filePath) => ipcRenderer.invoke("tasks:crop-image", filePath),
   getWorkbenchPrefs: () => ipcRenderer.invoke("prefs:get-workbench"),
   setWorkbenchPrefs: (prefs) => ipcRenderer.invoke("prefs:set-workbench", prefs),
+  pickTodoFile: () => ipcRenderer.invoke("dialog:pick-todo-file"),
+  readTodoFile: () => ipcRenderer.invoke("tasks:read-todo-file"),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

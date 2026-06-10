@@ -667,7 +667,18 @@ function workbenchPrefsPath() {
 function normalizeWorkbenchPrefs(prefs = {}) {
   const side = ["bottom", "top", "right"].includes(prefs.cropSide) ? prefs.cropSide : "bottom";
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
-  return { cropSide: side, cropPixels: pixels };
+  const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
+  return { cropSide: side, cropPixels: pixels, todoFilePath };
+}
+
+function saveWorkbenchPrefs(prefs) {
+  const normalized = normalizeWorkbenchPrefs(prefs);
+  try {
+    fs.writeFileSync(workbenchPrefsPath(), JSON.stringify(normalized, null, 2));
+  } catch (error) {
+    console.warn("保存工作台偏好失败:", error);
+  }
+  return normalized;
 }
 
 function loadWorkbenchPrefs() {
@@ -1015,13 +1026,35 @@ function registerIpc() {
   // 工作台偏好：读取 / 保存（持久化到 userData）
   ipcMain.handle("prefs:get-workbench", () => loadWorkbenchPrefs());
   ipcMain.handle("prefs:set-workbench", (_event, prefs) => {
-    const normalized = normalizeWorkbenchPrefs(prefs);
+    // 合并保存：renderer 只传部分字段时不丢其余偏好（如 todoFilePath）
+    return saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), ...prefs });
+  });
+  // 选择待做任务.txt：系统对话框定位后写入偏好，之后一键直读
+  ipcMain.handle("dialog:pick-todo-file", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile"],
+      filters: [{ name: "文本文件", extensions: ["txt"] }]
+    });
+    if (result.canceled || !result.filePaths.length) return "";
+    const picked = result.filePaths[0];
+    saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), todoFilePath: picked });
+    return picked;
+  });
+  // 读取待做任务.txt：只允许读偏好中登记的这一个路径；UTF-8 + BOM 兼容；
+  // 出现替换字符（U+FFFD）视为非 UTF-8 编码，提示用户转存，不做 GBK 转码（范围外）
+  ipcMain.handle("tasks:read-todo-file", () => {
+    const todoPath = loadWorkbenchPrefs().todoFilePath;
+    if (!todoPath) return { ok: false, error: "not-configured" };
+    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    let text;
     try {
-      fs.writeFileSync(workbenchPrefsPath(), JSON.stringify(normalized, null, 2));
+      text = fs.readFileSync(todoPath, "utf8");
     } catch (error) {
-      console.warn("保存工作台偏好失败:", error);
+      return { ok: false, error: `读取失败: ${error.message}`, path: todoPath };
     }
-    return normalized;
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
+    return { ok: true, text, path: todoPath };
   });
   // 图片裁切去水印：nativeImage 实现，生成 原名_cropped 新文件，原图保留
   ipcMain.handle("tasks:crop-image", (_event, filePath) => {
