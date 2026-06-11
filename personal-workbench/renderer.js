@@ -386,7 +386,6 @@ function createTabViewport(tab) {
         });
       }
     });
-    setupWebviewUploadInterceptor(webview);
     webview.addEventListener("page-title-updated", (event) => {
       if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
     });
@@ -2313,26 +2312,45 @@ async function changeTodoFilePath() {
   }
 }
 
-function setupWebviewUploadInterceptor(webview) {
-  webview.addEventListener("select-file-dialog", (event) => {
-    // 无活动任务：不拦截，保持系统选择器原行为
-    if (!pipelineState.active) return;
-    // 评估流水线自动注入优先（现有行为不变，不弹浮层）
-    if (pipelineState.uploadQueue.length) {
-      const nextPath = pipelineState.uploadQueue.shift();
-      if (!nextPath) return;
-      event.preventDefault();
-      event.callback([nextPath]);
-      return;
+// 上传拦截（缺陷 #2 重做）：main 进程经 CDP 拦截 fileChooser 后推送 upload:choose-files，
+// 这里决定注入来源：评估流水线队列优先 → 工作台浮层 → 异常时降级系统选择器
+async function resolveUploadRequest(requestId, paths) {
+  try {
+    const result = await window.workbench.resolveUploadFiles(requestId, paths);
+    if (paths.length && !result?.ok) {
+      showToast(`文件注入失败：${result?.error || "未知错误"}，请改用系统选择器重试`, "error");
     }
-    event.preventDefault();
-    if (pendingFilePick) {
-      // 已有未完成的选择请求，直接取消新请求防止回调悬挂
-      event.callback([]);
-      return;
+  } catch (error) {
+    console.error("上传注入回传失败:", error);
+    showToast("文件注入失败，请重新点击上传按钮", "error");
+  }
+}
+
+async function handleUploadChooseFiles({ requestId } = {}) {
+  if (requestId === undefined) return;
+  // 拦截开关由 main 按活动任务状态切换；若状态竞态导致无活动任务仍被拦截，降级系统选择器
+  if (!pipelineState.active) {
+    try {
+      const paths = await window.workbench.pickSystemFiles();
+      await resolveUploadRequest(requestId, Array.isArray(paths) ? paths : []);
+    } catch (error) {
+      console.error("降级系统选择器失败:", error);
+      await resolveUploadRequest(requestId, []);
     }
-    openFilePickOverlay(event.callback);
-  });
+    return;
+  }
+  // 评估流水线自动注入优先（行为与 V3.1 一致，不弹浮层）
+  if (pipelineState.uploadQueue.length) {
+    const nextPath = pipelineState.uploadQueue.shift();
+    await resolveUploadRequest(requestId, nextPath ? [nextPath] : []);
+    return;
+  }
+  if (pendingFilePick) {
+    // 已有未完成的选择请求，直接取消新请求防止回调悬挂
+    await resolveUploadRequest(requestId, []);
+    return;
+  }
+  openFilePickOverlay((paths) => resolveUploadRequest(requestId, paths));
 }
 
 // ===== 全局上传注入浮层 =====
@@ -3559,5 +3577,6 @@ window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
+window.workbench.onUploadChooseFiles(handleUploadChooseFiles);
 window.workbench.onTaskFolderChanged(() => refreshRailTray());
 window.workbench.getExtensions().then(({ results }) => renderExtensionsInTopbar(results));
