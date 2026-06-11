@@ -47,6 +47,32 @@ let pipelineState = {
 const tabTerminals = new Map();
 const desktopStatusPollers = new Map();
 
+// ===== per-tab 资源清理注册表（缺陷 #3）=====
+// DOMNodeRemovedFromDocument 突变事件已被 Chromium 127+ 移除，原三处监听从未触发。
+// 现在所有标签级资源（轮询定时器、IPC 监听器、resize 监听器等）注册到这里，
+// 删除/重建标签的代码路径显式调用 runTabCleanup 统一释放，main 进程 pty/桌面应用并入同一出口。
+const tabCleanupRegistry = new Map();
+
+function registerTabCleanup(tabId, cleanup) {
+  if (typeof cleanup !== "function") return;
+  if (!tabCleanupRegistry.has(tabId)) tabCleanupRegistry.set(tabId, []);
+  tabCleanupRegistry.get(tabId).push(cleanup);
+}
+
+function runTabCleanup(tabId) {
+  const cleanups = tabCleanupRegistry.get(tabId) || [];
+  tabCleanupRegistry.delete(tabId);
+  for (const cleanup of cleanups) {
+    try {
+      cleanup();
+    } catch (error) {
+      console.warn(`标签 ${tabId} 资源清理失败:`, error);
+    }
+  }
+  // main 进程侧资源（CLI pty、嵌入式桌面应用进程）走同一出口
+  window.workbench.cleanupTabResources(tabId);
+}
+
 // Category configuration and state
 let collapsedCategories = {};
 try {
@@ -120,6 +146,11 @@ const elements = {
   taskDialog: document.querySelector("#task-dialog"),
   taskFormTitle: document.querySelector("#task-form-title"),
   taskForm: document.querySelector("#task-form"),
+  finishTaskDialog: document.querySelector("#finish-task-dialog"),
+  finishTaskSubmitted: document.querySelector("#finish-task-submitted"),
+  finishTaskUnsubmitted: document.querySelector("#finish-task-unsubmitted"),
+  finishTaskCancel: document.querySelector("#finish-task-cancel"),
+  finishTaskCancelX: document.querySelector("#finish-task-cancel-x"),
   addNewTask: document.querySelector("#btn-add-new-task"),
   sbTerminal: document.querySelector("#sb-terminal"),
   sbTaskChip: document.querySelector("#sb-task-chip"),
@@ -267,7 +298,10 @@ function renderTabs() {
 
   // Cleanup viewports for deleted tabs
   document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
-    if (!tabs.some((tab) => tab.id === viewport.dataset.id)) viewport.remove();
+    if (!tabs.some((tab) => tab.id === viewport.dataset.id)) {
+      runTabCleanup(viewport.dataset.id);
+      viewport.remove();
+    }
   });
 
   updateSidebarPulse();
@@ -568,7 +602,7 @@ function createTabViewport(tab) {
       });
     }
 
-    viewport.addEventListener("DOMNodeRemovedFromDocument", () => {
+    registerTabCleanup(tab.id, () => {
       unsub();
       if (unsubBound) unsubBound();
       if (desktopStatusPollers.has(tab.id)) {
@@ -693,7 +727,7 @@ function createTabViewport(tab) {
 
     tabTerminals.set(tab.id, { terminal: cliTerm, fitAddon: cliFitAddon });
 
-    viewport.addEventListener("DOMNodeRemovedFromDocument", () => {
+    registerTabCleanup(tab.id, () => {
       unsubData();
       tabTerminals.delete(tab.id);
     });
@@ -898,7 +932,7 @@ function createTabViewport(tab) {
         link.click();
       });
 
-      viewport.addEventListener("DOMNodeRemovedFromDocument", () => {
+      registerTabCleanup(tab.id, () => {
         window.removeEventListener("resize", resizeCanvas);
       });
     }
@@ -1692,11 +1726,16 @@ function updateStatusbarChip(task = null) {
     `${schoolShortName(task.school)} · ${task.course || ""} — ${stepName} ${index + 1}/${PIPELINE_STEPS.length}`;
 }
 
-async function finishActiveTask() {
+// 结束询问改为居中 dialog 三出口：已提交（completed）/ 未提交（unsubmitted）/ 取消（任务继续运行）
+function finishActiveTask() {
+  if (!pipelineState.active || !pipelineState.taskId) return;
+  elements.finishTaskDialog?.showModal();
+}
+
+async function completeActiveTask(submitted) {
   const taskId = pipelineState.taskId;
   const folderPath = pipelineState.taskFolder;
   const task = weeklyTasks.find((candidate) => candidate.id === taskId);
-  const submitted = window.confirm("任务已完成测试，是否已提交平台？\n\n确定：已提交，标记为已完成。\n取消：未提交，稍后在任务卡片中标记已完成。");
   pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
   updateTaskRail(null);
   if (taskId) {
@@ -2158,10 +2197,19 @@ async function updateTaskFields(id, fields) {
   return task;
 }
 
-function renderImportPreviewGroup(key, title, rows) {
+function renderImportPreviewGroup(key, title, rows, { collapsed = false, selectable = true } = {}) {
   const section = document.createElement("section");
   section.className = "import-group";
-  section.innerHTML = `<h3>${escapeHtml(title)} <span>${rows.length}</span></h3>`;
+  let container = section;
+  if (collapsed) {
+    // 无变化组默认折叠：<details> 不带 open，点 summary 展开
+    const details = document.createElement("details");
+    details.innerHTML = `<summary><h3>${escapeHtml(title)} <span>${rows.length}</span></h3></summary>`;
+    section.append(details);
+    container = details;
+  } else {
+    section.innerHTML = `<h3>${escapeHtml(title)} <span>${rows.length}</span></h3>`;
+  }
   const list = document.createElement("div");
   list.className = "import-list";
   if (!rows.length) {
@@ -2174,7 +2222,10 @@ function renderImportPreviewGroup(key, title, rows) {
       const task = row.task;
       const item = document.createElement("label");
       item.className = `import-row${!task.taskType ? " warning" : ""}`;
-      const checkbox = `<input type="checkbox" data-group="${key}" data-index="${index}" ${row.selected ? "checked" : ""} />`;
+      // 无变化组禁用勾选：导入它们没有意义，避免误操作
+      const checkbox = selectable
+        ? `<input type="checkbox" data-group="${key}" data-index="${index}" ${row.selected ? "checked" : ""} />`
+        : '<input type="checkbox" disabled />';
       const diffs = row.diffs?.length
         ? `<div class="import-diffs">${row.diffs.map((diff) => `<span><b>${escapeHtml(diff.label)}</b> ${escapeHtml(diff.from)} → ${escapeHtml(diff.to)}</span>`).join("")}</div>`
         : "";
@@ -2191,7 +2242,7 @@ function renderImportPreviewGroup(key, title, rows) {
       list.append(item);
     });
   }
-  section.append(list);
+  container.append(list);
   return section;
 }
 
@@ -2203,7 +2254,7 @@ function renderImportPreview() {
   elements.importPreviewGroups.replaceChildren(
     renderImportPreviewGroup("added", "新增", added),
     renderImportPreviewGroup("updated", "更新", updated),
-    renderImportPreviewGroup("unchanged", "无变化", unchanged),
+    renderImportPreviewGroup("unchanged", "无变化", unchanged, { collapsed: true, selectable: false }),
     renderUnparsedImportGroup(unparsed)
   );
   elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
@@ -2451,18 +2502,32 @@ async function startTaskAutomation(id) {
   }
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
-  const taskFolder = await window.workbench.prepareTaskFolder(task);
+  // 缺陷 #7：执行先落 prepare（1/5），任务文件夹创建成功后才推进 testing（2/5）
   pipelineState = {
     active: true,
     taskId: id,
-    step: "testing",
+    step: "prepare",
     chatPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
-    taskFolder,
+    taskFolder: "",
     uploadQueue: []
   };
-  await updateTaskFields(id, { status: "running", taskFolder });
+  await updateTaskFields(id, { status: "running", step: "prepare" });
   taskRailCollapsed = false;
+  updateTaskRail(task);
+  let taskFolder = "";
+  try {
+    taskFolder = await window.workbench.prepareTaskFolder(task);
+  } catch (error) {
+    console.error("创建任务文件夹失败:", error);
+  }
+  if (!taskFolder) {
+    showToast("任务文件夹创建失败，流程停留在「准备」步骤，请重试。", "error");
+    return;
+  }
+  pipelineState.taskFolder = taskFolder;
+  pipelineState.step = "testing";
+  await updateTaskFields(id, { taskFolder, step: "testing" });
   updateTaskRail(task);
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
 }
@@ -2573,7 +2638,7 @@ function runHermesPrompt() {
     `测试对话记录地址：${pipelineState.chatPath || ""}`,
     `评估报告地址：${pipelineState.reportPath || ""}`,
     "请读取上述本地文件路径后进行诊断分析。"
-  ].join("\\n");
+  ].join("\n");
   setTimeout(() => {
     const webview = activeWebview();
     webview?.executeJavaScript(`
@@ -2650,11 +2715,14 @@ function renderExtensionsInTopbar(results) {
 
 function toggleTabExtension(tabId, name, url) {
   const viewport = document.querySelector(`.tab-viewport[data-id="${tabId}"]`);
-  if (!viewport) return;
-  
-  const extPanel = viewport.querySelector(".tab-extension-panel");
-  const extBody = viewport.querySelector(".tab-extension-body");
-  const extTitle = viewport.querySelector(".tab-extension-title");
+  const extPanel = viewport?.querySelector(".tab-extension-panel");
+  const extBody = viewport?.querySelector(".tab-extension-body");
+  const extTitle = viewport?.querySelector(".tab-extension-title");
+  // 缺陷 #4：任务中心/桌面应用/CLI 等非 web 标签没有扩展面板结构，guard + toast，不崩不静默
+  if (!viewport || !extPanel || !extBody || !extTitle) {
+    showToast("当前标签页不支持扩展面板", "error");
+    return;
+  }
   
   // Check if this extension is already open
   const existingWebview = extBody.querySelector("webview");
@@ -2840,6 +2908,16 @@ elements.railPause?.addEventListener("click", () => {
   if (pipelineState.taskId) pauseTaskAutomation(pipelineState.taskId);
 });
 elements.railFinish?.addEventListener("click", () => finishActiveTask());
+elements.finishTaskSubmitted?.addEventListener("click", () => {
+  elements.finishTaskDialog?.close();
+  completeActiveTask(true);
+});
+elements.finishTaskUnsubmitted?.addEventListener("click", () => {
+  elements.finishTaskDialog?.close();
+  completeActiveTask(false);
+});
+elements.finishTaskCancel?.addEventListener("click", () => elements.finishTaskDialog?.close());
+elements.finishTaskCancelX?.addEventListener("click", () => elements.finishTaskDialog?.close());
 elements.filePickInject?.addEventListener("click", () => {
   if (filePickSelection.size) resolveFilePick([...filePickSelection]);
 });
@@ -2994,7 +3072,7 @@ elements.tabForm.addEventListener("submit", (event) => {
   const existing = tabs.findIndex((tab) => tab.id === data.id);
   if (existing >= 0) {
     tabs[existing] = data;
-    window.workbench.cleanupTabResources(data.id);
+    runTabCleanup(data.id);
     document.querySelector(`.tab-viewport[data-id="${data.id}"]`)?.remove();
   } else {
     tabs.push(data);
@@ -3021,7 +3099,7 @@ document.querySelector("#delete-tab-button").addEventListener("click", () => {
     toggleBottomSidebar(false);
   }
   
-  window.workbench.cleanupTabResources(id);
+  runTabCleanup(id);
 
   tabs = tabs.filter((tab) => tab.id !== id);
   document.querySelector(`.tab-viewport[data-id="${id}"]`)?.remove();

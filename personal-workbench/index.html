@@ -273,6 +273,25 @@
       </div>
     </div>
 
+    <dialog id="finish-task-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <span class="eyebrow">任务流程</span>
+          <h2>结束任务</h2>
+        </div>
+        <button id="finish-task-cancel-x" class="icon-button" type="button" aria-label="取消">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="helper-text">任务已完成测试，是否已提交平台？结束后将清理临时任务文件夹；取消则任务继续运行。</p>
+      <div class="modal-actions">
+        <button id="finish-task-cancel" class="secondary-button" type="button">取消</button>
+        <span class="action-spacer"></span>
+        <button id="finish-task-unsubmitted" class="secondary-button" type="button">未提交，稍后标记</button>
+        <button id="finish-task-submitted" class="primary-button" type="button">已提交，标记完成</button>
+      </div>
+    </dialog>
+
     <dialog id="task-dialog" class="modal">
       <form id="task-form" method="dialog">
         <div class="modal-heading">
