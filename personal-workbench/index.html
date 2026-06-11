@@ -136,6 +136,12 @@
               <div><div id="stat-paused" class="num">0</div><div class="lbl">已暂停</div></div>
             </div>
             <div class="stat-card">
+              <div class="stat-ico stat-ico-unsubmitted">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-5"/></svg>
+              </div>
+              <div><div id="stat-unsubmitted" class="num">0</div><div class="lbl">未提交</div></div>
+            </div>
+            <div class="stat-card">
               <div class="stat-ico stat-ico-completed">
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
               </div>
@@ -147,6 +153,9 @@
 
           <div class="section-label">待处理 / 已暂停</div>
           <div id="task-grid-active" class="task-grid"></div>
+
+          <div id="section-unsubmitted" class="section-label section-label-unsubmitted" hidden>未提交</div>
+          <div id="task-grid-unsubmitted" class="task-grid" hidden></div>
 
           <div class="section-label section-label-done">已完成</div>
           <div id="task-grid-done" class="task-grid"></div>

@@ -109,9 +109,12 @@ const elements = {
   statTotal: document.querySelector("#stat-total"),
   statRunning: document.querySelector("#stat-running"),
   statPaused: document.querySelector("#stat-paused"),
+  statUnsubmitted: document.querySelector("#stat-unsubmitted"),
   statCompleted: document.querySelector("#stat-completed"),
   focusCard: document.querySelector("#focus-card"),
   taskGridActive: document.querySelector("#task-grid-active"),
+  sectionUnsubmitted: document.querySelector("#section-unsubmitted"),
+  taskGridUnsubmitted: document.querySelector("#task-grid-unsubmitted"),
   taskGridDone: document.querySelector("#task-grid-done"),
   btnImportTodo: document.querySelector("#btn-import-todo"),
   taskDialog: document.querySelector("#task-dialog"),
@@ -1325,6 +1328,9 @@ function todoImportKey(task) {
 
 function normalizeImportedTodoTask(task) {
   const quantity = Math.max(1, Number(task.quantity) || 1);
+  const defaultMarks = task.subtaskMarks || (["completed", "unsubmitted"].includes(task.status)
+    ? Object.fromEntries(Array.from({ length: quantity }, (_item, index) => [index + 1, "done"]))
+    : {});
   return {
     school: task.school || "",
     course: task.course || "",
@@ -1334,7 +1340,7 @@ function normalizeImportedTodoTask(task) {
     owner: task.owner || "",
     weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
     note: task.note || "",
-    subtasks: subtasksFromMarks(quantity, task.subtaskMarks || {})
+    subtasks: subtasksFromMarks(quantity, defaultMarks)
   };
 }
 
@@ -1690,11 +1696,21 @@ function updateStatusbarChip(task = null) {
 async function finishActiveTask() {
   const taskId = pipelineState.taskId;
   const folderPath = pipelineState.taskFolder;
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
+  const submitted = window.confirm("任务已完成测试，是否已提交平台？\n\n确定：已提交，标记为已完成。\n取消：未提交，稍后在任务卡片中标记已完成。");
   pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
   updateTaskRail(null);
-  if (taskId) await updateTaskFields(taskId, { status: "completed", chatLogPath: "", reportPath: "", taskFolder: "" });
+  if (taskId) {
+    await updateTaskFields(taskId, {
+      status: submitted ? "completed" : "unsubmitted",
+      chatLogPath: "",
+      reportPath: "",
+      taskFolder: "",
+      subtasks: markAllSubtasksDone(task?.subtasks, task?.quantity)
+    });
+  }
   if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
-  showToast("任务已结束，临时文件已清理", "success");
+  showToast(submitted ? "任务已完成，临时文件已清理" : "任务已标记为未提交，临时文件已清理", "success");
 }
 
 function taskStatusLabel(status) {
@@ -1703,6 +1719,7 @@ function taskStatusLabel(status) {
     running: "进行中",
     evaluating: "评估中",
     paused: "已暂停",
+    unsubmitted: "未提交",
     completed: "已完成"
   }[status] || "待处理";
 }
@@ -1769,6 +1786,34 @@ function normalizeWeeklyTask(task = {}) {
   };
 }
 
+function markAllSubtasksDone(subtasks, quantity) {
+  return normalizeSubtasks(subtasks, quantity).map((subtask) => ({ ...subtask, status: "done" }));
+}
+
+function weekdayRank(weekday) {
+  const index = TODO_WEEKDAYS.indexOf(weekday);
+  return index >= 0 ? index : TODO_WEEKDAYS.length;
+}
+
+function sortTasksByWeekday(tasks) {
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => weekdayRank(a.task.weekday) - weekdayRank(b.task.weekday) || a.index - b.index)
+    .map((entry) => entry.task);
+}
+
+function nextSubtaskStatus(status) {
+  return status === "pending" ? "done" : status === "done" ? "unconfirmed" : "pending";
+}
+
+function subtaskStatusLabel(status) {
+  return {
+    pending: "待做",
+    done: "已完成",
+    unconfirmed: "待确认"
+  }[status] || "待做";
+}
+
 async function persistWeeklyTasks() {
   weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks.map(normalizeWeeklyTask));
   renderTaskCenter();
@@ -1795,13 +1840,16 @@ function getIsoWeekNumber(date = new Date()) {
 
 // 任务当前进度：返回 { index, label, ratio, barClass }
 function taskProgressInfo(task) {
-  if (task.status === "completed") {
-    return { label: `${PIPELINE_STEPS.length}/${PIPELINE_STEPS.length} 全部完成`, ratio: 1, barClass: "full" };
-  }
-  if (task.status === "pending") {
-    return { label: `0/${PIPELINE_STEPS.length} 未开始`, ratio: 0, barClass: "" };
-  }
   const isActiveTask = pipelineState.active && pipelineState.taskId === task.id;
+  if (!isActiveTask && !["running", "evaluating"].includes(task.status)) {
+    const subtasks = normalizeSubtasks(task.subtasks, task.quantity);
+    const done = subtasks.filter((subtask) => subtask.status === "done").length;
+    return {
+      label: `子任务 ${done}/${subtasks.length} 完成`,
+      ratio: done / subtasks.length,
+      barClass: done === subtasks.length ? "full" : (task.status === "paused" ? "warn" : "")
+    };
+  }
   const step = isActiveTask ? pipelineState.step : task.step;
   const index = pipelineStepIndex(step);
   const stepNumber = index + 1;
@@ -1868,19 +1916,43 @@ function closeAllCardMenus() {
   document.querySelectorAll(".tc-menu-pop.open").forEach((pop) => pop.classList.remove("open"));
 }
 
+function closeAllSubtaskPopovers() {
+  document.querySelectorAll(".subtask-popover.open").forEach((pop) => pop.classList.remove("open"));
+}
+
+async function updateTaskSubtaskStatus(taskId, subtaskIndex, status) {
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  const subtasks = normalizeSubtasks(task.subtasks, task.quantity).map((subtask) =>
+    subtask.index === subtaskIndex ? { ...subtask, status } : subtask
+  );
+  await updateTaskFields(taskId, { subtasks });
+}
+
 function taskCardElement(task) {
   const card = document.createElement("div");
-  card.className = `task-card${task.status === "completed" ? " completed" : ""}`;
+  card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}`;
   card.dataset.id = task.id;
   const progress = taskProgressInfo(task);
+  const subtasks = normalizeSubtasks(task.subtasks, task.quantity);
+  const subtaskRows = subtasks.map((subtask) => `
+    <button class="subtask-row" type="button" data-index="${subtask.index}" data-status="${escapeHtml(subtask.status)}">
+      <span>任务 ${subtask.index}</span>
+      <b class="subtask-state ${escapeHtml(subtask.status)}">${escapeHtml(subtaskStatusLabel(subtask.status))}</b>
+    </button>
+  `).join("");
   const chips = [];
   if (task.chatLogPath) chips.push('<span class="file-chip">dialogue.json</span>');
   if (task.reportPath) chips.push('<span class="file-chip">eval_report.pdf</span>');
   const chipsHtml = chips.length ? chips.join("") : '<span class="file-chip empty">尚无产物</span>';
+  const weekdayHtml = task.weekday ? `<span>交付 <b>${escapeHtml(task.weekday)}</b></span>` : "";
+  const noteHtml = task.note ? `<div class="tc-note">备注：${escapeHtml(task.note)}</div>` : "";
 
   let mainAction = "";
   if (task.status === "paused") {
     mainAction = '<button class="btn btn-teal btn-sm task-resume" type="button">继续</button>';
+  } else if (task.status === "unsubmitted") {
+    mainAction = '<button class="btn btn-teal btn-sm task-mark-completed" type="button">标记已完成</button>';
   } else if (task.status === "completed") {
     mainAction = '<button class="btn btn-ghost btn-sm task-open-folder" type="button">打开产物文件夹</button>';
   } else {
@@ -1895,11 +1967,13 @@ function taskCardElement(task) {
       </div>
       <span class="tc-status task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span>
     </div>
-    <div class="tc-meta"><span>负责人 <b>${escapeHtml(task.owner || "未指定")}</b></span><span>数量 <b>${Number(task.quantity) || 1}</b></span></div>
-    <div class="tc-progress">
+    <div class="tc-meta"><span>负责人 <b>${escapeHtml(task.owner || "未指定")}</b></span><span>数量 <b>${Number(task.quantity) || 1}</b></span>${weekdayHtml}</div>
+    ${noteHtml}
+    <button class="tc-progress" type="button" title="点击维护子任务进度">
       <div class="tc-bar ${progress.barClass}"><i style="width:${Math.round(progress.ratio * 100)}%"></i></div>
       <span>${escapeHtml(progress.label)}</span>
-    </div>
+    </button>
+    <div class="subtask-popover" aria-label="子任务清单">${subtaskRows}</div>
     <div class="tc-files">${chipsHtml}</div>
     <div class="tc-foot">
       ${mainAction}
@@ -1907,7 +1981,7 @@ function taskCardElement(task) {
       <div class="tc-menu-wrap">
         <button class="icon-button tc-menu-toggle" type="button" title="更多操作" aria-label="更多操作">${svgIcon("dots")}</button>
         <div class="tc-menu-pop">
-          ${task.status === "completed" ? '<button class="task-reopen" type="button">重新打开任务</button>' : ""}
+          ${["completed", "unsubmitted"].includes(task.status) ? '<button class="task-reopen" type="button">重新打开任务</button>' : ""}
           <button class="task-edit" type="button">编辑</button>
           <button class="task-delete danger" type="button">删除</button>
         </div>
@@ -1917,6 +1991,10 @@ function taskCardElement(task) {
 
   card.querySelector(".task-run")?.addEventListener("click", () => startTaskAutomation(task.id));
   card.querySelector(".task-resume")?.addEventListener("click", () => resumeTaskAutomation(task.id));
+  card.querySelector(".task-mark-completed")?.addEventListener("click", () =>
+    updateTaskFields(task.id, { status: "completed", subtasks: markAllSubtasksDone(task.subtasks, task.quantity) })
+      .then(() => showToast("任务已标记为已完成", "success"))
+  );
   card.querySelector(".task-open-folder")?.addEventListener("click", () => {
     if (task.taskFolder) {
       window.workbench.openTaskFolder(task.taskFolder);
@@ -1928,7 +2006,21 @@ function taskCardElement(task) {
   card.querySelector(".tc-menu-toggle").addEventListener("click", () => {
     const willOpen = !menuPop.classList.contains("open");
     closeAllCardMenus();
+    closeAllSubtaskPopovers();
     menuPop.classList.toggle("open", willOpen);
+  });
+  const subtaskPopover = card.querySelector(".subtask-popover");
+  card.querySelector(".tc-progress")?.addEventListener("click", () => {
+    const willOpen = !subtaskPopover.classList.contains("open");
+    closeAllCardMenus();
+    closeAllSubtaskPopovers();
+    subtaskPopover.classList.toggle("open", willOpen);
+  });
+  card.querySelectorAll(".subtask-row").forEach((row) => {
+    row.addEventListener("click", async () => {
+      const current = row.dataset.status || "pending";
+      await updateTaskSubtaskStatus(task.id, Number(row.dataset.index), nextSubtaskStatus(current));
+    });
   });
   card.querySelector(".task-reopen")?.addEventListener("click", () => {
     closeAllCardMenus();
@@ -1952,11 +2044,13 @@ function renderTaskCenter() {
   const total = weeklyTasks.length;
   const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
   const paused = weeklyTasks.filter((task) => task.status === "paused").length;
+  const unsubmitted = weeklyTasks.filter((task) => task.status === "unsubmitted").length;
   const completed = weeklyTasks.filter((task) => task.status === "completed").length;
 
   elements.statTotal.textContent = String(total);
   elements.statRunning.textContent = String(running);
   elements.statPaused.textContent = String(paused);
+  if (elements.statUnsubmitted) elements.statUnsubmitted.textContent = String(unsubmitted);
   elements.statCompleted.textContent = String(completed);
   elements.homeWeekSub.textContent = `${new Date().getFullYear()} 年第 ${getIsoWeekNumber()} 周 · 任务文档目录已挂载`;
 
@@ -1966,8 +2060,9 @@ function renderTaskCenter() {
 
   renderFocusCard();
 
-  // 进行中/评估中任务只出现在聚焦卡；网格仅展示 待处理+已暂停 / 已完成
-  const activeGroup = weeklyTasks.filter((task) => task.status === "pending" || task.status === "paused");
+  // 进行中/评估中任务只出现在聚焦卡；网格展示 待处理+已暂停 / 未提交 / 已完成
+  const activeGroup = sortTasksByWeekday(weeklyTasks.filter((task) => task.status === "pending" || task.status === "paused"));
+  const unsubmittedGroup = weeklyTasks.filter((task) => task.status === "unsubmitted");
   const doneGroup = weeklyTasks.filter((task) => task.status === "completed");
 
   elements.taskGridActive.replaceChildren();
@@ -1978,6 +2073,13 @@ function renderTaskCenter() {
     empty.className = "task-grid-empty";
     empty.textContent = "暂无待处理任务。点击右上角「添加任务」开始。";
     elements.taskGridActive.append(empty);
+  }
+
+  if (elements.sectionUnsubmitted && elements.taskGridUnsubmitted) {
+    elements.sectionUnsubmitted.hidden = unsubmittedGroup.length <= 0;
+    elements.taskGridUnsubmitted.hidden = unsubmittedGroup.length <= 0;
+    elements.taskGridUnsubmitted.replaceChildren();
+    unsubmittedGroup.forEach((task) => elements.taskGridUnsubmitted.append(taskCardElement(task)));
   }
 
   elements.taskGridDone.replaceChildren();
@@ -2029,10 +2131,10 @@ function editWeeklyTask(id) {
   openTaskForm(task);
 }
 
-// 重新打开已完成任务：仅回退状态到待处理；任务文件夹与产物（chatLogPath/reportPath）全部保留
+// 重新打开已完成/未提交任务：仅回退状态到待处理；任务文件夹与产物（chatLogPath/reportPath）全部保留
 async function reopenWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
-  if (!task || task.status !== "completed") return;
+  if (!task || !["completed", "unsubmitted"].includes(task.status)) return;
   await updateTaskFields(id, { status: "pending" });
   showToast("任务已重新打开", "success");
 }
@@ -3443,6 +3545,10 @@ document.addEventListener("click", (event) => {
   const openMenu = document.querySelector(".tc-menu-pop.open");
   if (openMenu && !path.some((node) => node instanceof Element && node.classList?.contains("tc-menu-wrap"))) {
     closeAllCardMenus();
+  }
+  const openSubtasks = document.querySelector(".subtask-popover.open");
+  if (openSubtasks && !path.some((node) => node instanceof Element && (node.classList?.contains("subtask-popover") || node.classList?.contains("tc-progress")))) {
+    closeAllSubtaskPopovers();
   }
 });
 
