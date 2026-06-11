@@ -353,6 +353,27 @@
       </form>
     </dialog>
 
+    <dialog id="import-preview-dialog" class="modal wide-modal">
+      <div class="import-preview-panel">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Todo Import</span>
+            <h2>导入预览</h2>
+          </div>
+          <button id="import-preview-cancel-x" class="icon-button" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p id="import-preview-summary" class="helper-text"></p>
+        <div id="import-preview-groups" class="import-preview-groups"></div>
+        <div class="modal-actions">
+          <span class="action-spacer"></span>
+          <button id="import-preview-cancel" class="secondary-button" type="button">取消</button>
+          <button id="import-preview-apply" class="primary-button" type="button">导入所选</button>
+        </div>
+      </div>
+    </dialog>
+
     <dialog id="file-pick-dialog" class="modal">
       <div class="modal-heading">
         <div>

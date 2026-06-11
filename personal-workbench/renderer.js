@@ -113,6 +113,7 @@ const elements = {
   focusCard: document.querySelector("#focus-card"),
   taskGridActive: document.querySelector("#task-grid-active"),
   taskGridDone: document.querySelector("#task-grid-done"),
+  btnImportTodo: document.querySelector("#btn-import-todo"),
   taskDialog: document.querySelector("#task-dialog"),
   taskFormTitle: document.querySelector("#task-form-title"),
   taskForm: document.querySelector("#task-form"),
@@ -143,7 +144,15 @@ const elements = {
   prefsDialog: document.querySelector("#prefs-dialog"),
   prefsForm: document.querySelector("#prefs-form"),
   prefCropSide: document.querySelector("#pref-crop-side"),
-  prefCropPixels: document.querySelector("#pref-crop-pixels")
+  prefCropPixels: document.querySelector("#pref-crop-pixels"),
+  prefTodoPath: document.querySelector("#pref-todo-path"),
+  prefTodoChange: document.querySelector("#pref-todo-change"),
+  importPreviewDialog: document.querySelector("#import-preview-dialog"),
+  importPreviewSummary: document.querySelector("#import-preview-summary"),
+  importPreviewGroups: document.querySelector("#import-preview-groups"),
+  importPreviewApply: document.querySelector("#import-preview-apply"),
+  importPreviewCancel: document.querySelector("#import-preview-cancel"),
+  importPreviewCancelX: document.querySelector("#import-preview-cancel-x")
 };
 
 function readTabs() {
@@ -1211,6 +1220,16 @@ const TODO_TYPE_MAP = [
   ["作业批阅修改", "grading-edit"]
 ];
 const TODO_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const TODO_IMPORT_FIELDS = ["quantity", "status", "owner", "weekday", "subtasks", "note"];
+const TODO_IMPORT_FIELD_LABELS = {
+  quantity: "数量",
+  status: "状态",
+  owner: "负责人",
+  weekday: "星期",
+  subtasks: "子任务",
+  note: "备注"
+};
+let importPreviewState = null;
 
 // 括号备注 → 子任务标记：{ 编号: "done"|"unconfirmed" }；无法识别返回 null
 function parseSubtaskNote(text) {
@@ -1298,6 +1317,84 @@ function subtasksFromMarks(quantity, marks) {
     list.push({ index, status: marks?.[index] || "pending" });
   }
   return list;
+}
+
+function todoImportKey(task) {
+  return [task.school, task.course, task.taskType].map((part) => String(part || "").trim()).join("\u0001");
+}
+
+function normalizeImportedTodoTask(task) {
+  const quantity = Math.max(1, Number(task.quantity) || 1);
+  return {
+    school: task.school || "",
+    course: task.course || "",
+    taskType: typeof task.taskType === "string" ? task.taskType : "",
+    quantity,
+    status: task.status || "pending",
+    owner: task.owner || "",
+    weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
+    note: task.note || "",
+    subtasks: subtasksFromMarks(quantity, task.subtaskMarks || {})
+  };
+}
+
+function subtaskSummary(subtasks) {
+  const list = normalizeSubtasks(subtasks, subtasks?.length || 1);
+  const done = list.filter((item) => item.status === "done").map((item) => item.index);
+  const unconfirmed = list.filter((item) => item.status === "unconfirmed").map((item) => item.index);
+  const parts = [`${done.length}/${list.length} 已完成`];
+  if (done.length) parts.push(`完成 ${done.join("/")}`);
+  if (unconfirmed.length) parts.push(`待确认 ${unconfirmed.join("/")}`);
+  return parts.join("，");
+}
+
+function importFieldDisplayValue(field, value) {
+  if (field === "status") return taskStatusLabel(value);
+  if (field === "subtasks") return subtaskSummary(value);
+  if (field === "weekday") return value || "未设置";
+  if (field === "note") return value || "无";
+  return String(value ?? "");
+}
+
+function importFieldComparableValue(field, value) {
+  if (field === "subtasks") return JSON.stringify(normalizeSubtasks(value, value?.length || 1));
+  return JSON.stringify(value ?? "");
+}
+
+function todoImportDiffs(existing, incoming) {
+  return TODO_IMPORT_FIELDS
+    .filter((field) => importFieldComparableValue(field, existing[field]) !== importFieldComparableValue(field, incoming[field]))
+    .map((field) => ({
+      field,
+      label: TODO_IMPORT_FIELD_LABELS[field],
+      from: importFieldDisplayValue(field, existing[field]),
+      to: importFieldDisplayValue(field, incoming[field])
+    }));
+}
+
+function buildTodoImportPreview(parsedTasks, unparsed) {
+  const existingByKey = new Map(weeklyTasks.map((task) => [todoImportKey(task), task]));
+  const groups = { added: [], updated: [], unchanged: [], unparsed: unparsed || [] };
+  parsedTasks.map(normalizeImportedTodoTask).forEach((incoming) => {
+    const existing = existingByKey.get(todoImportKey(incoming));
+    if (!existing) {
+      groups.added.push({ task: incoming, selected: true });
+      return;
+    }
+    const diffs = todoImportDiffs(normalizeWeeklyTask(existing), incoming);
+    if (diffs.length) groups.updated.push({ task: incoming, existingId: existing.id, diffs, selected: true });
+    else groups.unchanged.push({ task: incoming, existingId: existing.id, selected: false });
+  });
+  return groups;
+}
+
+function setTodoPathDisplay(pathValue) {
+  if (elements.prefTodoPath) elements.prefTodoPath.textContent = pathValue || "未设置";
+}
+
+function importPreviewTaskTitle(task) {
+  const typeLabel = task.taskType ? taskTypeLabel(task.taskType) : "未匹配类型";
+  return `${task.school}《${task.course}》 ${typeLabel}`;
 }
 
 // 任务舱状态接线总入口：横幅已删除，统一驱动 任务舱 + 状态栏芯片 + 侧边栏脉冲点 + 任务中心
@@ -1960,6 +2057,160 @@ async function updateTaskFields(id, fields) {
   return task;
 }
 
+function renderImportPreviewGroup(key, title, rows) {
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>${escapeHtml(title)} <span>${rows.length}</span></h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    rows.forEach((row, index) => {
+      const task = row.task;
+      const item = document.createElement("label");
+      item.className = `import-row${!task.taskType ? " warning" : ""}`;
+      const checkbox = `<input type="checkbox" data-group="${key}" data-index="${index}" ${row.selected ? "checked" : ""} />`;
+      const diffs = row.diffs?.length
+        ? `<div class="import-diffs">${row.diffs.map((diff) => `<span><b>${escapeHtml(diff.label)}</b> ${escapeHtml(diff.from)} → ${escapeHtml(diff.to)}</span>`).join("")}</div>`
+        : "";
+      const warning = task.taskType ? "" : '<span class="import-warning">类型未匹配，导入后显示为未分类</span>';
+      item.innerHTML = `
+        ${checkbox}
+        <span class="import-row-body">
+          <strong>${escapeHtml(importPreviewTaskTitle(task))}</strong>
+          <small>${escapeHtml(taskStatusLabel(task.status))} · ${Number(task.quantity) || 1}个 · ${escapeHtml(task.owner || "未指定")}${task.weekday ? ` · ${escapeHtml(task.weekday)}` : ""}</small>
+          ${warning}
+          ${diffs}
+        </span>
+      `;
+      list.append(item);
+    });
+  }
+  section.append(list);
+  return section;
+}
+
+function renderImportPreview() {
+  if (!importPreviewState || !elements.importPreviewGroups) return;
+  const { added, updated, unchanged, unparsed } = importPreviewState;
+  elements.importPreviewSummary.textContent =
+    `新增 ${added.length} 条，更新 ${updated.length} 条，无变化 ${unchanged.length} 条，无法解析 ${unparsed.length} 条。新增和更新默认勾选。`;
+  elements.importPreviewGroups.replaceChildren(
+    renderImportPreviewGroup("added", "新增", added),
+    renderImportPreviewGroup("updated", "更新", updated),
+    renderImportPreviewGroup("unchanged", "无变化", unchanged),
+    renderUnparsedImportGroup(unparsed)
+  );
+  elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const rows = importPreviewState?.[checkbox.dataset.group];
+      const row = rows?.[Number(checkbox.dataset.index)];
+      if (row) row.selected = checkbox.checked;
+    });
+  });
+  const selectedCount = [...added, ...updated, ...unchanged].filter((row) => row.selected).length;
+  elements.importPreviewApply.disabled = selectedCount <= 0;
+  elements.importPreviewApply.textContent = selectedCount > 0 ? `导入所选 (${selectedCount})` : "导入所选";
+  elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
+    checkbox.addEventListener("change", renderImportPreview);
+  });
+}
+
+function renderUnparsedImportGroup(lines) {
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>无法解析 <span>${lines.length}</span></h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!lines.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    lines.forEach((line) => {
+      const item = document.createElement("div");
+      item.className = "import-row import-row-unparsed";
+      item.textContent = line;
+      list.append(item);
+    });
+  }
+  section.append(list);
+  return section;
+}
+
+function openImportPreview(parsed) {
+  importPreviewState = buildTodoImportPreview(parsed.tasks, parsed.unparsed);
+  renderImportPreview();
+  elements.importPreviewDialog?.showModal();
+}
+
+async function applyTodoImportSelection() {
+  if (!importPreviewState) return;
+  let addedCount = 0;
+  let updatedCount = 0;
+  const now = Date.now();
+  importPreviewState.added.filter((row) => row.selected).forEach((row, index) => {
+    weeklyTasks.push(normalizeWeeklyTask({ ...row.task, id: `task-${now}-${index}` }));
+    addedCount += 1;
+  });
+  importPreviewState.updated.filter((row) => row.selected).forEach((row) => {
+    const target = weeklyTasks.find((task) => task.id === row.existingId);
+    if (!target) return;
+    for (const field of TODO_IMPORT_FIELDS) target[field] = row.task[field];
+    updatedCount += 1;
+  });
+  await persistWeeklyTasks();
+  elements.importPreviewDialog?.close();
+  importPreviewState = null;
+  showToast(`导入完成：新增 ${addedCount} 条，更新 ${updatedCount} 条`, "success");
+}
+
+function todoReadErrorMessage(error) {
+  return {
+    "not-configured": "请先选择待做任务.txt",
+    "not-found": "待做任务.txt 不存在，请重新选择",
+    encoding: "文件编码不是 UTF-8，请用记事本另存为 UTF-8 后再导入"
+  }[error] || error || "读取待做任务失败";
+}
+
+async function handleTodoImport() {
+  try {
+    const prefs = await window.workbench.getWorkbenchPrefs();
+    if (!prefs?.todoFilePath) {
+      const picked = await window.workbench.pickTodoFile();
+      if (!picked) return;
+      setTodoPathDisplay(picked);
+    }
+    const result = await window.workbench.readTodoFile();
+    if (!result?.ok) {
+      showToast(todoReadErrorMessage(result?.error), "error");
+      return;
+    }
+    setTodoPathDisplay(result.path || "");
+    openImportPreview(parseTodoLines(result.text));
+  } catch (error) {
+    console.error("导入待做任务失败:", error);
+    showToast("导入待做任务失败", "error");
+  }
+}
+
+async function changeTodoFilePath() {
+  try {
+    const picked = await window.workbench.pickTodoFile();
+    if (!picked) return;
+    setTodoPathDisplay(picked);
+    showToast("待做任务路径已更新", "success");
+  } catch (error) {
+    console.error("选择待做任务失败:", error);
+    showToast("选择待做任务失败", "error");
+  }
+}
+
 function setupWebviewUploadInterceptor(webview) {
   webview.addEventListener("select-file-dialog", (event) => {
     // 无活动任务：不拦截，保持系统选择器原行为
@@ -2414,9 +2665,11 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
     const prefs = await window.workbench.getWorkbenchPrefs();
     elements.prefCropSide.value = prefs?.cropSide || "bottom";
     elements.prefCropPixels.value = prefs?.cropPixels || 100;
+    setTodoPathDisplay(prefs?.todoFilePath || "");
   } catch {
     elements.prefCropSide.value = "bottom";
     elements.prefCropPixels.value = 100;
+    setTodoPathDisplay("");
   }
   elements.prefsDialog.showModal();
 });
@@ -2447,6 +2700,17 @@ window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);
 elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
+elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
+elements.prefTodoChange?.addEventListener("click", (event) => {
+  event.preventDefault();
+  changeTodoFilePath();
+});
+elements.importPreviewApply?.addEventListener("click", () => applyTodoImportSelection());
+elements.importPreviewCancel?.addEventListener("click", () => elements.importPreviewDialog?.close());
+elements.importPreviewCancelX?.addEventListener("click", () => elements.importPreviewDialog?.close());
+elements.importPreviewDialog?.addEventListener("close", () => {
+  importPreviewState = null;
+});
 elements.sbTerminal?.addEventListener("click", () => toggleTerminal());
 elements.sbTaskChip?.addEventListener("click", expandTaskRail);
 elements.railHandle?.addEventListener("click", expandTaskRail);
