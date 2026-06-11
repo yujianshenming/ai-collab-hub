@@ -186,7 +186,14 @@ const elements = {
   importPreviewGroups: document.querySelector("#import-preview-groups"),
   importPreviewApply: document.querySelector("#import-preview-apply"),
   importPreviewCancel: document.querySelector("#import-preview-cancel"),
-  importPreviewCancelX: document.querySelector("#import-preview-cancel-x")
+  importPreviewCancelX: document.querySelector("#import-preview-cancel-x"),
+  btnWritebackTodo: document.querySelector("#btn-writeback-todo"),
+  writebackPreviewDialog: document.querySelector("#writeback-preview-dialog"),
+  writebackPreviewSummary: document.querySelector("#writeback-preview-summary"),
+  writebackPreviewGroups: document.querySelector("#writeback-preview-groups"),
+  writebackPreviewApply: document.querySelector("#writeback-preview-apply"),
+  writebackPreviewCancel: document.querySelector("#writeback-preview-cancel"),
+  writebackPreviewCancelX: document.querySelector("#writeback-preview-cancel-x")
 };
 
 function readTabs() {
@@ -1346,6 +1353,109 @@ function parseTodoLines(text) {
 }
 window.parseTodoLines = parseTodoLines;
 
+// ============ 待做任务.txt 写回（纯函数，无副作用，与上方解析器互为逆运算） ============
+
+const TODO_STATUS_TEXT = { pending: "未完成", unsubmitted: "未提交", completed: "已完成" };
+
+// 工作台扩展状态（running/evaluating/paused）txt 中无对应词，统一落回「未完成」
+function normalizeWriteBackStatus(status) {
+  return ["completed", "unsubmitted"].includes(status) ? status : "pending";
+}
+
+// subtasks → 括号备注文本；与 parseSubtaskNote / normalizeImportedTodoTask 的默认值约定互逆：
+// completed/unsubmitted 默认全 done、其余默认全 pending，与默认一致时不写括号
+function todoNoteFromSubtasks(subtasks, quantity, status) {
+  const list = normalizeSubtasks(subtasks, quantity);
+  const done = list.filter((item) => item.status === "done").map((item) => item.index);
+  const unconfirmed = list.filter((item) => item.status === "unconfirmed").map((item) => item.index);
+  const defaultAllDone = ["completed", "unsubmitted"].includes(status);
+  if (defaultAllDone && done.length === list.length && !unconfirmed.length) return "";
+  if (!defaultAllDone && !done.length && !unconfirmed.length) return "";
+  const segments = [];
+  if (done.length) segments.push(`已完成任务${done.join("/")}`);
+  if (unconfirmed.length) segments.push(`任务${unconfirmed.join("/")}待确认`);
+  return segments.join("，");
+}
+
+// 行尾字段序列化：数量 状态（括号备注） 负责人 星期（行首之外的全部可写字段）
+function serializeTodoTail(task) {
+  const quantity = Math.max(1, Number(task.quantity) || 1);
+  const status = normalizeWriteBackStatus(task.status);
+  const subtaskNote = todoNoteFromSubtasks(task.subtasks, quantity, status);
+  // 子任务标记与纯文本备注互斥（解析器只能二选一），有标记时标记优先
+  const noteText = subtaskNote || String(task.note || "").trim();
+  const parts = [`${quantity}个`, `${TODO_STATUS_TEXT[status]}${noteText ? `（${noteText}）` : ""}`];
+  const owner = String(task.owner || "").trim();
+  if (owner) parts.push(owner);
+  if (TODO_WEEKDAYS.includes(task.weekday)) parts.push(task.weekday);
+  return parts.join(" ");
+}
+
+// 工作台任务 → 完整 txt 行（「仅工作台」任务追加时使用，按 §0 样例格式生成）
+function serializeTodoLine(task) {
+  const typeKeyword = TODO_TYPE_MAP.find(([, value]) => value === task.taskType)?.[0] || "";
+  const head = `${String(task.school || "").trim()}《${String(task.course || "").trim()}》${typeKeyword}`;
+  return `${head} ${serializeTodoTail(task)}`;
+}
+
+// 单行合并：行首「学校《课程》任务类型」从原行原样保留；语义无变化时原行一字不动
+function mergeTodoLine(rawLine, task, parsedTask) {
+  const incoming = normalizeImportedTodoTask(parsedTask);
+  if (serializeTodoTail(incoming) === serializeTodoTail(task)) return rawLine;
+  const headMatch = rawLine.match(/^(\s*.+?《[^》]+》)/);
+  if (!headMatch) return serializeTodoLine(task);
+  let head = headMatch[1];
+  const typeKeyword = TODO_TYPE_MAP.find(([, value]) => value === task.taskType)?.[0] || "";
+  if (typeKeyword) {
+    const afterHead = rawLine.slice(head.length);
+    const leadingSpaces = afterHead.match(/^\s*/)[0];
+    if (afterHead.slice(leadingSpaces.length).startsWith(typeKeyword)) {
+      head = rawLine.slice(0, head.length + leadingSpaces.length + typeKeyword.length);
+    } else {
+      head += typeKeyword;
+    }
+  }
+  return `${head} ${serializeTodoTail(task)}`;
+}
+
+// 写回合并主函数：匹配键 = 学校+课程+任务类型 三元组；
+// 只改写匹配且语义有变化的行，未匹配/无法解析行一字不动；
+// appendTasks（用户勾选的「仅工作台」任务）按样例格式追加到文件末尾；
+// 输出保留原文件 BOM 与换行符风格（CRLF/LF）
+function mergeTodoFile(text, tasks, appendTasks = []) {
+  const source = String(text || "");
+  const hasBom = source.charCodeAt(0) === 0xfeff;
+  const body = hasBom ? source.slice(1) : source;
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const taskByKey = new Map((tasks || []).map((task) => [todoImportKey(task), task]));
+  const matchedKeys = new Set();
+  const entries = body.split(/\r?\n/).map((rawLine) => {
+    const parsedTask = parseTodoLines(rawLine).tasks[0];
+    const key = parsedTask ? todoImportKey(parsedTask) : "";
+    const workbenchTask = parsedTask && !matchedKeys.has(key) ? taskByKey.get(key) : null;
+    if (!workbenchTask) {
+      return { oldLine: rawLine, newLine: rawLine, matched: false, changed: false };
+    }
+    matchedKeys.add(key);
+    const newLine = mergeTodoLine(rawLine, workbenchTask, parsedTask);
+    return { oldLine: rawLine, newLine, matched: true, changed: newLine !== rawLine, task: workbenchTask };
+  });
+  const onlyInWorkbench = (tasks || []).filter((task) => !matchedKeys.has(todoImportKey(task)));
+  const appendLines = (appendTasks || []).map((task) => serializeTodoLine(task));
+  let lines = entries.map((entry) => entry.newLine);
+  if (appendLines.length) {
+    // 保留文件结尾空行：追加内容插在末尾连续空行之前
+    let insertAt = lines.length;
+    while (insertAt > 0 && lines[insertAt - 1] === "") insertAt -= 1;
+    lines = [...lines.slice(0, insertAt), ...appendLines, ...lines.slice(insertAt)];
+  }
+  const finalText = (hasBom ? "\uFEFF" : "") + lines.join(eol);
+  return { entries, onlyInWorkbench, appendLines, text: finalText, eol, hasBom };
+}
+
+window.serializeTodoLine = serializeTodoLine;
+window.mergeTodoFile = mergeTodoFile;
+
 // 子任务标记 + 数量 → subtasks 数组（index 从 1 起，未标记默认 pending）
 function subtasksFromMarks(quantity, marks) {
   const list = [];
@@ -2351,6 +2461,157 @@ async function handleTodoImport() {
   }
 }
 
+// ===== 任务状态写回待做任务.txt（仅手动触发） =====
+let writebackState = null;
+
+function renderWritebackChangedGroup(entries) {
+  const changed = entries.filter((entry) => entry.changed);
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>变更 <span>${changed.length}</span></h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!changed.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    for (const entry of changed) {
+      const item = document.createElement("div");
+      item.className = "import-row wb-diff-row";
+      item.innerHTML = `
+        <span class="import-row-body">
+          <small class="wb-diff-old">${escapeHtml(entry.oldLine)}</small>
+          <small class="wb-diff-new">${escapeHtml(entry.newLine)}</small>
+        </span>
+      `;
+      list.append(item);
+    }
+  }
+  section.append(list);
+  return section;
+}
+
+function renderWritebackUnchangedGroup(entries) {
+  const unchanged = entries.filter((entry) => !entry.changed && entry.oldLine.trim());
+  const section = document.createElement("section");
+  section.className = "import-group";
+  const details = document.createElement("details");
+  details.className = "wb-unchanged";
+  details.innerHTML = `<summary>无变化 <span>${unchanged.length}</span>（含未匹配/无法解析行，原样保留）</summary>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  for (const entry of unchanged) {
+    const item = document.createElement("div");
+    item.className = "import-row import-row-unparsed";
+    item.textContent = entry.oldLine;
+    list.append(item);
+  }
+  if (!unchanged.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  }
+  details.append(list);
+  section.append(details);
+  return section;
+}
+
+function renderWritebackOnlyGroup(onlyInWorkbench, appendSelected) {
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>仅工作台 <span>${onlyInWorkbench.length}</span>（默认不写回，勾选后追加到文件末尾）</h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!onlyInWorkbench.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    onlyInWorkbench.forEach((task, index) => {
+      const item = document.createElement("label");
+      item.className = "import-row";
+      item.innerHTML = `
+        <input type="checkbox" data-append-index="${index}" ${appendSelected.has(index) ? "checked" : ""} />
+        <span class="import-row-body">
+          <strong>${escapeHtml(importPreviewTaskTitle(task))}</strong>
+          <small>${escapeHtml(serializeTodoLine(task))}</small>
+        </span>
+      `;
+      list.append(item);
+    });
+  }
+  section.append(list);
+  return section;
+}
+
+function renderWritebackPreview() {
+  if (!writebackState || !elements.writebackPreviewGroups) return;
+  const { merge, appendSelected } = writebackState;
+  const changedCount = merge.entries.filter((entry) => entry.changed).length;
+  elements.writebackPreviewSummary.textContent =
+    `变更 ${changedCount} 行，仅工作台 ${merge.onlyInWorkbench.length} 条（已勾选 ${appendSelected.size}）。确认前将自动备份 待做任务.txt.bak。`;
+  elements.writebackPreviewGroups.replaceChildren(
+    renderWritebackChangedGroup(merge.entries),
+    renderWritebackUnchangedGroup(merge.entries),
+    renderWritebackOnlyGroup(merge.onlyInWorkbench, appendSelected)
+  );
+  elements.writebackPreviewGroups.querySelectorAll("input[data-append-index]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const index = Number(checkbox.dataset.appendIndex);
+      if (checkbox.checked) appendSelected.add(index);
+      else appendSelected.delete(index);
+      renderWritebackPreview();
+    });
+  });
+  elements.writebackPreviewApply.disabled = changedCount <= 0 && appendSelected.size <= 0;
+  elements.writebackPreviewApply.textContent =
+    changedCount + appendSelected.size > 0 ? `确认写回 (${changedCount + appendSelected.size})` : "确认写回";
+}
+
+async function handleTodoWriteback() {
+  try {
+    const result = await window.workbench.readTodoFile();
+    if (!result?.ok) {
+      showToast(todoReadErrorMessage(result?.error), "error");
+      return;
+    }
+    writebackState = {
+      sourceText: result.text,
+      merge: mergeTodoFile(result.text, weeklyTasks),
+      appendSelected: new Set()
+    };
+    renderWritebackPreview();
+    elements.writebackPreviewDialog?.showModal();
+  } catch (error) {
+    console.error("写回预览失败:", error);
+    showToast("写回预览失败", "error");
+  }
+}
+
+async function applyTodoWriteback() {
+  if (!writebackState) return;
+  const { sourceText, merge, appendSelected } = writebackState;
+  const appendTasks = merge.onlyInWorkbench.filter((_task, index) => appendSelected.has(index));
+  const finalMerge = mergeTodoFile(sourceText, weeklyTasks, appendTasks);
+  const changedCount = finalMerge.entries.filter((entry) => entry.changed).length;
+  try {
+    const result = await window.workbench.writeTodoFile(finalMerge.text);
+    if (!result?.ok) {
+      showToast(`写回失败：${todoReadErrorMessage(result?.error)}`, "error");
+      return;
+    }
+    elements.writebackPreviewDialog?.close();
+    showToast(`写回完成：变更 ${changedCount} 行，追加 ${appendTasks.length} 行，备份已生成 .bak`, "success");
+  } catch (error) {
+    console.error("写回待做任务失败:", error);
+    showToast("写回待做任务失败", "error");
+  }
+}
+
 async function changeTodoFilePath() {
   try {
     const picked = await window.workbench.pickTodoFile();
@@ -2889,6 +3150,13 @@ window.workbench.onMenuOpenSettings(openSettings);
 elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
 elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
+elements.btnWritebackTodo?.addEventListener("click", () => handleTodoWriteback());
+elements.writebackPreviewApply?.addEventListener("click", () => applyTodoWriteback());
+elements.writebackPreviewCancel?.addEventListener("click", () => elements.writebackPreviewDialog?.close());
+elements.writebackPreviewCancelX?.addEventListener("click", () => elements.writebackPreviewDialog?.close());
+elements.writebackPreviewDialog?.addEventListener("close", () => {
+  writebackState = null;
+});
 elements.prefTodoChange?.addEventListener("click", (event) => {
   event.preventDefault();
   changeTodoFilePath();

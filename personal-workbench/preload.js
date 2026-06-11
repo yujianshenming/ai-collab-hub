@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("workbench", {
   setWorkbenchPrefs: (prefs) => ipcRenderer.invoke("prefs:set-workbench", prefs),
   pickTodoFile: () => ipcRenderer.invoke("dialog:pick-todo-file"),
   readTodoFile: () => ipcRenderer.invoke("tasks:read-todo-file"),
+  writeTodoFile: (text) => ipcRenderer.invoke("tasks:write-todo-file", text),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

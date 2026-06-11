@@ -1189,6 +1189,26 @@ function registerIpc() {
     if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
     return { ok: true, text, path: todoPath };
   });
+  // 写回待做任务.txt：只允许写偏好中登记的那一个 txt 路径 + 同目录 .bak（每次覆盖，保留最近一次）；
+  // renderer 负责生成完整新文本（BOM/换行风格已在纯函数中保持），这里不做内容加工
+  ipcMain.handle("tasks:write-todo-file", (_event, newText) => {
+    const todoPath = loadWorkbenchPrefs().todoFilePath;
+    if (!todoPath) return { ok: false, error: "not-configured" };
+    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    if (typeof newText !== "string" || !newText.trim()) return { ok: false, error: "写回内容为空，已取消" };
+    const backupPath = `${todoPath}.bak`;
+    try {
+      fs.copyFileSync(todoPath, backupPath);
+    } catch (error) {
+      return { ok: false, error: `备份失败，已取消写回: ${error.message}`, path: todoPath };
+    }
+    try {
+      fs.writeFileSync(todoPath, newText, "utf8");
+    } catch (error) {
+      return { ok: false, error: `写入失败: ${error.message}`, path: todoPath };
+    }
+    return { ok: true, path: todoPath, backupPath };
+  });
   // 图片裁切去水印：nativeImage 实现，生成 原名_cropped 新文件，原图保留
   ipcMain.handle("tasks:crop-image", (_event, filePath) => {
     const target = resolveTaskPath(filePath);
