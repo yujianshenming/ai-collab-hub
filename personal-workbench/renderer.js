@@ -2058,7 +2058,7 @@ async function openFilePickOverlay(callback) {
 }
 
 function findTabByUrlPart(part) {
-  return tabs.find((tab) => tab.url.toLowerCase().includes(part));
+  return tabs.find((tab) => String(tab.url || "").toLowerCase().includes(part));
 }
 
 function activateOrCreateTab(id, name, url) {
