@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: chrome-extension:; frame-src https: http: file: chrome-extension:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>个人工作台</title>
+    <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <header class="brand">
+          <div class="brand-mark">W</div>
+          <div>
+            <strong>个人工作台</strong>
+            <span>Task-First Workbench</span>
+          </div>
+        </header>
+
+        <div class="nav-group">
+          <button id="nav-task-center" class="nav-item" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+            任务中心
+            <span id="task-center-badge" class="badge-dot" hidden>0</span>
+          </button>
+        </div>
+
+        <div class="sidebar-label">
+          <span>工作空间</span>
+          <button id="add-tab-button" class="icon-button" type="button" aria-label="添加标签页" title="添加标签页">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+        </div>
+        <nav id="tab-list" class="tab-list" aria-label="工作台标签"></nav>
+
+        <footer class="sidebar-footer">
+          <div class="connection-status">
+            <span class="status-dot"></span>
+            本地工作台已就绪
+          </div>
+        </footer>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <button id="sidebar-toggle" class="icon-button sidebar-toggle-button" type="button" aria-label="切换侧边栏" title="切换侧边栏" aria-expanded="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <line x1="9" y1="3" x2="9" y2="21"></line>
+            </svg>
+          </button>
+          <div class="crumb">
+            <strong id="active-title">任务中心</strong>
+            <span id="crumb-sub"></span>
+          </div>
+          <div id="address-bar" class="address-bar">
+            <button id="back-button" class="icon-button" type="button" aria-label="后退" title="后退">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <button id="forward-button" class="icon-button" type="button" aria-label="前进" title="前进">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button id="reload-button" class="icon-button" type="button" aria-label="刷新" title="刷新">
+              <svg class="ic-reload" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <svg class="ic-stop" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            <input id="address-input" type="url" aria-label="网址" />
+            <button id="get-task-id-button" class="icon-button address-bar-action" type="button" title="提取并复制当前网址的 trainTaskId" aria-label="提取并复制当前网址的 trainTaskId">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button id="go-button" class="go-button" type="button" aria-label="打开" title="打开">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+                <polyline points="12 5 19 12 12 19"></polyline>
+              </svg>
+            </button>
+          </div>
+          <div class="topbar-actions">
+            <div id="extensions-bar" class="extensions-bar" aria-label="扩展工具栏"></div>
+            <div id="menu-more" class="menu-more">
+              <button id="menu-more-button" class="icon-button" type="button" aria-label="更多" title="更多" aria-expanded="false">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+              </button>
+              <div id="menu-more-pop" class="menu-pop">
+                <button id="menu-settings-button" type="button">扩展设置</button>
+                <button id="menu-prefs-button" type="button">工作台偏好</button>
+                <button data-command="copy" type="button">复制</button>
+                <button data-command="paste" type="button">粘贴</button>
+                <button data-command="selectAll" type="button">全选</button>
+                <button id="menu-reload-button" type="button">重新加载页面</button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <section id="task-center-view" class="task-center-view" aria-label="任务中心">
+          <div class="home-head">
+            <div>
+              <h1>本周任务</h1>
+              <p id="home-week-sub"></p>
+            </div>
+            <div class="home-head-actions">
+              <button id="btn-import-todo" class="btn btn-ghost" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                从待做任务导入
+              </button>
+              <button id="btn-add-new-task" class="btn btn-cta" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                添加任务
+              </button>
+            </div>
+          </div>
+
+          <div class="stat-row">
+            <div class="stat-card">
+              <div class="stat-ico stat-ico-total">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              </div>
+              <div><div id="stat-total" class="num">0</div><div class="lbl">本周任务</div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-ico stat-ico-running">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div><div id="stat-running" class="num">0</div><div class="lbl">进行中</div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-ico stat-ico-paused">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+              </div>
+              <div><div id="stat-paused" class="num">0</div><div class="lbl">已暂停</div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-ico stat-ico-unsubmitted">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-5"/></svg>
+              </div>
+              <div><div id="stat-unsubmitted" class="num">0</div><div class="lbl">未提交</div></div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-ico stat-ico-completed">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div><div id="stat-completed" class="num">0</div><div class="lbl">已完成</div></div>
+            </div>
+          </div>
+
+          <div id="focus-card" class="focus-card" hidden></div>
+
+          <div class="section-label">待处理 / 已暂停</div>
+          <div id="task-grid-active" class="task-grid"></div>
+
+          <div id="section-unsubmitted" class="section-label section-label-unsubmitted" hidden>未提交</div>
+          <div id="task-grid-unsubmitted" class="task-grid" hidden></div>
+
+          <div class="section-label section-label-done">已完成</div>
+          <div id="task-grid-done" class="task-grid"></div>
+        </section>
+
+        <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
+
+        <aside id="bottom-sidebar" class="bottom-sidebar">
+          <div id="bottom-sidebar-resizer" class="bottom-sidebar-resizer" title="拖动调整分屏高度"></div>
+          <header class="bottom-sidebar-header">
+            <strong id="bottom-sidebar-title">底部分屏视图</strong>
+            <button id="bottom-sidebar-close" class="icon-button" type="button" aria-label="关闭分屏" title="关闭分屏">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </header>
+          <div id="bottom-sidebar-body" class="bottom-sidebar-body"></div>
+        </aside>
+
+        <section id="terminal-panel" class="terminal-panel" aria-label="命令提示符终端">
+          <div id="terminal-resizer" class="terminal-resizer" title="拖动调整终端高度"></div>
+          <header class="terminal-header">
+            <div>
+              <span class="terminal-indicator"></span>
+              <strong>命令提示符 (CMD)</strong>
+              <span>本地会话</span>
+            </div>
+            <button id="terminal-close" class="icon-button" type="button" aria-label="关闭终端">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </header>
+          <div id="terminal-container"></div>
+        </section>
+
+        <footer class="statusbar">
+          <button id="sb-terminal" class="sb-btn" type="button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            终端
+          </button>
+          <span class="sb-sep"></span>
+          <button id="sb-task-chip" class="sb-task-chip" type="button" title="点击查看任务详情" hidden>
+            <span class="dotting"></span>
+            <span id="sb-task-chip-text"></span>
+          </button>
+          <div class="sb-right">
+            <span>temp/tasks 已挂载</span>
+            <span class="sb-sep"></span>
+            <span class="sb-conn"><span class="status-dot"></span>就绪</span>
+          </div>
+        </footer>
+      </main>
+
+      <aside id="right-sidebar" class="right-sidebar">
+        <div id="right-sidebar-resizer" class="right-sidebar-resizer" title="拖动调整分屏宽度"></div>
+        <header class="right-sidebar-header">
+          <strong id="right-sidebar-title">分屏视图</strong>
+          <button id="right-sidebar-close" class="icon-button" type="button" aria-label="关闭分屏" title="关闭分屏">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </header>
+        <div id="right-sidebar-body" class="right-sidebar-body"></div>
+      </aside>
+
+      <aside id="task-rail" class="task-rail" aria-label="任务舱">
+        <button id="rail-handle" class="rail-handle" type="button" title="展开任务舱" aria-label="展开任务舱">
+          <svg class="rail-ring" width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+            <circle class="rail-ring-track" cx="10" cy="10" r="8" fill="none" stroke-width="2.5"/>
+            <circle id="rail-ring-bar" class="rail-ring-bar" cx="10" cy="10" r="8" fill="none" stroke-width="2.5" stroke-linecap="round"/>
+          </svg>
+          <span id="rail-handle-text" class="rail-handle-text">任务</span>
+        </button>
+        <div class="rail-body">
+          <header class="rail-head">
+            <span class="eyebrow">ACTIVE TASK</span>
+            <button id="rail-collapse" class="icon-button" type="button" aria-label="收起任务舱" title="收起任务舱">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </header>
+          <h2 id="rail-title" class="rail-title"></h2>
+          <div class="rail-meta">
+            <span id="rail-step-badge" class="rail-step-badge"></span>
+            <span id="rail-owner" class="rail-owner"></span>
+          </div>
+          <div class="rail-scroll">
+            <div class="rail-section-label">执行流程</div>
+            <div id="rail-steps" class="rail-steps"></div>
+            <div class="rail-section-label">任务产物</div>
+            <div id="rail-artifacts" class="rail-artifacts"></div>
+          </div>
+          <div class="rail-actions">
+            <button id="rail-hermes" class="btn btn-teal" type="button">加载至 Hermes</button>
+            <div class="rail-actions-row">
+              <button id="rail-pause" class="btn btn-ghost rail-btn-warn" type="button">暂停任务</button>
+              <button id="rail-finish" class="btn btn-ghost rail-btn-danger" type="button">结束任务</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <div id="split-drag-overlay" class="split-drag-overlay">
+      <div class="split-drag-box">
+        <span class="split-drag-icon">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+        </span>
+        <span class="split-drag-text">释放以开启分屏显示</span>
+      </div>
+    </div>
+
+    <div id="split-drag-overlay-bottom" class="split-drag-overlay-bottom">
+      <div class="split-drag-box">
+        <span class="split-drag-icon">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+        </span>
+        <span class="split-drag-text">释放以开启底部分屏</span>
+      </div>
+    </div>
+
+    <dialog id="task-dialog" class="modal">
+      <form id="task-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Task Editor</span>
+            <h2 id="task-form-title">添加任务</h2>
+          </div>
+          <button class="icon-button task-cancel" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <input id="task-id" type="hidden" />
+        <div id="task-form-view" class="task-form-grid">
+          <label>
+            学校
+            <input id="task-school" type="text" placeholder="清华大学" required />
+          </label>
+          <label>
+            课程
+            <input id="task-course" type="text" placeholder="高中体育教师" required />
+          </label>
+          <label>
+            类型
+            <select id="task-type">
+              <option value="capability-setup">能力训练搭建</option>
+              <option value="capability-edit">能力训练修改</option>
+              <option value="capability-acceptance">能力训练验收</option>
+              <option value="grading-setup">作业批阅搭建</option>
+              <option value="grading-acceptance">作业批阅验收</option>
+              <option value="grading-edit">作业批阅修改</option>
+            </select>
+          </label>
+          <label>
+            数量
+            <input id="task-quantity" type="number" min="1" value="1" />
+          </label>
+          <label>
+            负责人
+            <input id="task-owner" type="text" placeholder="负责人" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="task-reset-button" class="secondary-button" type="button">清空表单</button>
+          <span class="action-spacer"></span>
+          <button class="secondary-button task-cancel" type="button">取消</button>
+          <button class="primary-button" type="submit">保存任务</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="prefs-dialog" class="modal">
+      <form id="prefs-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Preferences</span>
+            <h2>工作台偏好</h2>
+          </div>
+          <button class="icon-button prefs-close" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="helper-text">图片「裁切去水印」的默认参数：从所选方向裁掉固定像素，生成 _cropped 新文件，原图保留。</p>
+        <label>
+          裁切方向
+          <select id="pref-crop-side">
+            <option value="bottom">底部</option>
+            <option value="top">顶部</option>
+            <option value="right">右侧</option>
+          </select>
+        </label>
+        <label>
+          裁切像素
+          <input id="pref-crop-pixels" type="number" min="1" max="2000" value="100" required />
+        </label>
+        <label>
+          待做任务.txt 路径
+          <span class="pref-path-row">
+            <code id="pref-todo-path" class="pref-path">未设置</code>
+            <button id="pref-todo-change" class="secondary-button" type="button">更改</button>
+          </span>
+        </label>
+        <div class="modal-actions">
+          <span class="action-spacer"></span>
+          <button class="secondary-button prefs-close" type="button">取消</button>
+          <button class="primary-button" type="submit">保存偏好</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="import-preview-dialog" class="modal wide-modal">
+      <div class="import-preview-panel">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Todo Import</span>
+            <h2>导入预览</h2>
+          </div>
+          <button id="import-preview-cancel-x" class="icon-button" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p id="import-preview-summary" class="helper-text"></p>
+        <div id="import-preview-groups" class="import-preview-groups"></div>
+        <div class="modal-actions">
+          <span class="action-spacer"></span>
+          <button id="import-preview-cancel" class="secondary-button" type="button">取消</button>
+          <button id="import-preview-apply" class="primary-button" type="button">导入所选</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="file-pick-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <span class="eyebrow">File Bus</span>
+          <h2>选择要注入的任务文件</h2>
+        </div>
+        <button id="file-pick-close" class="icon-button" type="button" aria-label="取消">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p class="helper-text">当前网页请求选择文件。从任务文件夹中勾选要上传的文件（可多选），或改用系统选择器。</p>
+      <div id="file-pick-list" class="file-pick-list"></div>
+      <div class="modal-actions">
+        <button id="file-pick-system" class="secondary-button" type="button">改用系统选择器</button>
+        <span class="action-spacer"></span>
+        <button id="file-pick-cancel" class="secondary-button" type="button">取消</button>
+        <button id="file-pick-inject" class="primary-button" type="button" disabled>注入所选文件</button>
+      </div>
+    </dialog>
+
+    <dialog id="tab-dialog" class="modal">
+      <form id="tab-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">工作空间</span>
+            <h2 id="tab-dialog-title">添加标签页</h2>
+          </div>
+          <button class="icon-button dialog-close" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <input id="tab-id" type="hidden" />
+        <label>
+          显示名称
+          <input id="tab-name" type="text" maxlength="24" placeholder="例如：NotebookLM" required />
+        </label>
+        <label>
+          应用类型
+          <select id="tab-type">
+            <option value="web">在线网页</option>
+            <option value="local-web">本地 Web 项目</option>
+            <option value="desktop-app">本地可执行文件</option>
+            <option value="cli-app">命令行工具</option>
+            <option value="builtin">内置扩展小工具</option>
+          </select>
+        </label>
+
+        <!-- Web specific field -->
+        <div class="form-group-type" data-type="web">
+          <label>
+            网页地址
+            <input id="tab-url" type="text" placeholder="https://example.com" />
+          </label>
+        </div>
+
+        <!-- Local Web specific fields -->
+        <div class="form-group-type" data-type="local-web" style="display: none;">
+          <label>
+            本地项目目录
+            <div class="input-browse-group">
+              <input id="tab-local-path" type="text" placeholder="例如：E:\codes\my-app" />
+              <button id="tab-local-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+        </div>
+
+        <!-- Desktop App specific fields -->
+        <div class="form-group-type" data-type="desktop-app" style="display: none;">
+          <label>
+            程序文件路径
+            <div class="input-browse-group">
+              <input id="tab-exe-path" type="text" placeholder="例如：C:\Windows\System32\calc.exe" />
+              <button id="tab-exe-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+          <label style="margin-top: 10px; display: block;">
+            运行工作目录 (可选)
+            <div class="input-browse-group">
+              <input id="tab-exe-cwd" type="text" placeholder="例如：C:\Windows\System32" />
+              <button id="tab-exe-cwd-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+          <label style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input id="tab-exe-autolaunch" type="checkbox" style="width: auto; margin: 0;" /> 启动工作台时自动运行此程序
+          </label>
+          <label style="margin-top: 10px; display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer;">
+            <input id="tab-exe-embed" type="checkbox" style="width: auto; margin: 0;" /> 开启内部窗口嵌入模式 (仅限 Windows)
+          </label>
+        </div>
+
+        <!-- CLI App specific fields -->
+        <div class="form-group-type" data-type="cli-app" style="display: none;">
+          <label>
+            启动命令
+            <input id="tab-cli-command" type="text" placeholder="例如：npm run dev 或 ping 127.0.0.1" />
+          </label>
+          <label style="margin-top: 10px; display: block;">
+            运行工作目录 (可选)
+            <div class="input-browse-group">
+              <input id="tab-cli-cwd" type="text" placeholder="例如：E:\codes\my-app" />
+              <button id="tab-cli-cwd-browse" class="secondary-button browse-btn" type="button">浏览...</button>
+            </div>
+          </label>
+        </div>
+
+        <!-- Builtin specific fields -->
+        <div class="form-group-type" data-type="builtin" style="display: none;">
+          <label>
+            内置工具类型
+            <select id="tab-builtin-type">
+              <option value="markdown">Markdown 编辑器</option>
+              <option value="whiteboard">简易画板白板</option>
+            </select>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="delete-tab-button" class="danger-button" type="button">删除标签</button>
+          <button id="move-up-tab-button" class="secondary-button" type="button">上移</button>
+          <button id="move-down-tab-button" class="secondary-button" type="button">下移</button>
+          <span class="action-spacer"></span>
+          <button class="secondary-button dialog-close" type="button">取消</button>
+          <button class="primary-button" type="submit">保存标签</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="modal wide-modal">
+      <form id="settings-form" method="dialog">
+        <div class="modal-heading">
+          <div>
+            <span class="eyebrow">Chrome Extensions</span>
+            <h2 class="inline-heading">本地扩展设置 <button id="refresh-extensions-button" class="icon-button inline-refresh" type="button" title="刷新并重新加载扩展" aria-label="刷新并重新加载扩展">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button></h2>
+          </div>
+          <button class="icon-button settings-close" type="button" aria-label="关闭">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <p class="helper-text">填写 Chrome 扩展 ID，工作台会从 Default / Profile 目录中查找最新版；也可以直接填写已解压扩展目录。</p>
+        <div id="extension-list" class="extension-list"></div>
+        <button id="add-extension-button" class="secondary-button full-button" type="button">+ 添加扩展</button>
+        <div id="extension-result" class="extension-result" aria-live="polite"></div>
+        <div class="modal-actions">
+          <button class="secondary-button settings-close" type="button">取消</button>
+          <button class="primary-button" type="submit">保存并加载</button>
+        </div>
+      </form>
+    </dialog>
+
+
+
+
+    <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
+    <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

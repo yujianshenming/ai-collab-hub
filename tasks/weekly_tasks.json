@@ -1,0 +1,54 @@
+[
+  {
+    "id": "task-1780650299096",
+    "school": "河南职业技术学院",
+    "course": "工程机器人现场编程",
+    "taskType": "capability-setup",
+    "quantity": 5,
+    "status": "completed",
+    "owner": "李姝琦",
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing"
+  },
+  {
+    "id": "task-1780650321123",
+    "school": "西安理工大学",
+    "course": "生物医用材料",
+    "taskType": "capability-setup",
+    "quantity": 5,
+    "status": "completed",
+    "owner": "赵俞蓉",
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing"
+  },
+  {
+    "id": "task-1780650341199",
+    "school": "安徽中医药大学",
+    "course": "经络腧穴学",
+    "taskType": "capability-setup",
+    "quantity": 2,
+    "status": "pending",
+    "owner": "李漫1",
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing"
+  },
+  {
+    "id": "task-1780650363177",
+    "school": "佳木斯大学",
+    "course": "医学遗传学",
+    "taskType": "capability-edit",
+    "quantity": 8,
+    "status": "pending",
+    "owner": "姜唯一",
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing"
+  }
+]

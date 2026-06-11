@@ -1,0 +1,6 @@
+node_modules/
+electron.stdout.log
+electron.stderr.log
+temp/
+build-output/
+reproduce.ps1
