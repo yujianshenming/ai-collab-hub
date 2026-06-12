@@ -326,6 +326,11 @@ button { cursor: pointer; }
 .import-group { display: grid; gap: 8px; }
 .import-group h3 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-secondary); font-size: 12px; }
 .import-group h3 span { padding: 2px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-muted); font-size: 10px; }
+/* 无变化组默认折叠：summary 可点击展开 */
+.import-group summary { cursor: pointer; }
+.import-group summary h3 { display: inline-flex; }
+.import-group details .import-list { margin-top: 8px; }
+.import-row input[type="checkbox"]:disabled { opacity: 0.4; cursor: not-allowed; }
 .import-list { display: grid; gap: 7px; }
 .import-row { display: grid; grid-template-columns: auto 1fr; gap: 9px; align-items: flex-start; padding: 10px 11px; border: 1px solid var(--border-color); border-radius: 10px; background: #fff; }
 .import-row.warning { border-color: var(--warn-border); background: var(--warn-bg); }
@@ -338,6 +343,16 @@ button { cursor: pointer; }
 .import-diffs span { padding: 3px 7px; border-radius: 999px; background: var(--info-bg); color: var(--info); font-size: 10px; }
 .import-diffs b { margin-right: 3px; }
 .import-empty { padding: 10px 11px; border: 1px dashed var(--border-color); border-radius: 10px; color: var(--text-muted); font-size: 11px; }
+/* 写回预览：旧行→新行 diff 与无变化折叠组 */
+.wb-diff-row { display: block; }
+.wb-diff-row .import-row-body { gap: 3px; }
+.wb-diff-old, .wb-diff-new { display: block; font-family: Consolas, monospace; font-size: 10.5px; padding: 3px 7px; border-radius: 6px; word-break: break-all; }
+.wb-diff-old { color: var(--danger); background: var(--danger-bg); text-decoration: line-through; }
+.wb-diff-new { color: #047857; background: #ecfdf5; }
+.wb-unchanged summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; font-weight: 700; }
+.wb-unchanged summary span { padding: 2px 7px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-muted); font-size: 10px; }
+.wb-unchanged .import-list { margin-top: 8px; }
+.wb-unchanged .import-row-unparsed { color: var(--text-muted); background: var(--bg-sunken); border-color: var(--border-color); }
 .extension-list { display: grid; gap: 8px; max-height: 320px; overflow: auto; }
 .extension-row { display: grid; grid-template-columns: 68px 1fr 1.4fr 30px; gap: 8px; align-items: center; }
 .check-label { display: flex !important; grid-gap: 5px !important; align-items: center; }

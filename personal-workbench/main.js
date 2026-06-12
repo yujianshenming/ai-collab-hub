@@ -336,6 +336,101 @@ function canLoadInWebview(url) {
   return /^(https?|file|chrome-extension):\/\//i.test(url);
 }
 
+// ===== 上传拦截（缺陷 #2 重做）：CDP Page.setInterceptFileChooserDialog =====
+// 旧实现监听 webview 的 select-file-dialog 事件，该事件不在 Electron 36 官方事件列表中，从未触发。
+// 新机制：活动任务期间对所有 webview webContents attach debugger 并开启 fileChooser 拦截；
+// Page.fileChooserOpened 事件转发 renderer 弹工作台浮层，选择结果用 DOM.setFileInputFiles 注入。
+// 任一环节异常 → 降级为主进程系统选择器注入，保证上传按钮不会点了没反应。
+const webviewContentsSet = new Set();
+const pendingUploadRequests = new Map();
+let uploadRequestSeq = 0;
+let uploadInterceptionEnabled = false;
+
+function setWebviewFileChooserInterception(contents, enabled) {
+  if (contents.isDestroyed()) return;
+  try {
+    if (enabled) {
+      if (!contents.debugger.isAttached()) {
+        contents.debugger.attach("1.3");
+        contents.debugger.on("message", (_event, method, params) => {
+          if (method === "Page.fileChooserOpened") {
+            handleFileChooserOpened(contents, params);
+          }
+        });
+      }
+      contents.debugger.sendCommand("Page.enable").catch(() => {});
+      contents.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }).catch((error) => {
+        console.warn("开启上传拦截失败，保持系统选择器:", error);
+      });
+    } else if (contents.debugger.isAttached()) {
+      contents.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+    }
+  } catch (error) {
+    // attach 失败（如 devtools 占用）：不拦截，webview 走原生系统选择器，属于自然降级
+    console.warn("上传拦截 debugger 操作失败，降级系统选择器:", error);
+  }
+}
+
+function refreshUploadInterception() {
+  const enabled = Boolean(activeTaskFolder);
+  if (enabled === uploadInterceptionEnabled) return;
+  uploadInterceptionEnabled = enabled;
+  for (const contents of webviewContentsSet) {
+    setWebviewFileChooserInterception(contents, enabled);
+  }
+}
+
+function registerWebviewContents(contents) {
+  webviewContentsSet.add(contents);
+  contents.once("destroyed", () => {
+    webviewContentsSet.delete(contents);
+  });
+  if (uploadInterceptionEnabled) {
+    setWebviewFileChooserInterception(contents, true);
+  }
+}
+
+async function injectUploadFiles(contents, backendNodeId, paths) {
+  if (!Array.isArray(paths) || !paths.length) return { ok: true, injected: 0 };
+  await contents.debugger.sendCommand("DOM.setFileInputFiles", {
+    files: paths.map((item) => String(item)),
+    backendNodeId
+  });
+  return { ok: true, injected: paths.length };
+}
+
+// 降级路径：浮层流程不可用时，直接弹系统选择器并注入，绝不让上传点击无响应
+async function fallbackSystemChooser(contents, backendNodeId, mode) {
+  try {
+    const properties = ["openFile"];
+    if (mode === "selectMultiple") properties.push("multiSelections");
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, { properties });
+    if (result.canceled || !result.filePaths.length) return;
+    await injectUploadFiles(contents, backendNodeId, result.filePaths);
+  } catch (error) {
+    console.error("上传降级系统选择器失败:", error);
+  }
+}
+
+function handleFileChooserOpened(contents, params = {}) {
+  const backendNodeId = params.backendNodeId;
+  if (!backendNodeId) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    fallbackSystemChooser(contents, backendNodeId, params.mode);
+    return;
+  }
+  uploadRequestSeq += 1;
+  const requestId = uploadRequestSeq;
+  pendingUploadRequests.set(requestId, { contents, backendNodeId, mode: params.mode });
+  try {
+    sendToRenderer("upload:choose-files", { requestId, mode: params.mode || "selectSingle" });
+  } catch (error) {
+    console.warn("上传拦截转发 renderer 失败，降级系统选择器:", error);
+    pendingUploadRequests.delete(requestId);
+    fallbackSystemChooser(contents, backendNodeId, params.mode);
+  }
+}
+
 async function getWorkbenchCookies(details = {}) {
   const filter = { ...details };
   if (!filter.url && /^https?:\/\//i.test(activeTabInfo.url)) filter.url = activeTabInfo.url;
@@ -648,13 +743,30 @@ function safePathPart(value) {
     .slice(0, 60) || "untitled";
 }
 
-function classifyDownload(filename) {
-  const lowerName = filename.toLowerCase();
-  if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
-    return { type: "chat", folder: "chats" };
+// 已登记的测试页/评估页域名常量表（缺陷 #5）：仅这些来源的下载才允许走
+// dialogue.json / eval_report 特殊归档与流水线推进；其余一切下载按通用规则处理
+const PIPELINE_SOURCE_HOSTS = ["wl363eval.top"];
+
+function isPipelineSourceUrl(rawUrl) {
+  let candidate = String(rawUrl || "");
+  if (candidate.startsWith("blob:")) candidate = candidate.slice(5);
+  try {
+    const host = new URL(candidate).hostname.toLowerCase();
+    return PIPELINE_SOURCE_HOSTS.some((entry) => host === entry || host.endsWith(`.${entry}`));
+  } catch {
+    return false;
   }
-  if (/\.(pdf|html?)$/i.test(filename) || lowerName.includes("report") || lowerName.includes("eval")) {
-    return { type: "report", folder: "reports" };
+}
+
+function classifyDownload(filename, fromPipelineSource = false) {
+  const lowerName = filename.toLowerCase();
+  if (fromPipelineSource) {
+    if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
+      return { type: "chat", folder: "chats" };
+    }
+    if (/\.(pdf|html?)$/i.test(filename) || lowerName.includes("report") || lowerName.includes("eval")) {
+      return { type: "report", folder: "reports" };
+    }
   }
   return { type: "generic", folder: "downloads" };
 }
@@ -705,6 +817,7 @@ function cleanupTaskFolder(folderPath) {
   if (activeTaskFolder && path.resolve(activeTaskFolder) === target) {
     activeTaskFolder = "";
     watchActiveTaskFolder();
+    refreshUploadInterception();
   }
   return true;
 }
@@ -745,9 +858,14 @@ function dedupeFileName(dir, filename) {
 }
 
 function installDownloadHandler() {
-  workbenchSession().on("will-download", (_event, item) => {
+  workbenchSession().on("will-download", (_event, item, webContents) => {
     const filename = safeDownloadName(item.getFilename());
-    const classification = classifyDownload(filename);
+    let pageUrl = "";
+    try {
+      pageUrl = webContents?.getURL?.() || "";
+    } catch {}
+    const fromPipelineSource = isPipelineSourceUrl(item.getURL()) || isPipelineSourceUrl(pageUrl);
+    const classification = classifyDownload(filename, fromPipelineSource);
     const extension = path.extname(filename) || ".bin";
     let saveDir;
     let archiveName;
@@ -922,6 +1040,7 @@ function registerIpc() {
     const validated = info.folderPath ? resolveTaskPath(info.folderPath) : null;
     activeTaskFolder = validated && fs.existsSync(validated) ? validated : "";
     watchActiveTaskFolder();
+    refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
   });
   ipcMain.on("tabs:list-update", (_event, list = []) => {
@@ -961,8 +1080,22 @@ function registerIpc() {
     fs.mkdirSync(folderPath, { recursive: true });
     activeTaskFolder = folderPath;
     watchActiveTaskFolder();
+    refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return folderPath;
+  });
+  // 上传拦截浮层结果回传：paths 为空 = 用户取消（不注入，等同原生取消）
+  ipcMain.handle("upload:resolve-files", async (_event, requestId, paths) => {
+    const request = pendingUploadRequests.get(Number(requestId));
+    if (!request) return { ok: false, error: "请求不存在或已处理" };
+    pendingUploadRequests.delete(Number(requestId));
+    if (request.contents.isDestroyed()) return { ok: false, error: "页面已关闭" };
+    try {
+      return await injectUploadFiles(request.contents, request.backendNodeId, paths);
+    } catch (error) {
+      console.error("上传文件注入失败:", error);
+      return { ok: false, error: error.message };
+    }
   });
   ipcMain.handle("tasks:cleanup-folder", (_event, folderPath) => {
     const res = cleanupTaskFolder(folderPath);
@@ -1055,6 +1188,26 @@ function registerIpc() {
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
     return { ok: true, text, path: todoPath };
+  });
+  // 写回待做任务.txt：只允许写偏好中登记的那一个 txt 路径 + 同目录 .bak（每次覆盖，保留最近一次）；
+  // renderer 负责生成完整新文本（BOM/换行风格已在纯函数中保持），这里不做内容加工
+  ipcMain.handle("tasks:write-todo-file", (_event, newText) => {
+    const todoPath = loadWorkbenchPrefs().todoFilePath;
+    if (!todoPath) return { ok: false, error: "not-configured" };
+    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    if (typeof newText !== "string" || !newText.trim()) return { ok: false, error: "写回内容为空，已取消" };
+    const backupPath = `${todoPath}.bak`;
+    try {
+      fs.copyFileSync(todoPath, backupPath);
+    } catch (error) {
+      return { ok: false, error: `备份失败，已取消写回: ${error.message}`, path: todoPath };
+    }
+    try {
+      fs.writeFileSync(todoPath, newText, "utf8");
+    } catch (error) {
+      return { ok: false, error: `写入失败: ${error.message}`, path: todoPath };
+    }
+    return { ok: true, path: todoPath, backupPath };
   });
   // 图片裁切去水印：nativeImage 实现，生成 原名_cropped 新文件，原图保留
   ipcMain.handle("tasks:crop-image", (_event, filePath) => {
@@ -1371,6 +1524,7 @@ app.whenReady().then(async () => {
 
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
+      registerWebviewContents(contents);
       contents.setWindowOpenHandler(({ url }) => {
         if (canLoadInWebview(url)) {
           contents.loadURL(url).catch(() => {});
