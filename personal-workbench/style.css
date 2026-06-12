@@ -1349,6 +1349,34 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
   color: var(--text-muted);
 }
 
+/* ===== 卡片舱（V3.4）===== */
+.rail-cards-head { display: flex; align-items: center; justify-content: space-between; }
+.rail-cards-tools { display: inline-flex; align-items: center; gap: 7px; }
+.rail-stream-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0; text-transform: none; color: var(--text-secondary); cursor: pointer; }
+.rail-stream-toggle input { margin: 0; accent-color: var(--cta); }
+.rail-cards { display: grid; gap: 7px; }
+.rc-guide { padding: 12px 11px; border: 1px dashed var(--border-color); border-radius: 10px; color: var(--text-muted); font-size: 11px; line-height: 1.6; }
+.rc-guide.error { color: var(--danger); border-color: #fecaca; background: var(--danger-bg); }
+.rc-meta { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-surface); }
+.rc-card, .rc-unparsed { border: 1px solid var(--border-color); border-radius: 10px; background: var(--bg-surface); padding: 0; overflow: hidden; }
+.rc-card summary, .rc-unparsed summary { cursor: pointer; padding: 9px 11px; font-size: 12px; font-weight: 700; color: var(--text-primary); list-style: none; }
+.rc-card summary::before, .rc-unparsed summary::before { content: "▸"; margin-right: 6px; color: var(--text-muted); font-size: 10px; }
+.rc-card[open] summary::before, .rc-unparsed[open] summary::before { content: "▾"; }
+.rc-fields { display: grid; gap: 4px; padding: 0 6px 8px; }
+.rc-row { display: flex; align-items: center; gap: 7px; padding: 6px 7px; border-radius: 8px; min-width: 0; }
+.rc-row.copied { background: #ecfdf5; }
+.rc-row.copied .rc-label::after { content: " ✓"; color: #047857; }
+.rc-row.stream-now { outline: 2px solid var(--cta); outline-offset: -2px; background: var(--cta-light); }
+.rc-label { flex: 0 0 56px; font-size: 10.5px; font-weight: 800; color: var(--text-secondary); }
+.rc-preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-muted); }
+.rc-badge { flex: 0 0 auto; font-size: 9.5px; font-weight: 800; padding: 2px 6px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-muted); }
+.rc-badge.over { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+.rc-copy { flex: 0 0 auto; padding: 3px 9px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--bg-surface); font-size: 10.5px; font-weight: 700; color: var(--text-secondary); cursor: pointer; }
+.rc-copy:hover:not(:disabled) { border-color: var(--cta); color: var(--cta-strong); }
+.rc-copy:disabled { opacity: 0.4; cursor: not-allowed; }
+.rc-copy.ok { border-color: #047857; color: #047857; background: #ecfdf5; }
+.rc-unparsed pre { margin: 0 11px 10px; padding: 8px 9px; border-radius: 8px; background: var(--bg-sunken); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--text-secondary); max-height: 160px; overflow: auto; }
+
 /* 垂直 stepper */
 .rail-step { display: flex; gap: 10px; position: relative; padding-bottom: 16px; }
 .rail-step:last-child { padding-bottom: 2px; }

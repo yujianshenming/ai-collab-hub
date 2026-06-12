@@ -1189,6 +1189,21 @@ function registerIpc() {
     if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
     return { ok: true, text, path: todoPath };
   });
+  // 读取任务文件夹内文本文件（卡片舱 cards.md 用）：限制在 temp/tasks 内 + 2MB 上限
+  ipcMain.handle("tasks:read-text-file", (_event, filePath) => {
+    const target = resolveTaskPath(filePath);
+    if (!target || !fs.existsSync(target)) return { ok: false, error: "文件不存在或越出任务目录" };
+    try {
+      const stat = fs.statSync(target);
+      if (!stat.isFile()) return { ok: false, error: "目标不是文件" };
+      if (stat.size > 2 * 1024 * 1024) return { ok: false, error: "文件超过 2MB，疑似非文本产物" };
+      let text = fs.readFileSync(target, "utf8");
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      return { ok: true, text, mtime: stat.mtimeMs };
+    } catch (error) {
+      return { ok: false, error: `读取失败: ${error.message}` };
+    }
+  });
   // 写回待做任务.txt：只允许写偏好中登记的那一个 txt 路径 + 同目录 .bak（每次覆盖，保留最近一次）；
   // renderer 负责生成完整新文本（BOM/换行风格已在纯函数中保持），这里不做内容加工
   ipcMain.handle("tasks:write-todo-file", (_event, newText) => {

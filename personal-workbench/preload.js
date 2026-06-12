@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("workbench", {
   listTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:list-folder", folderPath),
   listTaskFiles: (folderPath) => ipcRenderer.invoke("tasks:list-files", folderPath),
   taskFileAction: (action, filePath) => ipcRenderer.invoke("tasks:file-action", { action, filePath }),
+  readTaskTextFile: (filePath) => ipcRenderer.invoke("tasks:read-text-file", filePath),
   onTaskFolderChanged: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("task-folder-changed", listener);

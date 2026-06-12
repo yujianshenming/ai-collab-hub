@@ -165,6 +165,9 @@ const elements = {
   railOwner: document.querySelector("#rail-owner"),
   railSteps: document.querySelector("#rail-steps"),
   railArtifacts: document.querySelector("#rail-artifacts"),
+  railCards: document.querySelector("#rail-cards"),
+  railCardsStream: document.querySelector("#rail-cards-stream"),
+  railCardsReparse: document.querySelector("#rail-cards-reparse"),
   railHermes: document.querySelector("#rail-hermes"),
   railPause: document.querySelector("#rail-pause"),
   railFinish: document.querySelector("#rail-finish"),
@@ -1456,6 +1459,211 @@ function mergeTodoFile(text, tasks, appendTasks = []) {
 window.serializeTodoLine = serializeTodoLine;
 window.mergeTodoFile = mergeTodoFile;
 
+// ============ cards.md 卡片包解析（纯函数，无副作用，自包含，供测试注入） ============
+
+// 卡片五项字段标签（顺序即卡片舱展示顺序）
+const CARD_FIELD_DEFS = [
+  ["name", ["卡片名称"]],
+  ["rounds", ["建议轮次"]],
+  ["stageDescription", ["阶段描述"]],
+  ["opening", ["开场白"]],
+  ["prompt", ["提示词"]]
+];
+// 总任务级字段标签（长名在前，避免「任务描述」抢先命中「总任务描述」）
+const CARD_META_DEFS = [
+  ["taskName", ["总任务名称", "任务名称"]],
+  ["taskDescription", ["总任务描述", "任务描述"]],
+  ["coverDescription", ["封面图文字描述", "封面图描述", "封面图"]]
+];
+
+// 去掉行首 markdown 装饰（标题井号/引用/列表符/序号/粗体），返回纯文本
+function stripCardDecorations(line) {
+  return String(line || "")
+    .trim()
+    .replace(/^[#>]+\s*/, "")
+    .replace(/^[-*•]\s+/, "")
+    .replace(/^\d+[.、)]\s*/, "")
+    .replace(/^\*\*/, "")
+    .replace(/\*\*$/, "")
+    .trim();
+}
+
+// 标签行匹配：标签后必须紧跟 ：/:（允许粗体闭合符），返回标签后的内联内容；不匹配返回 null
+function matchCardLabel(line, labels) {
+  const cleaned = stripCardDecorations(line);
+  for (const label of labels) {
+    if (!cleaned.startsWith(label)) continue;
+    const rest = cleaned.slice(label.length).replace(/^\*\*/, "").trimStart();
+    if (rest === "") return "";
+    if (/^[：:]/.test(rest)) return rest.replace(/^[：:]\s*/, "").trim();
+  }
+  return null;
+}
+
+// 卡片标题锚点：`## 卡片一：xxx` / `卡片1 · xxx` 这类标题行，返回卡片名（可为空串）；不匹配返回 null
+function matchCardHeading(line) {
+  const cleaned = stripCardDecorations(line);
+  const match = cleaned.match(/^卡片\s*[一二三四五六七八九十0-9]{1,3}\s*(?:[：:·.\-—]\s*(.*))?$/);
+  if (!match) return null;
+  return (match[1] || "").replace(/\*\*$/, "").trim();
+}
+
+// 整段截取区锚点：评价标准 / 测试人格
+function matchSectionAnchor(line) {
+  const cleaned = stripCardDecorations(line).replace(/[：:]\s*$/, "");
+  if (/^评价标准$/.test(cleaned)) return "evaluation";
+  if (/^测试人格$/.test(cleaned)) return "testPersona";
+  return null;
+}
+
+// Hermes 产出 cards.md → 结构化卡片包：
+// { taskMeta: { taskName?, taskDescription?, coverDescription? },
+//   cards: [{ name, rounds, stageDescription, opening, prompt }],
+//   evaluation, testPersona, unparsed: [] }
+// 规则：卡片名称标签或「## 卡片N」标题开新卡；字段内容延续到下一标签/锚点；
+// 提示词优先取 ``` 代码块内原文（不含围栏）；评价标准/测试人格整段截取不拆分；
+// 围栏内不识别任何锚点；无法归类的内容进 unparsed，不阻塞已解析部分。
+function parseCardsDocument(text) {
+  const result = { taskMeta: {}, cards: [], evaluation: "", testPersona: "", unparsed: [] };
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+
+  let currentCard = null;
+  let field = null;            // { type: "card"|"meta"|"section", key } 当前累积目标
+  let fieldLines = [];
+  let promptFenced = false;    // 提示词是否处于 ``` 围栏捕获中
+  let inFence = false;         // 全局围栏状态（围栏内不识别锚点）
+  let unparsedBuffer = [];
+
+  const flushUnparsed = () => {
+    const block = unparsedBuffer.join("\n").trim();
+    if (block) result.unparsed.push(block);
+    unparsedBuffer = [];
+  };
+  const flushField = () => {
+    if (!field) return;
+    const content = fieldLines.join("\n").replace(/^\n+|\n+$/g, "").trimEnd();
+    if (field.type === "card" && currentCard) {
+      if (content || !currentCard[field.key]) currentCard[field.key] = content || currentCard[field.key] || "";
+    } else if (field.type === "meta") {
+      if (content) result.taskMeta[field.key] = content;
+    } else if (field.type === "section") {
+      if (content) result[field.key] = content;
+    }
+    field = null;
+    fieldLines = [];
+    promptFenced = false;
+  };
+  const startCard = (name) => {
+    flushField();
+    flushUnparsed();
+    currentCard = { name: name || "", rounds: "", stageDescription: "", opening: "", prompt: "" };
+    result.cards.push(currentCard);
+  };
+
+  for (const rawLine of lines) {
+    const fenceLine = /^\s*```/.test(rawLine);
+
+    // —— 围栏处理 ——
+    if (fenceLine) {
+      if (field?.type === "card" && field.key === "prompt" && !fieldLines.some((item) => item.trim())) {
+        // 提示词字段的第一个围栏：进入纯净捕获模式，围栏本身不进内容
+        promptFenced = true;
+        inFence = true;
+        fieldLines = [];
+        continue;
+      }
+      if (promptFenced) {
+        // 提示词围栏闭合：字段完成，围栏不进内容
+        inFence = false;
+        flushField();
+        continue;
+      }
+      inFence = !inFence;
+      if (field) fieldLines.push(rawLine);
+      else unparsedBuffer.push(rawLine);
+      continue;
+    }
+    if (inFence) {
+      // 围栏内内容原样累积，不做任何锚点识别
+      if (field) fieldLines.push(rawLine);
+      else unparsedBuffer.push(rawLine);
+      continue;
+    }
+
+    // —— 锚点识别（围栏外） ——
+    const sectionKey = matchSectionAnchor(rawLine);
+    if (sectionKey) {
+      flushField();
+      flushUnparsed();
+      field = { type: "section", key: sectionKey };
+      fieldLines = [];
+      continue;
+    }
+
+    const headingName = matchCardHeading(rawLine);
+    if (headingName !== null) {
+      startCard(headingName);
+      continue;
+    }
+
+    let matchedLabel = false;
+    for (const [key, labels] of CARD_FIELD_DEFS) {
+      const inline = matchCardLabel(rawLine, labels);
+      if (inline === null) continue;
+      matchedLabel = true;
+      if (key === "name") {
+        // 卡片名称标签 = 开新卡锚点；但若当前卡刚由标题锚点开出且尚无任何字段内容，
+        // 视为同一张卡的名称补充（`## 卡片一：xxx` + `卡片名称：xxx` 连用是常见格式）
+        const cardIsBlank = currentCard && !currentCard.rounds && !currentCard.stageDescription
+          && !currentCard.opening && !currentCard.prompt && !field;
+        if (cardIsBlank) {
+          currentCard.name = inline || currentCard.name;
+        } else {
+          startCard(inline);
+        }
+      } else if (currentCard) {
+        flushField();
+        field = { type: "card", key };
+        fieldLines = inline ? [inline] : [];
+      } else {
+        matchedLabel = false;
+      }
+      break;
+    }
+    if (matchedLabel) continue;
+
+    if (!currentCard && field?.type !== "section") {
+      let matchedMeta = false;
+      for (const [key, labels] of CARD_META_DEFS) {
+        const inline = matchCardLabel(rawLine, labels);
+        if (inline === null) continue;
+        flushField();
+        flushUnparsed();
+        field = { type: "meta", key };
+        fieldLines = inline ? [inline] : [];
+        matchedMeta = true;
+        break;
+      }
+      if (matchedMeta) continue;
+    }
+
+    // —— 普通内容行 ——
+    if (field) {
+      fieldLines.push(rawLine);
+    } else if (rawLine.trim() && !/^-{3,}$/.test(rawLine.trim())) {
+      unparsedBuffer.push(rawLine);
+    } else if (!rawLine.trim() && unparsedBuffer.length) {
+      unparsedBuffer.push(rawLine);
+    }
+  }
+  flushField();
+  flushUnparsed();
+
+  return result;
+}
+
+window.parseCardsDocument = parseCardsDocument;
+
 // 子任务标记 + 数量 → subtasks 数组（index 从 1 起，未标记默认 pending）
 function subtasksFromMarks(quantity, marks) {
   const list = [];
@@ -1771,6 +1979,10 @@ async function renderRailTray(task) {
       { ...file, sub: `${formatFileSize(file.size)} · ${formatFileTime(file.mtime)}` }
     ));
   }
+
+  // 卡片舱：托盘识别到 cards.md 自动解析（mtime 未变不重渲）
+  const cardsFile = files.find((file) => /^cards\.md$/i.test(file.name));
+  syncRailCards(task, cardsFile || null);
 }
 
 // 托盘单独刷新（fs.watch 推送 / 文件操作后调用，不重渲整个任务舱）
@@ -1778,6 +1990,196 @@ function refreshRailTray() {
   if (!pipelineState.active) return;
   const task = weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId);
   if (task) renderRailTray(task);
+}
+
+// ===== 卡片舱（V3.4 P0）：cards.md → 逐字段一键复制 =====
+const CARD_FIELD_LABEL_TEXT = {
+  name: "卡片名称",
+  rounds: "建议轮次",
+  stageDescription: "阶段描述",
+  opening: "开场白",
+  prompt: "提示词"
+};
+let railCardsState = { taskId: null, parsed: null, mtime: 0, missing: true, error: "" };
+let railCardsStreamOn = false;
+
+// cards.md 同步：mtime 未变不重渲（保留折叠/高亮状态）；force = 手动「重新解析」
+async function syncRailCards(task, cardsFile, force = false) {
+  if (!elements.railCards) return;
+  if (!cardsFile) {
+    if (railCardsState.taskId === task.id && railCardsState.missing && !force) return;
+    railCardsState = { taskId: task.id, parsed: null, mtime: 0, missing: true, error: "" };
+    renderRailCards(task);
+    return;
+  }
+  if (!force && railCardsState.taskId === task.id && railCardsState.parsed && railCardsState.mtime === cardsFile.mtime) return;
+  let result = null;
+  try {
+    result = await window.workbench.readTaskTextFile(cardsFile.path);
+  } catch (error) {
+    console.error("读取 cards.md 失败:", error);
+  }
+  if (!result?.ok) {
+    railCardsState = { taskId: task.id, parsed: null, mtime: 0, missing: false, error: result?.error || "读取失败" };
+  } else {
+    railCardsState = { taskId: task.id, parsed: parseCardsDocument(result.text), mtime: cardsFile.mtime, missing: false, error: "" };
+  }
+  renderRailCards(task);
+}
+
+function cardFieldCopied(task, key) {
+  return Boolean(task?.cardCopied?.[key]);
+}
+
+async function copyCardField(task, key, text, row, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (error) {
+    console.error("复制字段失败:", error);
+    showToast("复制失败，请重试", "error");
+    return;
+  }
+  const original = button.textContent;
+  button.textContent = "✓";
+  button.classList.add("ok");
+  setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove("ok");
+  }, 2000);
+  row.classList.add("copied");
+  // 已复制状态持久化到任务数据（重启不丢，任务结束时清空）
+  const copied = { ...(task.cardCopied || {}), [key]: true };
+  await updateTaskFields(task.id, { cardCopied: copied });
+  updateCardStreamHighlight(true);
+}
+
+// 流式模式：高亮第一个未复制字段；复制后推进；全部完成提示
+function updateCardStreamHighlight(announceDone = false) {
+  if (!elements.railCards) return;
+  const rows = [...elements.railCards.querySelectorAll(".rc-row")];
+  rows.forEach((row) => row.classList.remove("stream-now"));
+  if (!railCardsStreamOn || !rows.length) return;
+  const next = rows.find((row) => !row.classList.contains("copied"));
+  if (!next) {
+    if (announceDone) showToast("全部字段已复制完成，可以去平台逐项粘贴收尾了", "success");
+    return;
+  }
+  const wrap = next.closest("details");
+  if (wrap) wrap.open = true;
+  next.classList.add("stream-now");
+  next.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+// 单个字段行：字段名 + 单行预览 + （开场白字符徽章） + 复制按钮
+function railCardFieldRow(task, key, label, text) {
+  const row = document.createElement("div");
+  row.className = `rc-row${cardFieldCopied(task, key) ? " copied" : ""}`;
+  row.dataset.key = key;
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "rc-label";
+  labelEl.textContent = label;
+
+  const preview = document.createElement("span");
+  preview.className = "rc-preview";
+  preview.textContent = text ? text.replace(/\s+/g, " ").trim() : "（空）";
+  preview.title = text ? "完整内容以复制为准（预览单行截断）" : "该字段未解析到内容";
+
+  row.append(labelEl, preview);
+
+  if (label === CARD_FIELD_LABEL_TEXT.opening && text) {
+    const badge = document.createElement("span");
+    badge.className = `rc-badge${text.length > 200 ? " over" : ""}`;
+    badge.textContent = `${text.length} 字`;
+    badge.title = text.length > 200 ? "超过平台 200 字符限制" : "平台限制 200 字符";
+    row.append(badge);
+  }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "rc-copy";
+  copyBtn.type = "button";
+  copyBtn.textContent = "复制";
+  copyBtn.disabled = !text;
+  copyBtn.addEventListener("click", () => copyCardField(task, key, text, row, copyBtn));
+  row.append(copyBtn);
+  return row;
+}
+
+function renderRailCards(task) {
+  if (!elements.railCards) return;
+  elements.railCards.replaceChildren();
+
+  if (railCardsState.error) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "rc-guide error";
+    errorEl.textContent = `cards.md 读取失败：${railCardsState.error}`;
+    elements.railCards.append(errorEl);
+    return;
+  }
+  if (railCardsState.missing || !railCardsState.parsed) {
+    const guide = document.createElement("div");
+    guide.className = "rc-guide";
+    guide.textContent = "将 Hermes 产出保存为 cards.md 到任务文件夹，卡片舱将自动解析为逐字段复制清单。";
+    elements.railCards.append(guide);
+    return;
+  }
+
+  const parsed = railCardsState.parsed;
+
+  // 总任务级字段（任务描述/封面图描述/评价标准/测试人格）置顶
+  const metaRows = [
+    ["meta:taskName", "任务名称", parsed.taskMeta.taskName],
+    ["meta:taskDescription", "任务描述", parsed.taskMeta.taskDescription],
+    ["meta:coverDescription", "封面图描述", parsed.taskMeta.coverDescription],
+    ["meta:evaluation", "评价标准", parsed.evaluation],
+    ["meta:testPersona", "测试人格", parsed.testPersona]
+  ].filter(([, , text]) => text);
+  if (metaRows.length) {
+    const metaWrap = document.createElement("div");
+    metaWrap.className = "rc-meta";
+    for (const [key, label, text] of metaRows) {
+      metaWrap.append(railCardFieldRow(task, key, label, text));
+    }
+    elements.railCards.append(metaWrap);
+  }
+
+  parsed.cards.forEach((card, index) => {
+    const wrap = document.createElement("details");
+    wrap.className = "rc-card";
+    if (index === 0) wrap.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = `卡片${index + 1} · ${card.name || "未命名"}`;
+    const fields = document.createElement("div");
+    fields.className = "rc-fields";
+    for (const fieldKey of Object.keys(CARD_FIELD_LABEL_TEXT)) {
+      fields.append(railCardFieldRow(task, `card:${index}:${fieldKey}`, CARD_FIELD_LABEL_TEXT[fieldKey], card[fieldKey]));
+    }
+    wrap.append(summary, fields);
+    elements.railCards.append(wrap);
+  });
+
+  if (!parsed.cards.length && !metaRows.length) {
+    const empty = document.createElement("div");
+    empty.className = "rc-guide";
+    empty.textContent = "cards.md 中未识别到卡片字段，请检查格式（卡片名称/建议轮次/阶段描述/开场白/提示词）。";
+    elements.railCards.append(empty);
+  }
+
+  if (parsed.unparsed.length) {
+    const unparsedWrap = document.createElement("details");
+    unparsedWrap.className = "rc-unparsed";
+    const summary = document.createElement("summary");
+    summary.textContent = `未识别内容 ${parsed.unparsed.length} 段（不阻塞已解析卡片）`;
+    unparsedWrap.append(summary);
+    for (const block of parsed.unparsed) {
+      const pre = document.createElement("pre");
+      pre.textContent = block;
+      unparsedWrap.append(pre);
+    }
+    elements.railCards.append(unparsedWrap);
+  }
+
+  updateCardStreamHighlight();
 }
 
 // 任务舱渲染：展开态主体 + 收起态把手；无活动任务时整体隐藏
@@ -1854,6 +2256,7 @@ async function completeActiveTask(submitted) {
       chatLogPath: "",
       reportPath: "",
       taskFolder: "",
+      cardCopied: {},
       subtasks: markAllSubtasksDone(task?.subtasks, task?.quantity)
     });
   }
@@ -1930,7 +2333,9 @@ function normalizeWeeklyTask(task = {}) {
     chatLogPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
     taskFolder: task.taskFolder || "",
-    step: normalizePipelineStep(task.step)
+    step: normalizePipelineStep(task.step),
+    // 卡片舱「已复制」状态（V3.4）：fieldKey → true，任务结束时清空
+    cardCopied: task.cardCopied && typeof task.cardCopied === "object" ? task.cardCopied : {}
   };
 }
 
@@ -3172,6 +3577,25 @@ elements.sbTaskChip?.addEventListener("click", expandTaskRail);
 elements.railHandle?.addEventListener("click", expandTaskRail);
 elements.railCollapse?.addEventListener("click", collapseTaskRail);
 elements.railHermes?.addEventListener("click", () => runHermesPrompt());
+elements.railCardsStream?.addEventListener("change", () => {
+  railCardsStreamOn = Boolean(elements.railCardsStream.checked);
+  updateCardStreamHighlight();
+});
+elements.railCardsReparse?.addEventListener("click", async () => {
+  if (!pipelineState.active) return;
+  const task = weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId);
+  const folder = pipelineState.taskFolder || task?.taskFolder || "";
+  if (!task || !folder) return;
+  let files = [];
+  try {
+    files = (await window.workbench.listTaskFiles(folder)) || [];
+  } catch (error) {
+    console.warn("重新解析读取任务文件失败:", error);
+  }
+  const cardsFile = files.find((file) => /^cards\.md$/i.test(file.name));
+  await syncRailCards(task, cardsFile || null, true);
+  showToast(cardsFile ? "cards.md 已重新解析" : "任务文件夹内未找到 cards.md", cardsFile ? "success" : "error");
+});
 elements.railPause?.addEventListener("click", () => {
   if (pipelineState.taskId) pauseTaskAutomation(pipelineState.taskId);
 });

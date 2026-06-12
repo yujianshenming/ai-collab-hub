@@ -247,6 +247,18 @@
             <div id="rail-steps" class="rail-steps"></div>
             <div class="rail-section-label">任务产物</div>
             <div id="rail-artifacts" class="rail-artifacts"></div>
+            <div class="rail-section-label rail-cards-head">
+              <span>卡片</span>
+              <span class="rail-cards-tools">
+                <label class="rail-stream-toggle" title="开启后按顺序高亮下一个未复制字段">
+                  <input id="rail-cards-stream" type="checkbox" />逐项填写
+                </label>
+                <button id="rail-cards-reparse" class="icon-button" type="button" title="重新解析 cards.md" aria-label="重新解析 cards.md">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+              </span>
+            </div>
+            <div id="rail-cards" class="rail-cards"></div>
           </div>
           <div class="rail-actions">
             <button id="rail-hermes" class="btn btn-teal" type="button">加载至 Hermes</button>
