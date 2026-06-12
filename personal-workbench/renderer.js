@@ -184,6 +184,10 @@ const elements = {
   prefCropPixels: document.querySelector("#pref-crop-pixels"),
   prefTodoPath: document.querySelector("#pref-todo-path"),
   prefTodoChange: document.querySelector("#pref-todo-change"),
+  prefPlatformMap: document.querySelector("#pref-platform-map"),
+  prefInjectField: document.querySelector("#pref-inject-field"),
+  prefInjectValue: document.querySelector("#pref-inject-value"),
+  prefInjectRun: document.querySelector("#pref-inject-run"),
   importPreviewDialog: document.querySelector("#import-preview-dialog"),
   importPreviewSummary: document.querySelector("#import-preview-summary"),
   importPreviewGroups: document.querySelector("#import-preview-groups"),
@@ -2469,7 +2473,12 @@ function closeAllCardMenus() {
   document.querySelectorAll(".tc-menu-pop.open").forEach((pop) => pop.classList.remove("open"));
 }
 
+// V3.2 P3-#3：记录当前展开子任务 popover 的任务 id。切换子任务状态会触发整卡重渲染，
+// 重建后的 popover 是全新元素（无 .open），导致 popover 闪关。renderTaskCenter 末尾据此恢复。
+let openSubtaskPopoverTaskId = null;
+
 function closeAllSubtaskPopovers() {
+  openSubtaskPopoverTaskId = null;
   document.querySelectorAll(".subtask-popover.open").forEach((pop) => pop.classList.remove("open"));
 }
 
@@ -2568,6 +2577,7 @@ function taskCardElement(task) {
     closeAllCardMenus();
     closeAllSubtaskPopovers();
     subtaskPopover.classList.toggle("open", willOpen);
+    openSubtaskPopoverTaskId = willOpen ? task.id : null;
   });
   card.querySelectorAll(".subtask-row").forEach((row) => {
     row.addEventListener("click", async () => {
@@ -2647,6 +2657,14 @@ function renderTaskCenter() {
 
   if (activeTabId === TASK_CENTER_ID) {
     updateTopbarForActive(null);
+  }
+
+  // V3.2 P3-#3：重渲染后恢复之前展开的子任务 popover，避免切状态时闪关
+  if (openSubtaskPopoverTaskId) {
+    const card = elements.taskCenterView.querySelector(`.task-card[data-id="${openSubtaskPopoverTaskId}"]`);
+    const popover = card?.querySelector(".subtask-popover");
+    if (popover) popover.classList.add("open");
+    else openSubtaskPopoverTaskId = null;
   }
 }
 
@@ -3520,10 +3538,15 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
     elements.prefCropSide.value = prefs?.cropSide || "bottom";
     elements.prefCropPixels.value = prefs?.cropPixels || 100;
     setTodoPathDisplay(prefs?.todoFilePath || "");
+    if (elements.prefPlatformMap) {
+      const map = prefs?.platformFieldMap || {};
+      elements.prefPlatformMap.value = Object.keys(map).length ? JSON.stringify(map, null, 2) : "";
+    }
   } catch {
     elements.prefCropSide.value = "bottom";
     elements.prefCropPixels.value = 100;
     setTodoPathDisplay("");
+    if (elements.prefPlatformMap) elements.prefPlatformMap.value = "";
   }
   elements.prefsDialog.showModal();
 });
@@ -3532,12 +3555,70 @@ document.querySelectorAll(".prefs-close").forEach((button) =>
 );
 elements.prefsForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
+  // platformFieldMap：空白视为清空；非法 JSON 阻止保存并提示，不污染偏好
+  let platformFieldMap = {};
+  const rawMap = elements.prefPlatformMap?.value.trim();
+  if (rawMap) {
+    try {
+      const parsed = JSON.parse(rawMap);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("需为对象");
+      platformFieldMap = parsed;
+    } catch (error) {
+      showToast(`平台字段映射 JSON 格式错误：${error.message}`, "error");
+      return;
+    }
+  }
   await window.workbench.setWorkbenchPrefs({
     cropSide: elements.prefCropSide.value,
-    cropPixels: Number(elements.prefCropPixels.value)
+    cropPixels: Number(elements.prefCropPixels.value),
+    platformFieldMap
   });
   elements.prefsDialog.close();
   showToast("工作台偏好已保存", "success");
+});
+// 平台单字段试注入（V3.4 P1）：读取偏好映射 → 取当前激活 webview → 注入指定字段
+elements.prefInjectRun?.addEventListener("click", async () => {
+  const field = elements.prefInjectField?.value.trim();
+  const value = elements.prefInjectValue?.value ?? "";
+  if (!field) {
+    showToast("请填写要试注入的字段名", "error");
+    return;
+  }
+  let prefs;
+  try {
+    prefs = await window.workbench.getWorkbenchPrefs();
+  } catch {
+    showToast("读取偏好失败", "error");
+    return;
+  }
+  const selector = prefs?.platformFieldMap?.[field];
+  if (!selector) {
+    showToast(`字段「${field}」未在映射中配置选择器`, "error");
+    return;
+  }
+  const webview = activeWebview();
+  if (!webview) {
+    showToast("当前标签页不是网页，无法注入。请先切换到平台网页标签。", "error");
+    return;
+  }
+  let webContentsId;
+  try {
+    webContentsId = webview.getWebContentsId();
+  } catch {
+    showToast("当前网页尚未加载完成，请稍后重试", "error");
+    return;
+  }
+  try {
+    const result = await window.workbench.testInjectField(webContentsId, selector, value);
+    if (result?.ok) {
+      showToast(`试注入成功（${result.kind}）：${field} → ${selector}`, "success");
+    } else {
+      showToast(`试注入失败：${result?.error || "未知错误"}`, "error");
+    }
+  } catch (error) {
+    console.error("试注入失败:", error);
+    showToast("试注入调用失败", "error");
+  }
 });
 document.querySelectorAll("[data-command]").forEach((button) => {
   button.addEventListener("click", () => {

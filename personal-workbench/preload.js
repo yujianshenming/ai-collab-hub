@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld("workbench", {
   listTaskFiles: (folderPath) => ipcRenderer.invoke("tasks:list-files", folderPath),
   taskFileAction: (action, filePath) => ipcRenderer.invoke("tasks:file-action", { action, filePath }),
   readTaskTextFile: (filePath) => ipcRenderer.invoke("tasks:read-text-file", filePath),
+  testInjectField: (webContentsId, selector, value) =>
+    ipcRenderer.invoke("platform:test-inject", { webContentsId, selector, value }),
   onTaskFolderChanged: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("task-folder-changed", listener);

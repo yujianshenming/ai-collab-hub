@@ -776,11 +776,26 @@ function workbenchPrefsPath() {
   return path.join(app.getPath("userData"), "workbench-prefs.json");
 }
 
+// platformFieldMap（V3.4 P1）：字段名 → CSS 选择器 的映射，用户可在偏好里编辑。
+// 仅保留字符串键值对，过滤非法项，避免脏数据写入注入路径。
+function normalizePlatformFieldMap(value) {
+  const map = {};
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [field, selector] of Object.entries(value)) {
+      const key = String(field || "").trim();
+      const sel = String(selector || "").trim();
+      if (key && sel) map[key] = sel;
+    }
+  }
+  return map;
+}
+
 function normalizeWorkbenchPrefs(prefs = {}) {
   const side = ["bottom", "top", "right"].includes(prefs.cropSide) ? prefs.cropSide : "bottom";
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
   const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
-  return { cropSide: side, cropPixels: pixels, todoFilePath };
+  const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
+  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap };
 }
 
 function saveWorkbenchPrefs(prefs) {
@@ -1188,6 +1203,45 @@ function registerIpc() {
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
     return { ok: true, text, path: todoPath };
+  });
+  // 平台单字段试注入（V3.4 P1 预研）：对目标 webview 按 CSS 选择器注入一个字段值，
+  // 验证 CDP/JS 注入路径可行。同时支持 input/textarea（value）与 contenteditable 富文本编辑器。
+  // 仅试注入，不点击提交按钮（提交动作永远由用户人工确认）。
+  ipcMain.handle("platform:test-inject", async (_event, payload = {}) => {
+    const webContentsId = Number(payload.webContentsId);
+    const selector = String(payload.selector || "").trim();
+    const value = String(payload.value ?? "");
+    if (!webContentsId || !selector) return { ok: false, error: "缺少目标页面或选择器" };
+    const target = [...webviewContentsSet].find(
+      (contents) => !contents.isDestroyed() && contents.id === webContentsId
+    );
+    if (!target) return { ok: false, error: "目标 webview 不存在或已销毁" };
+    try {
+      const result = await target.executeJavaScript(`
+        (() => {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return { ok: false, error: "未找到匹配选择器的元素" };
+          const text = ${JSON.stringify(value)};
+          el.focus();
+          if (el.isContentEditable) {
+            el.textContent = text;
+            el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+            return { ok: true, kind: "contenteditable" };
+          }
+          if ("value" in el) {
+            const setter = Object.getOwnPropertyDescriptor(el.__proto__, "value")?.set;
+            if (setter) setter.call(el, text); else el.value = text;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true, kind: el.tagName.toLowerCase() };
+          }
+          return { ok: false, error: "目标元素既非输入框也非可编辑区" };
+        })();
+      `, true);
+      return result || { ok: false, error: "注入脚本无返回" };
+    } catch (error) {
+      return { ok: false, error: `注入失败: ${error.message}` };
+    }
   });
   // 读取任务文件夹内文本文件（卡片舱 cards.md 用）：限制在 temp/tasks 内 + 2MB 上限
   ipcMain.handle("tasks:read-text-file", (_event, filePath) => {
