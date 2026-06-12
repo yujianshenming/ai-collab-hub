@@ -208,10 +208,23 @@ const elements = {
   writebackPreviewCancelX: document.querySelector("#writeback-preview-cancel-x")
 };
 
+// 缺陷②：E2E 在真实 userData 上跑测留下的残留标签（*harness* 命名、XSS 注入名）。
+// 只匹配测试特征名，用户自建标签不受影响。
+function isTestResidueTab(tab) {
+  const name = String(tab?.name || "");
+  return /harness/i.test(name) || /<[a-z!\/]|onerror\s*=|__xss/i.test(name);
+}
+
 function readTabs() {
   try {
     const saved = JSON.parse(localStorage.getItem(storageKey));
-    return Array.isArray(saved) && saved.length ? saved : DEFAULT_TABS;
+    if (!Array.isArray(saved) || !saved.length) return DEFAULT_TABS;
+    const cleaned = saved.filter((tab) => !isTestResidueTab(tab));
+    if (cleaned.length !== saved.length) {
+      localStorage.setItem(storageKey, JSON.stringify(cleaned));
+      console.warn(`已清理 ${saved.length - cleaned.length} 个测试残留标签`);
+    }
+    return cleaned.length ? cleaned : DEFAULT_TABS;
   } catch {
     return DEFAULT_TABS;
   }
@@ -327,11 +340,13 @@ function renderTabs() {
   updateSidebarPulse();
 
   // Activate active tab（任务中心是合法的特殊视图）
+  // 缺陷①修复：尾部重激活属于布局同步，不代表用户意图，禁止 auto-expand——
+  // 否则折叠活动标签所在分类时会被这里立刻展开回去（折叠点击"失效"）。
   const validActiveTabId = activeTabId === TASK_CENTER_ID || tabs.some((tab) => tab.id === activeTabId)
     ? activeTabId
     : tabs[0]?.id;
   if (validActiveTabId) {
-    activateTab(validActiveTabId);
+    activateTab(validActiveTabId, { autoExpand: false });
   }
 }
 
@@ -966,7 +981,7 @@ function activeWebview() {
 }
 
 let isActivatingTab = false;
-function activateTab(id) {
+function activateTab(id, { autoExpand = true } = {}) {
   if (isActivatingTab) return;
   isActivatingTab = true;
   try {
@@ -989,8 +1004,8 @@ function activateTab(id) {
     const tab = isTaskCenter ? null : tabs.find((candidate) => candidate.id === id);
     if (!isTaskCenter && !tab) return;
 
-    // Auto-expand category if collapsed
-    if (tab) {
+    // Auto-expand category if collapsed（仅限用户主动切换标签的调用路径）
+    if (tab && autoExpand) {
       const category = getTabCategory(tab);
       if (collapsedCategories[category]) {
         collapsedCategories[category] = false;
