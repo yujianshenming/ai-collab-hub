@@ -308,6 +308,24 @@
       </div>
     </dialog>
 
+    <dialog id="delete-task-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <span class="eyebrow">删除任务</span>
+          <h2>确认删除</h2>
+        </div>
+        <button id="delete-task-cancel-x" class="icon-button" type="button" aria-label="取消">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p id="delete-task-desc" class="helper-text">删除该任务记录将一并清理其临时任务文件夹（产物不可恢复）。此操作无法撤销。</p>
+      <div class="modal-actions">
+        <span class="action-spacer"></span>
+        <button id="delete-task-cancel" class="secondary-button" type="button">取消</button>
+        <button id="delete-task-confirm" class="primary-button danger-button" type="button">确认删除</button>
+      </div>
+    </dialog>
+
     <dialog id="task-dialog" class="modal">
       <form id="task-form" method="dialog">
         <div class="modal-heading">

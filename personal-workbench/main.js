@@ -854,6 +854,20 @@ function watchActiveTaskFolder() {
         sendToRenderer("task-folder-changed", { folderPath: activeTaskFolder });
       }, 500);
     });
+    // H1：FSWatcher 必须挂 error 监听——用户在资源管理器删除活动任务文件夹时
+    // watcher 会发 error 事件，未捕获会冒泡成主进程 uncaughtException 崩溃。
+    // 这里关闭失效 watcher 并清空活动任务，安全降级。
+    taskFolderWatcher.on("error", (error) => {
+      console.warn("任务文件夹监听异常，已停止监听:", error);
+      try { taskFolderWatcher?.close(); } catch {}
+      taskFolderWatcher = null;
+      clearTimeout(taskFolderWatchTimer);
+      if (activeTaskFolder && !fs.existsSync(activeTaskFolder)) {
+        activeTaskFolder = "";
+        refreshUploadInterception();
+        broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
+      }
+    });
   } catch (error) {
     console.warn("监听任务文件夹失败:", error);
   }

@@ -151,6 +151,11 @@ const elements = {
   finishTaskUnsubmitted: document.querySelector("#finish-task-unsubmitted"),
   finishTaskCancel: document.querySelector("#finish-task-cancel"),
   finishTaskCancelX: document.querySelector("#finish-task-cancel-x"),
+  deleteTaskDialog: document.querySelector("#delete-task-dialog"),
+  deleteTaskDesc: document.querySelector("#delete-task-desc"),
+  deleteTaskConfirm: document.querySelector("#delete-task-confirm"),
+  deleteTaskCancel: document.querySelector("#delete-task-cancel"),
+  deleteTaskCancelX: document.querySelector("#delete-task-cancel-x"),
   addNewTask: document.querySelector("#btn-add-new-task"),
   sbTerminal: document.querySelector("#sb-terminal"),
   sbTaskChip: document.querySelector("#sb-task-chip"),
@@ -229,7 +234,8 @@ function normalizeUrl(value) {
 }
 
 function iconForTab(name) {
-  return (name.trim()[0] || "W").toUpperCase();
+  // H2：首字母可能是 < & 等字符，进 innerHTML 前转义，杜绝标签名注入 DOM
+  return escapeHtml((String(name || "").trim()[0] || "W").toUpperCase());
 }
 
 function renderTabs() {
@@ -287,9 +293,9 @@ function renderTabs() {
       item.innerHTML = `
         <button class="tab-main" type="button">
           <span class="tab-icon">${iconForTab(tab.name)}</span>
-          <span>${tab.name}</span>
+          <span>${escapeHtml(tab.name)}</span>
         </button>
-        <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">
+        <button class="tab-menu" type="button" aria-label="编辑 ${escapeHtml(tab.name)}" title="编辑标签">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
         </button>
       `;
@@ -2710,7 +2716,20 @@ async function reopenWeeklyTask(id) {
   showToast("任务已重新打开", "success");
 }
 
-async function deleteWeeklyTask(id) {
+// M4：删除任务改走确认 dialog（与结束任务三出口同风格），避免单击误删任务记录与产物
+let pendingDeleteTaskId = null;
+function deleteWeeklyTask(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return;
+  pendingDeleteTaskId = id;
+  if (elements.deleteTaskDesc) {
+    elements.deleteTaskDesc.textContent =
+      `确认删除「${task.school || ""} ${task.course || ""}」？删除任务记录将一并清理其临时任务文件夹（产物不可恢复），此操作无法撤销。`;
+  }
+  elements.deleteTaskDialog?.showModal();
+}
+
+async function performDeleteWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
   const folderPath = pipelineState.taskId === id ? pipelineState.taskFolder : task?.taskFolder || "";
@@ -2720,6 +2739,7 @@ async function deleteWeeklyTask(id) {
   }
   if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
   await persistWeeklyTasks();
+  showToast("任务已删除", "success");
 }
 
 async function updateTaskFields(id, fields) {
@@ -3291,6 +3311,13 @@ function runEvaluationUpload() {
   const webview = activeWebview();
   if (!webview || !pipelineState.chatPath) return;
   pipelineState.uploadQueue = [pipelineState.chatPath];
+  // M1：上传控件 click 未触发拦截时 uploadQueue 会残留，导致之后任意网页点上传被静默注入
+  // dialogue.json 而非弹浮层。设超时兜底：到点仍未消费则清空队列。
+  const queuePath = pipelineState.chatPath;
+  const clearStaleQueue = () => {
+    if (pipelineState.uploadQueue[0] === queuePath) pipelineState.uploadQueue = [];
+  };
+  const failTimer = setTimeout(clearStaleQueue, 8000);
   webview.executeJavaScript(`
     (() => {
       const input = document.querySelector('input[type="file"]');
@@ -3300,8 +3327,14 @@ function runEvaluationUpload() {
       return { fileInputs: input ? 1 : 0, submitted: Boolean(submit) };
     })();
   `).then((result) => {
-    if (!result?.fileInputs) showToast("评估页没有检测到文件上传控件，请手动上传后继续。", "error");
+    if (!result?.fileInputs) {
+      clearTimeout(failTimer);
+      clearStaleQueue();
+      showToast("评估页没有检测到文件上传控件，请手动上传后继续。", "error");
+    }
   }).catch((error) => {
+    clearTimeout(failTimer);
+    clearStaleQueue();
     console.error("自动上传评估文件失败:", error);
     showToast("自动上传评估文件失败，请检查页面是否已加载完成。", "error");
   });
@@ -3691,6 +3724,15 @@ elements.finishTaskUnsubmitted?.addEventListener("click", () => {
 });
 elements.finishTaskCancel?.addEventListener("click", () => elements.finishTaskDialog?.close());
 elements.finishTaskCancelX?.addEventListener("click", () => elements.finishTaskDialog?.close());
+elements.deleteTaskConfirm?.addEventListener("click", async () => {
+  const id = pendingDeleteTaskId;
+  pendingDeleteTaskId = null;
+  elements.deleteTaskDialog?.close();
+  if (id) await performDeleteWeeklyTask(id);
+});
+elements.deleteTaskCancel?.addEventListener("click", () => elements.deleteTaskDialog?.close());
+elements.deleteTaskCancelX?.addEventListener("click", () => elements.deleteTaskDialog?.close());
+elements.deleteTaskDialog?.addEventListener("close", () => { pendingDeleteTaskId = null; });
 elements.filePickInject?.addEventListener("click", () => {
   if (filePickSelection.size) resolveFilePick([...filePickSelection]);
 });
