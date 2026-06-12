@@ -247,6 +247,18 @@
             <div id="rail-steps" class="rail-steps"></div>
             <div class="rail-section-label">任务产物</div>
             <div id="rail-artifacts" class="rail-artifacts"></div>
+            <div class="rail-section-label rail-cards-head">
+              <span>卡片</span>
+              <span class="rail-cards-tools">
+                <label class="rail-stream-toggle" title="开启后按顺序高亮下一个未复制字段">
+                  <input id="rail-cards-stream" type="checkbox" />逐项填写
+                </label>
+                <button id="rail-cards-reparse" class="icon-button" type="button" title="重新解析 cards.md" aria-label="重新解析 cards.md">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+              </span>
+            </div>
+            <div id="rail-cards" class="rail-cards"></div>
           </div>
           <div class="rail-actions">
             <button id="rail-hermes" class="btn btn-teal" type="button">加载至 Hermes</button>
@@ -293,6 +305,24 @@
         <span class="action-spacer"></span>
         <button id="finish-task-unsubmitted" class="secondary-button" type="button">未提交，稍后标记</button>
         <button id="finish-task-submitted" class="primary-button" type="button">已提交，标记完成</button>
+      </div>
+    </dialog>
+
+    <dialog id="delete-task-dialog" class="modal">
+      <div class="modal-heading">
+        <div>
+          <span class="eyebrow">删除任务</span>
+          <h2>确认删除</h2>
+        </div>
+        <button id="delete-task-cancel-x" class="icon-button" type="button" aria-label="取消">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <p id="delete-task-desc" class="helper-text">删除该任务记录将一并清理其临时任务文件夹（产物不可恢复）。此操作无法撤销。</p>
+      <div class="modal-actions">
+        <span class="action-spacer"></span>
+        <button id="delete-task-cancel" class="secondary-button" type="button">取消</button>
+        <button id="delete-task-confirm" class="primary-button danger-button" type="button">确认删除</button>
       </div>
     </dialog>
 
@@ -377,6 +407,19 @@
             <button id="pref-todo-change" class="secondary-button" type="button">更改</button>
           </span>
         </label>
+        <label>
+          平台字段映射 platformFieldMap（V3.4 预研）
+          <textarea id="pref-platform-map" class="pref-platform-map" rows="5" placeholder='JSON：字段名 → CSS 选择器，例如&#10;{&#10;  "卡片名称": "#card-title",&#10;  "开场白": "textarea[name=opening]"&#10;}'></textarea>
+          <small class="helper-text">用于平台表单单字段试注入。键为字段名，值为目标输入框的 CSS 选择器。</small>
+        </label>
+        <div class="pref-inject-test">
+          <span class="pref-inject-row">
+            <input id="pref-inject-field" type="text" placeholder="字段名（须在上方映射中）" />
+            <input id="pref-inject-value" type="text" placeholder="试注入文本" />
+            <button id="pref-inject-run" class="secondary-button" type="button">试注入到当前页</button>
+          </span>
+          <small class="helper-text">对当前激活的网页标签按映射注入一个字段，验证注入路径。仅注入，不提交。</small>
+        </div>
         <div class="modal-actions">
           <span class="action-spacer"></span>
           <button class="secondary-button prefs-close" type="button">取消</button>

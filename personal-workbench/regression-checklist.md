@@ -89,3 +89,12 @@
 | 5 | P2(待确认) | 全局下载捕获下，任意 .txt/.md/.json 被改名 dialogue.json 并误触发流水线推进 | main.js:651 |
 | 6 | P3 | Hermes 提示词 `join("\\n")` 产生字面 `\n` 而非换行 | renderer.js:2083 |
 | 7 | P3 | 流水线 `prepare` 步骤定义后从未被置为当前步骤（执行后直接 testing，2/5 起步） | renderer.js:1965 |
+| 8 | P2 | 上传拦截 debugger 意外 detach（devtools 抢占）后重开拦截会重复注册 `debugger.on("message")`，fileChooserOpened 双处理、浮层弹两次（原扫描 M2） | main.js `setWebviewFileChooserInterception` |
+| 9 | P2 | renderer 重载/无响应时 `pendingUploadRequests` 条目永久残留（Map 泄漏 + 该次选择悬挂）；建议 webContents destroyed/did-navigate 时清理（原扫描 M3） | main.js `handleFileChooserOpened` |
+| 10 | P2 | 本地服务 38924 端口被占用时 error 回调静默置 null，本地项目标签/token/SSE/HTTP API 全部失效且无提示（原扫描 M5） | main.js `startLocalServer` |
+| 11 | P2 | 删除扩展条目保存后已加载扩展不卸载，需手动「刷新并重新加载」才生效；建议 save 时对差集调用 removeExtension（原扫描 M6） | main.js `extensions:save` |
+| 12 | P3 | 写回用打开预览时读到的 sourceText，预览停留期间 txt 被外部改动会被覆盖（有 .bak 兜底）；建议确认时重读比对（原扫描 L1） | renderer.js `applyTodoWriteback` |
+| 13 | P3 | `swapTabs` 为死代码，拖拽重排已改用 categoryTabs splice 实现，可删除（原扫描 L2） | renderer.js `swapTabs` |
+| 14 | P3 | CLI/白板视图 100ms setTimeout 初始化与「创建后立即删除标签」存在竞态：cleanup 先跑、pty 仍被拉起/resize 监听仍注册（极小窗口）（原扫描 L3） | renderer.js CLI/whiteboard 视图 |
+| 15 | P3 | `fallbackSystemChooser` 中 `dialog.showOpenDialog(mainWindow ?? undefined, ...)` 首参传 undefined，建议改条件分支传参（原扫描 L4） | main.js `fallbackSystemChooser` |
+| 16 | P3 | `serveFile` 中 existsSync 与 readFile 之间竞态会把已删除文件回 500 而非 404（仅状态码语义）（原扫描 L5） | main.js `serveFile` |

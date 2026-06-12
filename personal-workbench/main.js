@@ -776,11 +776,26 @@ function workbenchPrefsPath() {
   return path.join(app.getPath("userData"), "workbench-prefs.json");
 }
 
+// platformFieldMap（V3.4 P1）：字段名 → CSS 选择器 的映射，用户可在偏好里编辑。
+// 仅保留字符串键值对，过滤非法项，避免脏数据写入注入路径。
+function normalizePlatformFieldMap(value) {
+  const map = {};
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [field, selector] of Object.entries(value)) {
+      const key = String(field || "").trim();
+      const sel = String(selector || "").trim();
+      if (key && sel) map[key] = sel;
+    }
+  }
+  return map;
+}
+
 function normalizeWorkbenchPrefs(prefs = {}) {
   const side = ["bottom", "top", "right"].includes(prefs.cropSide) ? prefs.cropSide : "bottom";
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
   const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
-  return { cropSide: side, cropPixels: pixels, todoFilePath };
+  const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
+  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap };
 }
 
 function saveWorkbenchPrefs(prefs) {
@@ -838,6 +853,20 @@ function watchActiveTaskFolder() {
       taskFolderWatchTimer = setTimeout(() => {
         sendToRenderer("task-folder-changed", { folderPath: activeTaskFolder });
       }, 500);
+    });
+    // H1：FSWatcher 必须挂 error 监听——用户在资源管理器删除活动任务文件夹时
+    // watcher 会发 error 事件，未捕获会冒泡成主进程 uncaughtException 崩溃。
+    // 这里关闭失效 watcher 并清空活动任务，安全降级。
+    taskFolderWatcher.on("error", (error) => {
+      console.warn("任务文件夹监听异常，已停止监听:", error);
+      try { taskFolderWatcher?.close(); } catch {}
+      taskFolderWatcher = null;
+      clearTimeout(taskFolderWatchTimer);
+      if (activeTaskFolder && !fs.existsSync(activeTaskFolder)) {
+        activeTaskFolder = "";
+        refreshUploadInterception();
+        broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
+      }
     });
   } catch (error) {
     console.warn("监听任务文件夹失败:", error);
@@ -1188,6 +1217,60 @@ function registerIpc() {
     if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
     if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
     return { ok: true, text, path: todoPath };
+  });
+  // 平台单字段试注入（V3.4 P1 预研）：对目标 webview 按 CSS 选择器注入一个字段值，
+  // 验证 CDP/JS 注入路径可行。同时支持 input/textarea（value）与 contenteditable 富文本编辑器。
+  // 仅试注入，不点击提交按钮（提交动作永远由用户人工确认）。
+  ipcMain.handle("platform:test-inject", async (_event, payload = {}) => {
+    const webContentsId = Number(payload.webContentsId);
+    const selector = String(payload.selector || "").trim();
+    const value = String(payload.value ?? "");
+    if (!webContentsId || !selector) return { ok: false, error: "缺少目标页面或选择器" };
+    const target = [...webviewContentsSet].find(
+      (contents) => !contents.isDestroyed() && contents.id === webContentsId
+    );
+    if (!target) return { ok: false, error: "目标 webview 不存在或已销毁" };
+    try {
+      const result = await target.executeJavaScript(`
+        (() => {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return { ok: false, error: "未找到匹配选择器的元素" };
+          const text = ${JSON.stringify(value)};
+          el.focus();
+          if (el.isContentEditable) {
+            el.textContent = text;
+            el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+            return { ok: true, kind: "contenteditable" };
+          }
+          if ("value" in el) {
+            const setter = Object.getOwnPropertyDescriptor(el.__proto__, "value")?.set;
+            if (setter) setter.call(el, text); else el.value = text;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true, kind: el.tagName.toLowerCase() };
+          }
+          return { ok: false, error: "目标元素既非输入框也非可编辑区" };
+        })();
+      `, true);
+      return result || { ok: false, error: "注入脚本无返回" };
+    } catch (error) {
+      return { ok: false, error: `注入失败: ${error.message}` };
+    }
+  });
+  // 读取任务文件夹内文本文件（卡片舱 cards.md 用）：限制在 temp/tasks 内 + 2MB 上限
+  ipcMain.handle("tasks:read-text-file", (_event, filePath) => {
+    const target = resolveTaskPath(filePath);
+    if (!target || !fs.existsSync(target)) return { ok: false, error: "文件不存在或越出任务目录" };
+    try {
+      const stat = fs.statSync(target);
+      if (!stat.isFile()) return { ok: false, error: "目标不是文件" };
+      if (stat.size > 2 * 1024 * 1024) return { ok: false, error: "文件超过 2MB，疑似非文本产物" };
+      let text = fs.readFileSync(target, "utf8");
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      return { ok: true, text, mtime: stat.mtimeMs };
+    } catch (error) {
+      return { ok: false, error: `读取失败: ${error.message}` };
+    }
   });
   // 写回待做任务.txt：只允许写偏好中登记的那一个 txt 路径 + 同目录 .bak（每次覆盖，保留最近一次）；
   // renderer 负责生成完整新文本（BOM/换行风格已在纯函数中保持），这里不做内容加工
