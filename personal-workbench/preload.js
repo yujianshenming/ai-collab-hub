@@ -13,6 +13,31 @@ contextBridge.exposeInMainWorld("workbench", {
   updateActiveTaskInfo: (info) => ipcRenderer.send("task:active-update", info),
   prepareTaskFolder: (task) => ipcRenderer.invoke("tasks:prepare-folder", task),
   cleanupTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:cleanup-folder", folderPath),
+  openTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:open-folder", folderPath),
+  listTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:list-folder", folderPath),
+  listTaskFiles: (folderPath) => ipcRenderer.invoke("tasks:list-files", folderPath),
+  taskFileAction: (action, filePath) => ipcRenderer.invoke("tasks:file-action", { action, filePath }),
+  readTaskTextFile: (filePath) => ipcRenderer.invoke("tasks:read-text-file", filePath),
+  testInjectField: (webContentsId, selector, value) =>
+    ipcRenderer.invoke("platform:test-inject", { webContentsId, selector, value }),
+  onTaskFolderChanged: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("task-folder-changed", listener);
+    return () => ipcRenderer.removeListener("task-folder-changed", listener);
+  },
+  pickSystemFiles: () => ipcRenderer.invoke("dialog:pick-files"),
+  onUploadChooseFiles: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("upload:choose-files", listener);
+    return () => ipcRenderer.removeListener("upload:choose-files", listener);
+  },
+  resolveUploadFiles: (requestId, paths) => ipcRenderer.invoke("upload:resolve-files", requestId, paths),
+  cropImage: (filePath) => ipcRenderer.invoke("tasks:crop-image", filePath),
+  getWorkbenchPrefs: () => ipcRenderer.invoke("prefs:get-workbench"),
+  setWorkbenchPrefs: (prefs) => ipcRenderer.invoke("prefs:set-workbench", prefs),
+  pickTodoFile: () => ipcRenderer.invoke("dialog:pick-todo-file"),
+  readTodoFile: () => ipcRenderer.invoke("tasks:read-todo-file"),
+  writeTodoFile: (text) => ipcRenderer.invoke("tasks:write-todo-file", text),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
   onDownloadCompleted: (callback) => {

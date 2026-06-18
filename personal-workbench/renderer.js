@@ -2,17 +2,39 @@ const DEFAULT_TABS = [
   { id: "evaluation", name: "评估", url: "https://www.wl363eval.top/" }
 ];
 
+// 流水线 5 步统一模型：所有 stepper/进度条/芯片均从此常量派生，禁止散落硬编码
+const PIPELINE_STEPS = [
+  { key: "prepare",    name: "准备",        desc: "建立任务文件夹" },
+  { key: "testing",    name: "本地测试",    desc: "生成 dialogue.json" },
+  { key: "evaluating", name: "评估上传",    desc: "评估平台自动注入" },
+  { key: "report",     name: "捕获报告",    desc: "自动拦截下载归档" },
+  { key: "hermes",     name: "Hermes 诊断", desc: "一键载入产物路径" }
+];
+
+// 历史数据中的旧步骤值归一映射到统一 key
+function normalizePipelineStep(step) {
+  if (step === "analysis") return "report";
+  return PIPELINE_STEPS.some((item) => item.key === step) ? step : "testing";
+}
+
+function pipelineStepIndex(step) {
+  return PIPELINE_STEPS.findIndex((item) => item.key === normalizePipelineStep(step));
+}
+
+// 任务中心作为特殊内置视图的伪标签 id
+const TASK_CENTER_ID = "__taskcenter__";
+
 const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
 let tabs = readTabs();
-let activeTabId = localStorage.getItem("personal_workbench_active") || tabs[0].id;
+let activeTabId = TASK_CENTER_ID;
 let rightSplitTabId = null;
 let bottomSplitTabId = null;
 let terminal;
 let fitAddon;
 let pointerDrag = null;
 let weeklyTasks = [];
-let taskViewMode = "list";
+let taskRailCollapsed = false;
 let pipelineState = {
   active: false,
   taskId: null,
@@ -24,6 +46,32 @@ let pipelineState = {
 };
 const tabTerminals = new Map();
 const desktopStatusPollers = new Map();
+
+// ===== per-tab 资源清理注册表（缺陷 #3）=====
+// DOMNodeRemovedFromDocument 突变事件已被 Chromium 127+ 移除，原三处监听从未触发。
+// 现在所有标签级资源（轮询定时器、IPC 监听器、resize 监听器等）注册到这里，
+// 删除/重建标签的代码路径显式调用 runTabCleanup 统一释放，main 进程 pty/桌面应用并入同一出口。
+const tabCleanupRegistry = new Map();
+
+function registerTabCleanup(tabId, cleanup) {
+  if (typeof cleanup !== "function") return;
+  if (!tabCleanupRegistry.has(tabId)) tabCleanupRegistry.set(tabId, []);
+  tabCleanupRegistry.get(tabId).push(cleanup);
+}
+
+function runTabCleanup(tabId) {
+  const cleanups = tabCleanupRegistry.get(tabId) || [];
+  tabCleanupRegistry.delete(tabId);
+  for (const cleanup of cleanups) {
+    try {
+      cleanup();
+    } catch (error) {
+      console.warn(`标签 ${tabId} 资源清理失败:`, error);
+    }
+  }
+  // main 进程侧资源（CLI pty、嵌入式桌面应用进程）走同一出口
+  window.workbench.cleanupTabResources(tabId);
+}
 
 // Category configuration and state
 let collapsedCategories = {};
@@ -66,27 +114,98 @@ const elements = {
   rightSidebarResizer: document.querySelector("#right-sidebar-resizer"),
   rightSidebarTitle: document.querySelector("#right-sidebar-title"),
   rightSidebarClose: document.querySelector("#right-sidebar-close"),
+  rightSidebarBody: document.querySelector("#right-sidebar-body"),
   bottomSidebar: document.querySelector("#bottom-sidebar"),
   bottomSidebarResizer: document.querySelector("#bottom-sidebar-resizer"),
   bottomSidebarTitle: document.querySelector("#bottom-sidebar-title"),
   bottomSidebarClose: document.querySelector("#bottom-sidebar-close"),
   bottomSidebarBody: document.querySelector("#bottom-sidebar-body"),
-  taskPanel: document.querySelector("#task-manager-panel"),
-  taskPanelOverlay: document.querySelector("#task-panel-overlay"),
-  taskListView: document.querySelector("#task-list-view"),
-  taskFormView: document.querySelector("#task-form"),
-  taskFormTitle: document.querySelector("#task-form-title"),
-  taskForm: document.querySelector("#task-form"),
-  taskTableBody: document.querySelector("#task-table-body"),
-  addNewTask: document.querySelector("#btn-add-new-task"),
-  menuTaskButton: document.querySelector("#menu-task-button"),
-  menuTerminalButton: document.querySelector("#menu-terminal-button"),
+  workspace: document.querySelector(".workspace"),
+  crumbSub: document.querySelector("#crumb-sub"),
+  addressBar: document.querySelector("#address-bar"),
+  reloadButton: document.querySelector("#reload-button"),
+  menuMorePop: document.querySelector("#menu-more-pop"),
+  menuMoreButton: document.querySelector("#menu-more-button"),
   menuSettingsButton: document.querySelector("#menu-settings-button"),
   menuReloadButton: document.querySelector("#menu-reload-button"),
-  activeTaskBanner: document.querySelector("#active-task-banner"),
-  activeTaskText: document.querySelector("#active-task-text"),
-  activeTaskFinish: document.querySelector("#active-task-finish"),
-  activeTaskHermes: document.querySelector("#active-task-hermes")
+  navTaskCenter: document.querySelector("#nav-task-center"),
+  taskCenterBadge: document.querySelector("#task-center-badge"),
+  taskCenterView: document.querySelector("#task-center-view"),
+  homeWeekSub: document.querySelector("#home-week-sub"),
+  statTotal: document.querySelector("#stat-total"),
+  statRunning: document.querySelector("#stat-running"),
+  statPaused: document.querySelector("#stat-paused"),
+  statUnsubmitted: document.querySelector("#stat-unsubmitted"),
+  statCompleted: document.querySelector("#stat-completed"),
+  focusCard: document.querySelector("#focus-card"),
+  taskGridActive: document.querySelector("#task-grid-active"),
+  sectionUnsubmitted: document.querySelector("#section-unsubmitted"),
+  taskGridUnsubmitted: document.querySelector("#task-grid-unsubmitted"),
+  taskGridDone: document.querySelector("#task-grid-done"),
+  btnImportTodo: document.querySelector("#btn-import-todo"),
+  taskDialog: document.querySelector("#task-dialog"),
+  taskFormTitle: document.querySelector("#task-form-title"),
+  taskForm: document.querySelector("#task-form"),
+  finishTaskDialog: document.querySelector("#finish-task-dialog"),
+  finishTaskSubmitted: document.querySelector("#finish-task-submitted"),
+  finishTaskUnsubmitted: document.querySelector("#finish-task-unsubmitted"),
+  finishTaskCancel: document.querySelector("#finish-task-cancel"),
+  finishTaskCancelX: document.querySelector("#finish-task-cancel-x"),
+  deleteTaskDialog: document.querySelector("#delete-task-dialog"),
+  deleteTaskDesc: document.querySelector("#delete-task-desc"),
+  deleteTaskConfirm: document.querySelector("#delete-task-confirm"),
+  deleteTaskCancel: document.querySelector("#delete-task-cancel"),
+  deleteTaskCancelX: document.querySelector("#delete-task-cancel-x"),
+  addNewTask: document.querySelector("#btn-add-new-task"),
+  sbTerminal: document.querySelector("#sb-terminal"),
+  sbTaskChip: document.querySelector("#sb-task-chip"),
+  sbTaskChipText: document.querySelector("#sb-task-chip-text"),
+  taskRail: document.querySelector("#task-rail"),
+  railHandle: document.querySelector("#rail-handle"),
+  railHandleText: document.querySelector("#rail-handle-text"),
+  railRingBar: document.querySelector("#rail-ring-bar"),
+  railCollapse: document.querySelector("#rail-collapse"),
+  railTitle: document.querySelector("#rail-title"),
+  railStepBadge: document.querySelector("#rail-step-badge"),
+  railOwner: document.querySelector("#rail-owner"),
+  railSteps: document.querySelector("#rail-steps"),
+  railArtifacts: document.querySelector("#rail-artifacts"),
+  railCards: document.querySelector("#rail-cards"),
+  railCardsStream: document.querySelector("#rail-cards-stream"),
+  railCardsReparse: document.querySelector("#rail-cards-reparse"),
+  railHermes: document.querySelector("#rail-hermes"),
+  railPause: document.querySelector("#rail-pause"),
+  railFinish: document.querySelector("#rail-finish"),
+  filePickDialog: document.querySelector("#file-pick-dialog"),
+  filePickList: document.querySelector("#file-pick-list"),
+  filePickInject: document.querySelector("#file-pick-inject"),
+  filePickSystem: document.querySelector("#file-pick-system"),
+  filePickCancel: document.querySelector("#file-pick-cancel"),
+  filePickClose: document.querySelector("#file-pick-close"),
+  menuPrefsButton: document.querySelector("#menu-prefs-button"),
+  prefsDialog: document.querySelector("#prefs-dialog"),
+  prefsForm: document.querySelector("#prefs-form"),
+  prefCropSide: document.querySelector("#pref-crop-side"),
+  prefCropPixels: document.querySelector("#pref-crop-pixels"),
+  prefTodoPath: document.querySelector("#pref-todo-path"),
+  prefTodoChange: document.querySelector("#pref-todo-change"),
+  prefPlatformMap: document.querySelector("#pref-platform-map"),
+  prefInjectField: document.querySelector("#pref-inject-field"),
+  prefInjectValue: document.querySelector("#pref-inject-value"),
+  prefInjectRun: document.querySelector("#pref-inject-run"),
+  importPreviewDialog: document.querySelector("#import-preview-dialog"),
+  importPreviewSummary: document.querySelector("#import-preview-summary"),
+  importPreviewGroups: document.querySelector("#import-preview-groups"),
+  importPreviewApply: document.querySelector("#import-preview-apply"),
+  importPreviewCancel: document.querySelector("#import-preview-cancel"),
+  importPreviewCancelX: document.querySelector("#import-preview-cancel-x"),
+  btnWritebackTodo: document.querySelector("#btn-writeback-todo"),
+  writebackPreviewDialog: document.querySelector("#writeback-preview-dialog"),
+  writebackPreviewSummary: document.querySelector("#writeback-preview-summary"),
+  writebackPreviewGroups: document.querySelector("#writeback-preview-groups"),
+  writebackPreviewApply: document.querySelector("#writeback-preview-apply"),
+  writebackPreviewCancel: document.querySelector("#writeback-preview-cancel"),
+  writebackPreviewCancelX: document.querySelector("#writeback-preview-cancel-x")
 };
 
 function readTabs() {
@@ -115,7 +234,8 @@ function normalizeUrl(value) {
 }
 
 function iconForTab(name) {
-  return (name.trim()[0] || "W").toUpperCase();
+  // H2：首字母可能是 < & 等字符，进 innerHTML 前转义，杜绝标签名注入 DOM
+  return escapeHtml((String(name || "").trim()[0] || "W").toUpperCase());
 }
 
 function renderTabs() {
@@ -152,7 +272,7 @@ function renderTabs() {
     const header = document.createElement("div");
     header.className = "category-header";
     header.innerHTML = `
-      <span class="category-toggle-icon">▼</span>
+      <span class="category-toggle-icon"><svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg></span>
       <span class="category-title">${CATEGORY_MAP[catId].name}</span>
       <span class="category-badge">${catTabs.length}</span>
     `;
@@ -173,9 +293,11 @@ function renderTabs() {
       item.innerHTML = `
         <button class="tab-main" type="button">
           <span class="tab-icon">${iconForTab(tab.name)}</span>
-          <span>${tab.name}</span>
+          <span>${escapeHtml(tab.name)}</span>
         </button>
-        <button class="tab-menu" type="button" aria-label="编辑 ${tab.name}" title="编辑标签">•••</button>
+        <button class="tab-menu" type="button" aria-label="编辑 ${escapeHtml(tab.name)}" title="编辑标签">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
       `;
       item.querySelector(".tab-menu").addEventListener("click", (e) => {
         e.stopPropagation();
@@ -196,14 +318,52 @@ function renderTabs() {
 
   // Cleanup viewports for deleted tabs
   document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
-    if (!tabs.some((tab) => tab.id === viewport.dataset.id)) viewport.remove();
+    if (!tabs.some((tab) => tab.id === viewport.dataset.id)) {
+      runTabCleanup(viewport.dataset.id);
+      viewport.remove();
+    }
   });
 
-  // Activate active tab
-  const validActiveTabId = tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0]?.id;
+  updateSidebarPulse();
+
+  // Activate active tab（任务中心是合法的特殊视图）
+  const validActiveTabId = activeTabId === TASK_CENTER_ID || tabs.some((tab) => tab.id === activeTabId)
+    ? activeTabId
+    : tabs[0]?.id;
   if (validActiveTabId) {
     activateTab(validActiveTabId);
   }
+}
+
+// 流程当前停留的标签页（评估上传 → 评估平台标签；Hermes 诊断 → Hermes 标签）
+function pipelineFocusTabId() {
+  if (!pipelineState.active) return null;
+  const step = normalizePipelineStep(pipelineState.step);
+  if (step === "evaluating") {
+    const evalTab = tabs.find((tab) => tab.id === "evaluation") || findTabByUrlPart("wl363eval");
+    return evalTab?.id || null;
+  }
+  if (step === "hermes") {
+    return findTabByUrlPart("hermes")?.id || null;
+  }
+  return null;
+}
+
+function updateSidebarPulse() {
+  const focusTabId = pipelineFocusTabId();
+  document.querySelectorAll(".tab-item").forEach((item) => {
+    const existing = item.querySelector(".running-pulse");
+    if (item.dataset.id === focusTabId) {
+      if (!existing) {
+        const dot = document.createElement("span");
+        dot.className = "running-pulse";
+        dot.title = "任务流程正在此页进行";
+        item.append(dot);
+      }
+    } else if (existing) {
+      existing.remove();
+    }
+  });
 }
 
 function clearDragState() {
@@ -261,11 +421,11 @@ function createTabViewport(tab) {
     webview.setAttribute("webpreferences", "contextIsolation=no");
 
     webview.addEventListener("did-start-loading", () => {
-      if (tab.id === activeTabId) document.querySelector("#reload-button").textContent = "×";
+      if (tab.id === activeTabId) elements.reloadButton.classList.add("loading");
     });
     webview.addEventListener("did-stop-loading", () => {
       if (tab.id === activeTabId) {
-        document.querySelector("#reload-button").textContent = "↻";
+        elements.reloadButton.classList.remove("loading");
         updateAddressFromWebview(webview);
       }
     });
@@ -280,7 +440,6 @@ function createTabViewport(tab) {
         });
       }
     });
-    setupWebviewUploadInterceptor(webview);
     webview.addEventListener("page-title-updated", (event) => {
       if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
     });
@@ -463,7 +622,7 @@ function createTabViewport(tab) {
       });
     }
 
-    viewport.addEventListener("DOMNodeRemovedFromDocument", () => {
+    registerTabCleanup(tab.id, () => {
       unsub();
       if (unsubBound) unsubBound();
       if (desktopStatusPollers.has(tab.id)) {
@@ -588,7 +747,7 @@ function createTabViewport(tab) {
 
     tabTerminals.set(tab.id, { terminal: cliTerm, fitAddon: cliFitAddon });
 
-    viewport.addEventListener("DOMNodeRemovedFromDocument", () => {
+    registerTabCleanup(tab.id, () => {
       unsubData();
       tabTerminals.delete(tab.id);
     });
@@ -793,7 +952,7 @@ function createTabViewport(tab) {
         link.click();
       });
 
-      viewport.addEventListener("DOMNodeRemovedFromDocument", () => {
+      registerTabCleanup(tab.id, () => {
         window.removeEventListener("resize", resizeCanvas);
       });
     }
@@ -811,32 +970,39 @@ function activateTab(id) {
   if (isActivatingTab) return;
   isActivatingTab = true;
   try {
-    if (rightSplitTabId === id) {
-      rightSplitTabId = activeTabId;
-    } else if (bottomSplitTabId === id) {
-      bottomSplitTabId = activeTabId;
-    }
+    const isTaskCenter = id === TASK_CENTER_ID;
+    if (!isTaskCenter) {
+      if (rightSplitTabId === id) {
+        rightSplitTabId = activeTabId === TASK_CENTER_ID ? null : activeTabId;
+      } else if (bottomSplitTabId === id) {
+        bottomSplitTabId = activeTabId === TASK_CENTER_ID ? null : activeTabId;
+      }
 
-    // Prevent duplicate references
-    if (rightSplitTabId === bottomSplitTabId) {
-      bottomSplitTabId = null;
+      // Prevent duplicate references
+      if (rightSplitTabId && rightSplitTabId === bottomSplitTabId) {
+        bottomSplitTabId = null;
+      }
     }
 
     activeTabId = id;
     localStorage.setItem("personal_workbench_active", id);
-    const tab = tabs.find((candidate) => candidate.id === id);
-    if (!tab) return;
+    const tab = isTaskCenter ? null : tabs.find((candidate) => candidate.id === id);
+    if (!isTaskCenter && !tab) return;
 
     // Auto-expand category if collapsed
-    const category = getTabCategory(tab);
-    if (collapsedCategories[category]) {
-      collapsedCategories[category] = false;
-      localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
-      renderTabs();
+    if (tab) {
+      const category = getTabCategory(tab);
+      if (collapsedCategories[category]) {
+        collapsedCategories[category] = false;
+        localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
+        renderTabs();
+      }
     }
 
+    elements.workspace.classList.toggle("task-center-active", isTaskCenter);
+    elements.navTaskCenter?.classList.toggle("active", isTaskCenter);
     document.querySelectorAll(".tab-item").forEach((item) => {
-      item.classList.toggle("active", item.dataset.id === id);
+      item.classList.toggle("active", !isTaskCenter && item.dataset.id === id);
       item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
     });
 
@@ -866,21 +1032,15 @@ function activateTab(id) {
       }
     });
 
-    elements.activeTitle.textContent = tab.name;
-    let currentUrl = tab.url || "";
-    if (tab.type === "web" || tab.type === "local-web" || !tab.type) {
-      try {
-        currentUrl = activeWebview()?.getURL?.() || tab.url || "";
-      } catch (error) {
-        console.warn("获取 Webview URL 失败:", error);
-      }
+    updateTopbarForActive(tab);
+    if (isTaskCenter) {
+      renderTaskCenter();
     }
-    elements.addressInput.value = currentUrl;
     updateActiveTabInfo();
     fitWebviewZoom();
 
     // If CLI app, fit and focus it
-    if (tab.type === "cli-app") {
+    if (tab && tab.type === "cli-app") {
       setTimeout(() => {
         const termObj = tabTerminals.get(id);
         if (termObj) {
@@ -922,6 +1082,31 @@ function activateTab(id) {
   }
 }
 
+// 顶栏面包屑与地址栏显隐：任务中心隐藏地址栏，webview 标签显示地址栏
+function updateTopbarForActive(tab = null) {
+  if (!tab) {
+    const total = weeklyTasks.length;
+    const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
+    elements.activeTitle.textContent = "任务中心";
+    elements.crumbSub.textContent = `本周 ${total} 项 · 进行中 ${running} 项`;
+    elements.addressBar.style.display = "";
+    return;
+  }
+  elements.activeTitle.textContent = tab.name;
+  const isWebTab = tab.type === "web" || tab.type === "local-web" || !tab.type;
+  elements.crumbSub.textContent = CATEGORY_MAP[getTabCategory(tab)]?.name || "";
+  elements.addressBar.style.display = isWebTab ? "flex" : "none";
+  if (isWebTab) {
+    let currentUrl = tab.url || "";
+    try {
+      currentUrl = activeWebview()?.getURL?.() || tab.url || "";
+    } catch (error) {
+      console.warn("获取 Webview URL 失败:", error);
+    }
+    elements.addressInput.value = currentUrl;
+  }
+}
+
 function fitWebviewZoom() {
   document.querySelectorAll(".tab-viewport[data-id]").forEach((viewport) => {
     const webview = viewport.querySelector(".tab-webview");
@@ -947,6 +1132,10 @@ function updateAddressFromWebview(webview) {
 }
 
 function updateActiveTabInfo() {
+  if (activeTabId === TASK_CENTER_ID) {
+    window.workbench.updateActiveTabInfo({ url: "", title: "任务中心" });
+    return;
+  }
   const tab = tabs.find((candidate) => candidate.id === activeTabId);
   let activeUrl = "";
   try {
@@ -1031,6 +1220,7 @@ function initTerminal() {
 function toggleTerminal(force) {
   const open = typeof force === "boolean" ? force : !elements.terminalPanel.classList.contains("open");
   elements.terminalPanel.classList.toggle("open", open);
+  elements.sbTerminal?.classList.toggle("on", open);
   if (open) {
     setTimeout(() => {
       fitAddon.fit();
@@ -1069,37 +1259,1019 @@ function taskTypeLabel(type) {
     "capability-edit": "能力训练修改",
     "capability-acceptance": "能力训练验收",
     "grading-setup": "作业批阅搭建",
-    "grading-acceptance": "作业批阅验收"
+    "grading-acceptance": "作业批阅验收",
+    "grading-edit": "作业批阅修改"
   }[type] || type || "未分类";
 }
 
-function updateActiveTaskMenu(task = null) {
-  if (!task) {
-    window.workbench.updateActiveTaskInfo({});
-    elements.activeTaskBanner.hidden = true;
-    elements.activeTaskText.textContent = "";
-    elements.activeTaskHermes.hidden = true;
-    return;
+// ============ 待做任务.txt 解析（纯函数，无副作用，供测试注入） ============
+
+// 任务类型关键词 → 内部枚举（含 V3.2 新增的 grading-edit）
+const TODO_TYPE_MAP = [
+  ["能力训练搭建", "capability-setup"],
+  ["能力训练修改", "capability-edit"],
+  ["能力训练验收", "capability-acceptance"],
+  ["作业批阅搭建", "grading-setup"],
+  ["作业批阅验收", "grading-acceptance"],
+  ["作业批阅修改", "grading-edit"]
+];
+const TODO_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+const TODO_IMPORT_FIELDS = ["quantity", "status", "owner", "weekday", "subtasks", "note"];
+const TODO_IMPORT_FIELD_LABELS = {
+  quantity: "数量",
+  status: "状态",
+  owner: "负责人",
+  weekday: "星期",
+  subtasks: "子任务",
+  note: "备注"
+};
+let importPreviewState = null;
+
+// 括号备注 → 子任务标记：{ 编号: "done"|"unconfirmed" }；无法识别返回 null
+function parseSubtaskNote(text) {
+  const marks = {};
+  let matched = false;
+  const splitNums = (raw) => raw.split(/[/、,，\s]+/).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+  const doneMatch = text.match(/已完成任务([\d/、,，\s]+)/) || text.match(/任务([\d/、,，\s]+)已完成/);
+  if (doneMatch) {
+    for (const n of splitNums(doneMatch[1])) marks[n] = "done";
+    matched = true;
   }
-  elements.activeTaskText.textContent = `🏃 正在进行任务: ${task.school || ""} - ${task.course || ""} (${taskTypeLabel(task.taskType)})`;
-  elements.activeTaskBanner.hidden = false;
-  window.workbench.updateActiveTaskInfo({
-    school: task.school || "",
-    course: task.course || "",
-    taskType: task.taskType || "",
-    taskTypeLabel: taskTypeLabel(task.taskType),
-    folderPath: pipelineState.taskFolder || task.taskFolder || ""
-  });
+  const unconfirmedMatch = text.match(/任务([\d/、,，\s]+)待确认/) || text.match(/待确认任务([\d/、,，\s]+)/);
+  if (unconfirmedMatch) {
+    for (const n of splitNums(unconfirmedMatch[1])) marks[n] = "unconfirmed";
+    matched = true;
+  }
+  return matched ? marks : null;
 }
 
-async function finishActiveTask() {
+// 行模式：学校《课程》 [任务类型] [N个] [状态(可带括号备注)] [负责人] [星期]
+// 返回 { tasks: [...], unparsed: [原文行] }；字段间空格数量容错
+function parseTodoLines(text) {
+  const tasks = [];
+  const unparsed = [];
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const head = line.match(/^(.+?)《([^》]+)》(.*)$/);
+    if (!head) {
+      unparsed.push(line);
+      continue;
+    }
+    const school = head[1].trim();
+    const course = head[2].trim();
+    let rest = head[3];
+
+    let taskType = "";
+    for (const [keyword, value] of TODO_TYPE_MAP) {
+      if (rest.includes(keyword)) {
+        taskType = value;
+        rest = rest.replace(keyword, " ");
+        break;
+      }
+    }
+
+    let quantity = 1;
+    const quantityMatch = rest.match(/(\d+)个/);
+    if (quantityMatch) {
+      quantity = Math.max(1, Number(quantityMatch[1]));
+      rest = rest.replace(quantityMatch[0], " ");
+    }
+
+    let status = "pending";
+    let note = "";
+    let subtaskMarks = null;
+    const statusMatch = rest.match(/(已完成|未完成|未提交)\s*(（[^）]*）|\([^)]*\))?/);
+    if (statusMatch) {
+      status = statusMatch[1] === "已完成" ? "completed" : statusMatch[1] === "未提交" ? "unsubmitted" : "pending";
+      if (statusMatch[2]) {
+        const inner = statusMatch[2].slice(1, -1).trim();
+        subtaskMarks = parseSubtaskNote(inner);
+        if (!subtaskMarks) note = inner;
+      }
+      rest = rest.replace(statusMatch[0], " ");
+    }
+
+    let weekday = "";
+    const weekdayMatch = rest.match(/周[一二三四五六日]/);
+    if (weekdayMatch) {
+      weekday = weekdayMatch[0];
+      rest = rest.replace(weekdayMatch[0], " ");
+    }
+
+    const owner = rest.trim().split(/\s+/).filter(Boolean)[0] || "";
+    tasks.push({ school, course, taskType, quantity, status, owner, weekday, note, subtaskMarks });
+  }
+  return { tasks, unparsed };
+}
+window.parseTodoLines = parseTodoLines;
+
+// ============ 待做任务.txt 写回（纯函数，无副作用，与上方解析器互为逆运算） ============
+
+const TODO_STATUS_TEXT = { pending: "未完成", unsubmitted: "未提交", completed: "已完成" };
+
+// 工作台扩展状态（running/evaluating/paused）txt 中无对应词，统一落回「未完成」
+function normalizeWriteBackStatus(status) {
+  return ["completed", "unsubmitted"].includes(status) ? status : "pending";
+}
+
+// subtasks → 括号备注文本；与 parseSubtaskNote / normalizeImportedTodoTask 的默认值约定互逆：
+// completed/unsubmitted 默认全 done、其余默认全 pending，与默认一致时不写括号
+function todoNoteFromSubtasks(subtasks, quantity, status) {
+  const list = normalizeSubtasks(subtasks, quantity);
+  const done = list.filter((item) => item.status === "done").map((item) => item.index);
+  const unconfirmed = list.filter((item) => item.status === "unconfirmed").map((item) => item.index);
+  const defaultAllDone = ["completed", "unsubmitted"].includes(status);
+  if (defaultAllDone && done.length === list.length && !unconfirmed.length) return "";
+  if (!defaultAllDone && !done.length && !unconfirmed.length) return "";
+  const segments = [];
+  if (done.length) segments.push(`已完成任务${done.join("/")}`);
+  if (unconfirmed.length) segments.push(`任务${unconfirmed.join("/")}待确认`);
+  return segments.join("，");
+}
+
+// 行尾字段序列化：数量 状态（括号备注） 负责人 星期（行首之外的全部可写字段）
+function serializeTodoTail(task) {
+  const quantity = Math.max(1, Number(task.quantity) || 1);
+  const status = normalizeWriteBackStatus(task.status);
+  const subtaskNote = todoNoteFromSubtasks(task.subtasks, quantity, status);
+  // 子任务标记与纯文本备注互斥（解析器只能二选一），有标记时标记优先
+  const noteText = subtaskNote || String(task.note || "").trim();
+  const parts = [`${quantity}个`, `${TODO_STATUS_TEXT[status]}${noteText ? `（${noteText}）` : ""}`];
+  const owner = String(task.owner || "").trim();
+  if (owner) parts.push(owner);
+  if (TODO_WEEKDAYS.includes(task.weekday)) parts.push(task.weekday);
+  return parts.join(" ");
+}
+
+// 工作台任务 → 完整 txt 行（「仅工作台」任务追加时使用，按 §0 样例格式生成）
+function serializeTodoLine(task) {
+  const typeKeyword = TODO_TYPE_MAP.find(([, value]) => value === task.taskType)?.[0] || "";
+  const head = `${String(task.school || "").trim()}《${String(task.course || "").trim()}》${typeKeyword}`;
+  return `${head} ${serializeTodoTail(task)}`;
+}
+
+// 单行合并：行首「学校《课程》任务类型」从原行原样保留；语义无变化时原行一字不动
+function mergeTodoLine(rawLine, task, parsedTask) {
+  const incoming = normalizeImportedTodoTask(parsedTask);
+  if (serializeTodoTail(incoming) === serializeTodoTail(task)) return rawLine;
+  const headMatch = rawLine.match(/^(\s*.+?《[^》]+》)/);
+  if (!headMatch) return serializeTodoLine(task);
+  let head = headMatch[1];
+  const typeKeyword = TODO_TYPE_MAP.find(([, value]) => value === task.taskType)?.[0] || "";
+  if (typeKeyword) {
+    const afterHead = rawLine.slice(head.length);
+    const leadingSpaces = afterHead.match(/^\s*/)[0];
+    if (afterHead.slice(leadingSpaces.length).startsWith(typeKeyword)) {
+      head = rawLine.slice(0, head.length + leadingSpaces.length + typeKeyword.length);
+    } else {
+      head += typeKeyword;
+    }
+  }
+  return `${head} ${serializeTodoTail(task)}`;
+}
+
+// 写回合并主函数：匹配键 = 学校+课程+任务类型 三元组；
+// 只改写匹配且语义有变化的行，未匹配/无法解析行一字不动；
+// appendTasks（用户勾选的「仅工作台」任务）按样例格式追加到文件末尾；
+// 输出保留原文件 BOM 与换行符风格（CRLF/LF）
+function mergeTodoFile(text, tasks, appendTasks = []) {
+  const source = String(text || "");
+  const hasBom = source.charCodeAt(0) === 0xfeff;
+  const body = hasBom ? source.slice(1) : source;
+  const eol = body.includes("\r\n") ? "\r\n" : "\n";
+  const taskByKey = new Map((tasks || []).map((task) => [todoImportKey(task), task]));
+  const matchedKeys = new Set();
+  const entries = body.split(/\r?\n/).map((rawLine) => {
+    const parsedTask = parseTodoLines(rawLine).tasks[0];
+    const key = parsedTask ? todoImportKey(parsedTask) : "";
+    const workbenchTask = parsedTask && !matchedKeys.has(key) ? taskByKey.get(key) : null;
+    if (!workbenchTask) {
+      return { oldLine: rawLine, newLine: rawLine, matched: false, changed: false };
+    }
+    matchedKeys.add(key);
+    const newLine = mergeTodoLine(rawLine, workbenchTask, parsedTask);
+    return { oldLine: rawLine, newLine, matched: true, changed: newLine !== rawLine, task: workbenchTask };
+  });
+  const onlyInWorkbench = (tasks || []).filter((task) => !matchedKeys.has(todoImportKey(task)));
+  const appendLines = (appendTasks || []).map((task) => serializeTodoLine(task));
+  let lines = entries.map((entry) => entry.newLine);
+  if (appendLines.length) {
+    // 保留文件结尾空行：追加内容插在末尾连续空行之前
+    let insertAt = lines.length;
+    while (insertAt > 0 && lines[insertAt - 1] === "") insertAt -= 1;
+    lines = [...lines.slice(0, insertAt), ...appendLines, ...lines.slice(insertAt)];
+  }
+  const finalText = (hasBom ? "\uFEFF" : "") + lines.join(eol);
+  return { entries, onlyInWorkbench, appendLines, text: finalText, eol, hasBom };
+}
+
+window.serializeTodoLine = serializeTodoLine;
+window.mergeTodoFile = mergeTodoFile;
+
+// ============ cards.md 卡片包解析（纯函数，无副作用，自包含，供测试注入） ============
+
+// 卡片五项字段标签（顺序即卡片舱展示顺序）
+const CARD_FIELD_DEFS = [
+  ["name", ["卡片名称"]],
+  ["rounds", ["建议轮次"]],
+  ["stageDescription", ["阶段描述"]],
+  ["opening", ["开场白"]],
+  ["prompt", ["提示词"]]
+];
+// 总任务级字段标签（长名在前，避免「任务描述」抢先命中「总任务描述」）
+const CARD_META_DEFS = [
+  ["taskName", ["总任务名称", "任务名称"]],
+  ["taskDescription", ["总任务描述", "任务描述"]],
+  ["coverDescription", ["封面图文字描述", "封面图描述", "封面图"]]
+];
+
+// 去掉行首 markdown 装饰（标题井号/引用/列表符/序号/粗体），返回纯文本
+function stripCardDecorations(line) {
+  return String(line || "")
+    .trim()
+    .replace(/^[#>]+\s*/, "")
+    .replace(/^[-*•]\s+/, "")
+    .replace(/^\d+[.、)]\s*/, "")
+    .replace(/^\*\*/, "")
+    .replace(/\*\*$/, "")
+    .trim();
+}
+
+// 标签行匹配：标签后必须紧跟 ：/:（允许粗体闭合符），返回标签后的内联内容；不匹配返回 null
+function matchCardLabel(line, labels) {
+  const cleaned = stripCardDecorations(line);
+  for (const label of labels) {
+    if (!cleaned.startsWith(label)) continue;
+    const rest = cleaned.slice(label.length).replace(/^\*\*/, "").trimStart();
+    if (rest === "") return "";
+    if (/^[：:]/.test(rest)) return rest.replace(/^[：:]\s*/, "").trim();
+  }
+  return null;
+}
+
+// 卡片标题锚点：`## 卡片一：xxx` / `卡片1 · xxx` 这类标题行，返回卡片名（可为空串）；不匹配返回 null
+function matchCardHeading(line) {
+  const cleaned = stripCardDecorations(line);
+  const match = cleaned.match(/^卡片\s*[一二三四五六七八九十0-9]{1,3}\s*(?:[：:·.\-—]\s*(.*))?$/);
+  if (!match) return null;
+  return (match[1] || "").replace(/\*\*$/, "").trim();
+}
+
+// 整段截取区锚点：评价标准 / 测试人格
+function matchSectionAnchor(line) {
+  const cleaned = stripCardDecorations(line).replace(/[：:]\s*$/, "");
+  if (/^评价标准$/.test(cleaned)) return "evaluation";
+  if (/^测试人格$/.test(cleaned)) return "testPersona";
+  return null;
+}
+
+// Hermes 产出 cards.md → 结构化卡片包：
+// { taskMeta: { taskName?, taskDescription?, coverDescription? },
+//   cards: [{ name, rounds, stageDescription, opening, prompt }],
+//   evaluation, testPersona, unparsed: [] }
+// 规则：卡片名称标签或「## 卡片N」标题开新卡；字段内容延续到下一标签/锚点；
+// 提示词优先取 ``` 代码块内原文（不含围栏）；评价标准/测试人格整段截取不拆分；
+// 围栏内不识别任何锚点；无法归类的内容进 unparsed，不阻塞已解析部分。
+function parseCardsDocument(text) {
+  const result = { taskMeta: {}, cards: [], evaluation: "", testPersona: "", unparsed: [] };
+  const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+
+  let currentCard = null;
+  let field = null;            // { type: "card"|"meta"|"section", key } 当前累积目标
+  let fieldLines = [];
+  let promptFenced = false;    // 提示词是否处于 ``` 围栏捕获中
+  let inFence = false;         // 全局围栏状态（围栏内不识别锚点）
+  let unparsedBuffer = [];
+
+  const flushUnparsed = () => {
+    const block = unparsedBuffer.join("\n").trim();
+    if (block) result.unparsed.push(block);
+    unparsedBuffer = [];
+  };
+  const flushField = () => {
+    if (!field) return;
+    const content = fieldLines.join("\n").replace(/^\n+|\n+$/g, "").trimEnd();
+    if (field.type === "card" && currentCard) {
+      if (content || !currentCard[field.key]) currentCard[field.key] = content || currentCard[field.key] || "";
+    } else if (field.type === "meta") {
+      if (content) result.taskMeta[field.key] = content;
+    } else if (field.type === "section") {
+      if (content) result[field.key] = content;
+    }
+    field = null;
+    fieldLines = [];
+    promptFenced = false;
+  };
+  const startCard = (name) => {
+    flushField();
+    flushUnparsed();
+    currentCard = { name: name || "", rounds: "", stageDescription: "", opening: "", prompt: "" };
+    result.cards.push(currentCard);
+  };
+
+  for (const rawLine of lines) {
+    const fenceLine = /^\s*```/.test(rawLine);
+
+    // —— 围栏处理 ——
+    if (fenceLine) {
+      if (field?.type === "card" && field.key === "prompt" && !fieldLines.some((item) => item.trim())) {
+        // 提示词字段的第一个围栏：进入纯净捕获模式，围栏本身不进内容
+        promptFenced = true;
+        inFence = true;
+        fieldLines = [];
+        continue;
+      }
+      if (promptFenced) {
+        // 提示词围栏闭合：字段完成，围栏不进内容
+        inFence = false;
+        flushField();
+        continue;
+      }
+      inFence = !inFence;
+      if (field) fieldLines.push(rawLine);
+      else unparsedBuffer.push(rawLine);
+      continue;
+    }
+    if (inFence) {
+      // 围栏内内容原样累积，不做任何锚点识别
+      if (field) fieldLines.push(rawLine);
+      else unparsedBuffer.push(rawLine);
+      continue;
+    }
+
+    // —— 锚点识别（围栏外） ——
+    const sectionKey = matchSectionAnchor(rawLine);
+    if (sectionKey) {
+      flushField();
+      flushUnparsed();
+      field = { type: "section", key: sectionKey };
+      fieldLines = [];
+      continue;
+    }
+
+    const headingName = matchCardHeading(rawLine);
+    if (headingName !== null) {
+      startCard(headingName);
+      continue;
+    }
+
+    let matchedLabel = false;
+    for (const [key, labels] of CARD_FIELD_DEFS) {
+      const inline = matchCardLabel(rawLine, labels);
+      if (inline === null) continue;
+      matchedLabel = true;
+      if (key === "name") {
+        // 卡片名称标签 = 开新卡锚点；但若当前卡刚由标题锚点开出且尚无任何字段内容，
+        // 视为同一张卡的名称补充（`## 卡片一：xxx` + `卡片名称：xxx` 连用是常见格式）
+        const cardIsBlank = currentCard && !currentCard.rounds && !currentCard.stageDescription
+          && !currentCard.opening && !currentCard.prompt && !field;
+        if (cardIsBlank) {
+          currentCard.name = inline || currentCard.name;
+        } else {
+          startCard(inline);
+        }
+      } else if (currentCard) {
+        flushField();
+        field = { type: "card", key };
+        fieldLines = inline ? [inline] : [];
+      } else {
+        matchedLabel = false;
+      }
+      break;
+    }
+    if (matchedLabel) continue;
+
+    if (!currentCard && field?.type !== "section") {
+      let matchedMeta = false;
+      for (const [key, labels] of CARD_META_DEFS) {
+        const inline = matchCardLabel(rawLine, labels);
+        if (inline === null) continue;
+        flushField();
+        flushUnparsed();
+        field = { type: "meta", key };
+        fieldLines = inline ? [inline] : [];
+        matchedMeta = true;
+        break;
+      }
+      if (matchedMeta) continue;
+    }
+
+    // —— 普通内容行 ——
+    if (field) {
+      fieldLines.push(rawLine);
+    } else if (rawLine.trim() && !/^-{3,}$/.test(rawLine.trim())) {
+      unparsedBuffer.push(rawLine);
+    } else if (!rawLine.trim() && unparsedBuffer.length) {
+      unparsedBuffer.push(rawLine);
+    }
+  }
+  flushField();
+  flushUnparsed();
+
+  return result;
+}
+
+window.parseCardsDocument = parseCardsDocument;
+
+// 子任务标记 + 数量 → subtasks 数组（index 从 1 起，未标记默认 pending）
+function subtasksFromMarks(quantity, marks) {
+  const list = [];
+  for (let index = 1; index <= Math.max(1, Number(quantity) || 1); index += 1) {
+    list.push({ index, status: marks?.[index] || "pending" });
+  }
+  return list;
+}
+
+function todoImportKey(task) {
+  return [task.school, task.course, task.taskType].map((part) => String(part || "").trim()).join("\u0001");
+}
+
+function normalizeImportedTodoTask(task) {
+  const quantity = Math.max(1, Number(task.quantity) || 1);
+  const defaultMarks = task.subtaskMarks || (["completed", "unsubmitted"].includes(task.status)
+    ? Object.fromEntries(Array.from({ length: quantity }, (_item, index) => [index + 1, "done"]))
+    : {});
+  return {
+    school: task.school || "",
+    course: task.course || "",
+    taskType: typeof task.taskType === "string" ? task.taskType : "",
+    quantity,
+    status: task.status || "pending",
+    owner: task.owner || "",
+    weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
+    note: task.note || "",
+    subtasks: subtasksFromMarks(quantity, defaultMarks)
+  };
+}
+
+function subtaskSummary(subtasks) {
+  const list = normalizeSubtasks(subtasks, subtasks?.length || 1);
+  const done = list.filter((item) => item.status === "done").map((item) => item.index);
+  const unconfirmed = list.filter((item) => item.status === "unconfirmed").map((item) => item.index);
+  const parts = [`${done.length}/${list.length} 已完成`];
+  if (done.length) parts.push(`完成 ${done.join("/")}`);
+  if (unconfirmed.length) parts.push(`待确认 ${unconfirmed.join("/")}`);
+  return parts.join("，");
+}
+
+function importFieldDisplayValue(field, value) {
+  if (field === "status") return taskStatusLabel(value);
+  if (field === "subtasks") return subtaskSummary(value);
+  if (field === "weekday") return value || "未设置";
+  if (field === "note") return value || "无";
+  return String(value ?? "");
+}
+
+function importFieldComparableValue(field, value) {
+  if (field === "subtasks") return JSON.stringify(normalizeSubtasks(value, value?.length || 1));
+  return JSON.stringify(value ?? "");
+}
+
+function todoImportDiffs(existing, incoming) {
+  return TODO_IMPORT_FIELDS
+    .filter((field) => importFieldComparableValue(field, existing[field]) !== importFieldComparableValue(field, incoming[field]))
+    .map((field) => ({
+      field,
+      label: TODO_IMPORT_FIELD_LABELS[field],
+      from: importFieldDisplayValue(field, existing[field]),
+      to: importFieldDisplayValue(field, incoming[field])
+    }));
+}
+
+function buildTodoImportPreview(parsedTasks, unparsed) {
+  const existingByKey = new Map(weeklyTasks.map((task) => [todoImportKey(task), task]));
+  const groups = { added: [], updated: [], unchanged: [], unparsed: unparsed || [] };
+  parsedTasks.map(normalizeImportedTodoTask).forEach((incoming) => {
+    const existing = existingByKey.get(todoImportKey(incoming));
+    if (!existing) {
+      groups.added.push({ task: incoming, selected: true });
+      return;
+    }
+    const diffs = todoImportDiffs(normalizeWeeklyTask(existing), incoming);
+    if (diffs.length) groups.updated.push({ task: incoming, existingId: existing.id, diffs, selected: true });
+    else groups.unchanged.push({ task: incoming, existingId: existing.id, selected: false });
+  });
+  return groups;
+}
+
+function setTodoPathDisplay(pathValue) {
+  if (elements.prefTodoPath) elements.prefTodoPath.textContent = pathValue || "未设置";
+}
+
+function importPreviewTaskTitle(task) {
+  const typeLabel = task.taskType ? taskTypeLabel(task.taskType) : "未匹配类型";
+  return `${task.school}《${task.course}》 ${typeLabel}`;
+}
+
+// 任务舱状态接线总入口：横幅已删除，统一驱动 任务舱 + 状态栏芯片 + 侧边栏脉冲点 + 任务中心
+function updateTaskRail(task = null) {
+  if (!task) {
+    window.workbench.updateActiveTaskInfo({});
+  } else {
+    window.workbench.updateActiveTaskInfo({
+      school: task.school || "",
+      course: task.course || "",
+      taskType: task.taskType || "",
+      taskTypeLabel: taskTypeLabel(task.taskType),
+      folderPath: pipelineState.taskFolder || task.taskFolder || ""
+    });
+  }
+  renderTaskRail(task);
+  updateStatusbarChip(task);
+  updateSidebarPulse();
+  renderTaskCenter();
+}
+
+const RAIL_RING_CIRCUMFERENCE = 50.27;
+
+function railStepsHtml(currentStep) {
+  const currentIndex = pipelineStepIndex(currentStep);
+  return PIPELINE_STEPS.map((step, index) => {
+    const state = index < currentIndex ? "done" : (index === currentIndex ? "now" : "");
+    const dot = index < currentIndex ? svgIcon("check", 11) : String(index + 1);
+    const desc = step.desc.replace(/(dialogue\.json|eval_report\.pdf)/g, "<code>$1</code>");
+    return `
+      <div class="rail-step ${state}">
+        <div class="rs-dot">${dot}</div>
+        <div>
+          <div class="rs-name">${escapeHtml(step.name)}</div>
+          <div class="rs-desc">${desc}</div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function isImageFile(name) {
+  return /\.(png|jpe?g|webp)$/i.test(name);
+}
+
+function isTaskDocFile(name) {
+  return /\.(docx?|pdf|md|txt)$/i.test(name) && !/^dialogue\.json$/i.test(name) && !/^eval_report/i.test(name);
+}
+
+function fileKindSvg(name) {
+  const bodies = {
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+    json: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M10 13a1.5 1.5 0 0 0 0 3"/><path d="M14 13a1.5 1.5 0 0 1 0 3"/>',
+    pdf: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/>',
+    word: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l1.5 5L12 13l2.5 5L16 13"/>',
+    other: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>'
+  };
+  const kind = isImageFile(name) ? "image"
+    : /\.json$/i.test(name) ? "json"
+    : /\.pdf$/i.test(name) ? "pdf"
+    : /\.docx?$/i.test(name) ? "word"
+    : "other";
+  return `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${bodies[kind]}</svg>`;
+}
+
+function formatFileSize(bytes) {
+  if (!Number.isFinite(bytes)) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatFileTime(mtime) {
+  const date = new Date(mtime);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function railActionButton({ title, svg, onClick, danger = false }) {
+  const button = document.createElement("button");
+  button.className = `ra-act${danger ? " danger" : ""}`;
+  button.type = "button";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = svg;
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+async function runTaskFileAction(action, file) {
+  if (action === "copy") {
+    try {
+      await navigator.clipboard.writeText(file.path);
+      showToast("绝对路径已复制", "success");
+    } catch {
+      showToast("复制路径失败", "error");
+    }
+    return;
+  }
+  if (action === "crop") {
+    const result = await window.workbench.cropImage(file.path);
+    if (result?.ok) {
+      showToast(`裁切完成：${result.path.split(/[\\/]/).pop()}`, "success");
+    } else {
+      showToast(`裁切失败：${result?.error || "未知错误"}`, "error");
+    }
+    refreshRailTray();
+    return;
+  }
+  if (action === "delete" && !window.confirm(`确认删除 ${file.name}？此操作不可恢复。`)) return;
+  const ok = await window.workbench.taskFileAction(action, file.path);
+  if (!ok) {
+    showToast("文件操作失败（文件可能已不存在）", "error");
+  } else if (action === "delete") {
+    showToast(`已删除 ${file.name}`, "success");
+  }
+  if (action === "delete") refreshRailTray();
+}
+
+// 托盘文件行：图标 + 名称 + 大小/时间 + 悬停操作区
+function railFileRow(file, { badge = "", waiting = false } = {}) {
+  const row = document.createElement("div");
+  row.className = `rail-artifact ${waiting ? "waiting" : "ready"}`;
+  row.innerHTML = `
+    <span class="ra-ico">${fileKindSvg(file.name)}</span>
+    <span class="ra-info">
+      <span class="ra-name">${escapeHtml(file.name)}</span>
+      <span class="ra-sub">${escapeHtml(file.sub)}</span>
+    </span>
+  `;
+  if (badge) {
+    const badgeEl = document.createElement("span");
+    badgeEl.className = "ra-badge";
+    badgeEl.textContent = badge;
+    row.append(badgeEl);
+  }
+  if (!waiting) {
+    const actions = document.createElement("span");
+    actions.className = "ra-actions";
+    actions.append(
+      railActionButton({
+        title: "打开",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+        onClick: () => runTaskFileAction("open", file)
+      }),
+      railActionButton({
+        title: "在资源管理器中定位",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+        onClick: () => runTaskFileAction("reveal", file)
+      }),
+      railActionButton({
+        title: "复制绝对路径",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+        onClick: () => runTaskFileAction("copy", file)
+      })
+    );
+    if (isImageFile(file.name)) {
+      actions.append(railActionButton({
+        title: "裁切去水印",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/></svg>',
+        onClick: () => runTaskFileAction("crop", file)
+      }));
+    }
+    actions.append(
+      railActionButton({
+        title: "删除",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+        onClick: () => runTaskFileAction("delete", file),
+        danger: true
+      })
+    );
+    row.append(actions);
+  }
+  return row;
+}
+
+let railTrayToken = 0;
+
+// 任务文件托盘：关键产物置顶（含就绪/等待徽章），其余文件按修改时间倒序
+async function renderRailTray(task) {
+  const folder = pipelineState.taskFolder || task.taskFolder || "";
+  const token = ++railTrayToken;
+  let files = [];
+  if (folder) {
+    try {
+      files = (await window.workbench.listTaskFiles(folder)) || [];
+    } catch (error) {
+      console.warn("读取任务文件托盘失败:", error);
+    }
+  }
+  if (token !== railTrayToken || !elements.railArtifacts) return;
+
+  const docFile = files.find((file) => isTaskDocFile(file.name));
+  const chatFile = files.find((file) => /^dialogue\.json$/i.test(file.name));
+  const reportFile = files.find((file) => /^eval_report/i.test(file.name));
+  const keyPaths = new Set([docFile, chatFile, reportFile].filter(Boolean).map((file) => file.path));
+
+  elements.railArtifacts.replaceChildren();
+  const pinned = [
+    { file: docFile, placeholder: "任务文档", waitSub: folder ? "任务文件夹内未检测到文档" : "任务文件夹未创建" },
+    { file: chatFile, placeholder: "dialogue.json", waitSub: "本地测试下载后归档" },
+    { file: reportFile, placeholder: "eval_report.pdf", waitSub: "评估平台报告自动拦截" }
+  ];
+  for (const item of pinned) {
+    if (item.file) {
+      elements.railArtifacts.append(railFileRow(
+        { ...item.file, sub: `${formatFileSize(item.file.size)} · ${formatFileTime(item.file.mtime)}` },
+        { badge: "就绪" }
+      ));
+    } else {
+      elements.railArtifacts.append(railFileRow(
+        { name: item.placeholder, sub: item.waitSub },
+        { badge: "等待", waiting: true }
+      ));
+    }
+  }
+
+  const rest = files
+    .filter((file) => !keyPaths.has(file.path))
+    .sort((a, b) => b.mtime - a.mtime);
+  for (const file of rest) {
+    elements.railArtifacts.append(railFileRow(
+      { ...file, sub: `${formatFileSize(file.size)} · ${formatFileTime(file.mtime)}` }
+    ));
+  }
+
+  // 卡片舱：托盘识别到 cards.md 自动解析（mtime 未变不重渲）
+  const cardsFile = files.find((file) => /^cards\.md$/i.test(file.name));
+  syncRailCards(task, cardsFile || null);
+}
+
+// 托盘单独刷新（fs.watch 推送 / 文件操作后调用，不重渲整个任务舱）
+function refreshRailTray() {
+  if (!pipelineState.active) return;
+  const task = weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId);
+  if (task) renderRailTray(task);
+}
+
+// ===== 卡片舱（V3.4 P0）：cards.md → 逐字段一键复制 =====
+const CARD_FIELD_LABEL_TEXT = {
+  name: "卡片名称",
+  rounds: "建议轮次",
+  stageDescription: "阶段描述",
+  opening: "开场白",
+  prompt: "提示词"
+};
+let railCardsState = { taskId: null, parsed: null, mtime: 0, missing: true, error: "" };
+let railCardsStreamOn = false;
+
+// cards.md 同步：mtime 未变不重渲（保留折叠/高亮状态）；force = 手动「重新解析」
+async function syncRailCards(task, cardsFile, force = false) {
+  if (!elements.railCards) return;
+  if (!cardsFile) {
+    if (railCardsState.taskId === task.id && railCardsState.missing && !force) return;
+    railCardsState = { taskId: task.id, parsed: null, mtime: 0, missing: true, error: "" };
+    renderRailCards(task);
+    return;
+  }
+  if (!force && railCardsState.taskId === task.id && railCardsState.parsed && railCardsState.mtime === cardsFile.mtime) return;
+  let result = null;
+  try {
+    result = await window.workbench.readTaskTextFile(cardsFile.path);
+  } catch (error) {
+    console.error("读取 cards.md 失败:", error);
+  }
+  if (!result?.ok) {
+    railCardsState = { taskId: task.id, parsed: null, mtime: 0, missing: false, error: result?.error || "读取失败" };
+  } else {
+    railCardsState = { taskId: task.id, parsed: parseCardsDocument(result.text), mtime: cardsFile.mtime, missing: false, error: "" };
+  }
+  renderRailCards(task);
+}
+
+function cardFieldCopied(task, key) {
+  return Boolean(task?.cardCopied?.[key]);
+}
+
+async function copyCardField(task, key, text, row, button) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (error) {
+    console.error("复制字段失败:", error);
+    showToast("复制失败，请重试", "error");
+    return;
+  }
+  const original = button.textContent;
+  button.textContent = "✓";
+  button.classList.add("ok");
+  setTimeout(() => {
+    button.textContent = original;
+    button.classList.remove("ok");
+  }, 2000);
+  row.classList.add("copied");
+  // 已复制状态持久化到任务数据（重启不丢，任务结束时清空）
+  const copied = { ...(task.cardCopied || {}), [key]: true };
+  await updateTaskFields(task.id, { cardCopied: copied });
+  updateCardStreamHighlight(true);
+}
+
+// 流式模式：高亮第一个未复制字段；复制后推进；全部完成提示
+function updateCardStreamHighlight(announceDone = false) {
+  if (!elements.railCards) return;
+  const rows = [...elements.railCards.querySelectorAll(".rc-row")];
+  rows.forEach((row) => row.classList.remove("stream-now"));
+  if (!railCardsStreamOn || !rows.length) return;
+  const next = rows.find((row) => !row.classList.contains("copied"));
+  if (!next) {
+    if (announceDone) showToast("全部字段已复制完成，可以去平台逐项粘贴收尾了", "success");
+    return;
+  }
+  const wrap = next.closest("details");
+  if (wrap) wrap.open = true;
+  next.classList.add("stream-now");
+  next.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+// 单个字段行：字段名 + 单行预览 + （开场白字符徽章） + 复制按钮
+function railCardFieldRow(task, key, label, text) {
+  const row = document.createElement("div");
+  row.className = `rc-row${cardFieldCopied(task, key) ? " copied" : ""}`;
+  row.dataset.key = key;
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "rc-label";
+  labelEl.textContent = label;
+
+  const preview = document.createElement("span");
+  preview.className = "rc-preview";
+  preview.textContent = text ? text.replace(/\s+/g, " ").trim() : "（空）";
+  preview.title = text ? "完整内容以复制为准（预览单行截断）" : "该字段未解析到内容";
+
+  row.append(labelEl, preview);
+
+  if (label === CARD_FIELD_LABEL_TEXT.opening && text) {
+    const badge = document.createElement("span");
+    badge.className = `rc-badge${text.length > 200 ? " over" : ""}`;
+    badge.textContent = `${text.length} 字`;
+    badge.title = text.length > 200 ? "超过平台 200 字符限制" : "平台限制 200 字符";
+    row.append(badge);
+  }
+
+  const copyBtn = document.createElement("button");
+  copyBtn.className = "rc-copy";
+  copyBtn.type = "button";
+  copyBtn.textContent = "复制";
+  copyBtn.disabled = !text;
+  copyBtn.addEventListener("click", () => copyCardField(task, key, text, row, copyBtn));
+  row.append(copyBtn);
+  return row;
+}
+
+function renderRailCards(task) {
+  if (!elements.railCards) return;
+  elements.railCards.replaceChildren();
+
+  if (railCardsState.error) {
+    const errorEl = document.createElement("div");
+    errorEl.className = "rc-guide error";
+    errorEl.textContent = `cards.md 读取失败：${railCardsState.error}`;
+    elements.railCards.append(errorEl);
+    return;
+  }
+  if (railCardsState.missing || !railCardsState.parsed) {
+    const guide = document.createElement("div");
+    guide.className = "rc-guide";
+    guide.textContent = "将 Hermes 产出保存为 cards.md 到任务文件夹，卡片舱将自动解析为逐字段复制清单。";
+    elements.railCards.append(guide);
+    return;
+  }
+
+  const parsed = railCardsState.parsed;
+
+  // 总任务级字段（任务描述/封面图描述/评价标准/测试人格）置顶
+  const metaRows = [
+    ["meta:taskName", "任务名称", parsed.taskMeta.taskName],
+    ["meta:taskDescription", "任务描述", parsed.taskMeta.taskDescription],
+    ["meta:coverDescription", "封面图描述", parsed.taskMeta.coverDescription],
+    ["meta:evaluation", "评价标准", parsed.evaluation],
+    ["meta:testPersona", "测试人格", parsed.testPersona]
+  ].filter(([, , text]) => text);
+  if (metaRows.length) {
+    const metaWrap = document.createElement("div");
+    metaWrap.className = "rc-meta";
+    for (const [key, label, text] of metaRows) {
+      metaWrap.append(railCardFieldRow(task, key, label, text));
+    }
+    elements.railCards.append(metaWrap);
+  }
+
+  parsed.cards.forEach((card, index) => {
+    const wrap = document.createElement("details");
+    wrap.className = "rc-card";
+    if (index === 0) wrap.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = `卡片${index + 1} · ${card.name || "未命名"}`;
+    const fields = document.createElement("div");
+    fields.className = "rc-fields";
+    for (const fieldKey of Object.keys(CARD_FIELD_LABEL_TEXT)) {
+      fields.append(railCardFieldRow(task, `card:${index}:${fieldKey}`, CARD_FIELD_LABEL_TEXT[fieldKey], card[fieldKey]));
+    }
+    wrap.append(summary, fields);
+    elements.railCards.append(wrap);
+  });
+
+  if (!parsed.cards.length && !metaRows.length) {
+    const empty = document.createElement("div");
+    empty.className = "rc-guide";
+    empty.textContent = "cards.md 中未识别到卡片字段，请检查格式（卡片名称/建议轮次/阶段描述/开场白/提示词）。";
+    elements.railCards.append(empty);
+  }
+
+  if (parsed.unparsed.length) {
+    const unparsedWrap = document.createElement("details");
+    unparsedWrap.className = "rc-unparsed";
+    const summary = document.createElement("summary");
+    summary.textContent = `未识别内容 ${parsed.unparsed.length} 段（不阻塞已解析卡片）`;
+    unparsedWrap.append(summary);
+    for (const block of parsed.unparsed) {
+      const pre = document.createElement("pre");
+      pre.textContent = block;
+      unparsedWrap.append(pre);
+    }
+    elements.railCards.append(unparsedWrap);
+  }
+
+  updateCardStreamHighlight();
+}
+
+// 任务舱渲染：展开态主体 + 收起态把手；无活动任务时整体隐藏
+function renderTaskRail(task = null) {
+  const active = Boolean(task && pipelineState.active);
+  elements.appShell.classList.toggle("rail-open", active && !taskRailCollapsed);
+  elements.appShell.classList.toggle("rail-collapsed", active && taskRailCollapsed);
+  if (!active) return;
+
+  const index = pipelineStepIndex(pipelineState.step);
+  const stepNumber = index + 1;
+  const stepName = PIPELINE_STEPS[index]?.name || "";
+
+  elements.railTitle.textContent = `${task.school || ""} · ${task.course || ""}`;
+  elements.railStepBadge.textContent = `步骤 ${stepNumber}/${PIPELINE_STEPS.length} · ${stepName}`;
+  elements.railOwner.textContent = `负责人 ${task.owner || "未指定"}`;
+  elements.railSteps.innerHTML = railStepsHtml(pipelineState.step);
+  renderRailTray(task);
+
+  const reportReady = Boolean(pipelineState.reportPath || task.reportPath);
+  elements.railHermes.disabled = !reportReady;
+  elements.railHermes.title = reportReady ? "将产物路径载入 Hermes 输入框" : "捕获报告后激活";
+
+  elements.railRingBar.style.strokeDashoffset =
+    String(RAIL_RING_CIRCUMFERENCE * (1 - stepNumber / PIPELINE_STEPS.length));
+  elements.railHandleText.textContent = `任务 ${stepNumber}/${PIPELINE_STEPS.length}`;
+}
+
+function expandTaskRail() {
+  if (!pipelineState.active) return;
+  taskRailCollapsed = false;
+  renderTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
+}
+
+function collapseTaskRail() {
+  taskRailCollapsed = true;
+  renderTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
+}
+
+// 学校名缩写：去掉常见后缀，保留前 6 个字符
+function schoolShortName(school = "") {
+  const trimmed = school.replace(/(职业技术学院|职业学院|大学|学院)$/, "") || school;
+  return trimmed.slice(0, 6);
+}
+
+function updateStatusbarChip(task = null) {
+  const active = Boolean(task && pipelineState.active);
+  elements.sbTaskChip.hidden = !active;
+  if (!active) {
+    elements.sbTaskChipText.textContent = "";
+    return;
+  }
+  const index = pipelineStepIndex(pipelineState.step);
+  const stepName = PIPELINE_STEPS[index]?.name || "";
+  elements.sbTaskChipText.textContent =
+    `${schoolShortName(task.school)} · ${task.course || ""} — ${stepName} ${index + 1}/${PIPELINE_STEPS.length}`;
+}
+
+// 结束询问改为居中 dialog 三出口：已提交（completed）/ 未提交（unsubmitted）/ 取消（任务继续运行）
+function finishActiveTask() {
+  if (!pipelineState.active || !pipelineState.taskId) return;
+  elements.finishTaskDialog?.showModal();
+}
+
+async function completeActiveTask(submitted) {
   const taskId = pipelineState.taskId;
   const folderPath = pipelineState.taskFolder;
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
   pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-  updateActiveTaskMenu(null);
-  if (taskId) await updateTaskFields(taskId, { status: "completed", chatLogPath: "", reportPath: "", taskFolder: "" });
+  updateTaskRail(null);
+  if (taskId) {
+    await updateTaskFields(taskId, {
+      status: submitted ? "completed" : "unsubmitted",
+      chatLogPath: "",
+      reportPath: "",
+      taskFolder: "",
+      cardCopied: {},
+      subtasks: markAllSubtasksDone(task?.subtasks, task?.quantity)
+    });
+  }
   if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
-  showToast("任务已结束，临时文件已清理", "success");
+  showToast(submitted ? "任务已完成，临时文件已清理" : "任务已标记为未提交，临时文件已清理", "success");
 }
 
 function taskStatusLabel(status) {
@@ -1107,61 +2279,30 @@ function taskStatusLabel(status) {
     pending: "待处理",
     running: "进行中",
     evaluating: "评估中",
+    paused: "已暂停",
+    unsubmitted: "未提交",
     completed: "已完成"
   }[status] || "待处理";
 }
 
-function switchTaskModalView(mode) {
-  taskViewMode = mode === "form" ? "form" : "list";
-  elements.taskListView?.classList.toggle("hidden", taskViewMode !== "list");
-  elements.taskFormView?.classList.toggle("hidden", taskViewMode !== "form");
+// 任务表单：居中 dialog（复用原字段与校验）
+function openTaskForm(task = null) {
+  resetTaskForm();
+  if (task) {
+    document.querySelector("#task-id").value = task.id;
+    document.querySelector("#task-school").value = task.school || "";
+    document.querySelector("#task-course").value = task.course || "";
+    document.querySelector("#task-type").value = task.taskType || "capability-setup";
+    document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
+    document.querySelector("#task-owner").value = task.owner || "";
+    elements.taskFormTitle.textContent = "编辑任务";
+  }
+  elements.taskDialog.showModal();
+  document.querySelector("#task-school").focus();
 }
 
-async function openTaskPanel() {
-  if (elements.taskPanel?.classList.contains("open")) {
-    closeTaskPanel();
-    return;
-  }
-  
-  // Record trigger element
-  if (elements.taskPanel) {
-    elements.taskPanel.dataset.triggerId = document.activeElement?.id || "";
-  }
-  
-  await loadWeeklyTasks();
-  switchTaskModalView("list");
-  
-  elements.taskPanel?.classList.add("open");
-  elements.taskPanelOverlay?.classList.add("open");
-  
-  // Disable webview pointer events to prevent interaction leakage
-  setWebviewPointerEvents(false);
-  
-  // Accessibility focus trap: focus close button
-  const closeBtn = elements.taskPanel?.querySelector(".task-close");
-  closeBtn?.focus();
-}
-
-function closeTaskPanel() {
-  elements.taskPanel?.classList.remove("open");
-  elements.taskPanelOverlay?.classList.remove("open");
-  
-  if (elements.taskPanel) {
-    elements.taskPanel.style.transform = "";
-  }
-  
-  // Re-enable webview pointer events
-  setWebviewPointerEvents(true);
-  
-  // Restore focus
-  if (elements.taskPanel) {
-    const triggerId = elements.taskPanel.dataset.triggerId;
-    if (triggerId) {
-      const triggerEl = document.getElementById(triggerId);
-      triggerEl?.focus();
-    }
-  }
-  
+function closeTaskForm() {
+  elements.taskDialog.close();
   resetTaskForm();
 }
 
@@ -1173,24 +2314,72 @@ function resetTaskForm() {
   if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
 }
 
+// 子任务清单与 quantity 联动：长度不足补 pending，超出截断；index 重排为 1..N
+function normalizeSubtasks(subtasks, quantity) {
+  const count = Math.max(1, Number(quantity) || 1);
+  const source = Array.isArray(subtasks) ? subtasks : [];
+  const list = [];
+  for (let index = 1; index <= count; index += 1) {
+    const status = source[index - 1]?.status;
+    list.push({ index, status: ["pending", "done", "unconfirmed"].includes(status) ? status : "pending" });
+  }
+  return list;
+}
+
 function normalizeWeeklyTask(task = {}) {
+  const quantity = Math.max(1, Number(task.quantity) || 1);
   return {
     id: task.id || `task-${Date.now()}`,
     school: task.school || "",
     course: task.course || "",
-    taskType: task.taskType || "capability-setup",
-    quantity: Math.max(1, Number(task.quantity) || 1),
+    // 允许空字符串（txt 导入未匹配到类型时留空，预览中标黄提醒）
+    taskType: typeof task.taskType === "string" ? task.taskType : "capability-setup",
+    quantity,
     status: task.status || "pending",
     owner: task.owner || "",
+    weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
+    note: task.note || "",
+    subtasks: normalizeSubtasks(task.subtasks, quantity),
     chatLogPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
-    taskFolder: task.taskFolder || ""
+    taskFolder: task.taskFolder || "",
+    step: normalizePipelineStep(task.step),
+    // 卡片舱「已复制」状态（V3.4）：fieldKey → true，任务结束时清空
+    cardCopied: task.cardCopied && typeof task.cardCopied === "object" ? task.cardCopied : {}
   };
+}
+
+function markAllSubtasksDone(subtasks, quantity) {
+  return normalizeSubtasks(subtasks, quantity).map((subtask) => ({ ...subtask, status: "done" }));
+}
+
+function weekdayRank(weekday) {
+  const index = TODO_WEEKDAYS.indexOf(weekday);
+  return index >= 0 ? index : TODO_WEEKDAYS.length;
+}
+
+function sortTasksByWeekday(tasks) {
+  return tasks
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => weekdayRank(a.task.weekday) - weekdayRank(b.task.weekday) || a.index - b.index)
+    .map((entry) => entry.task);
+}
+
+function nextSubtaskStatus(status) {
+  return status === "pending" ? "done" : status === "done" ? "unconfirmed" : "pending";
+}
+
+function subtaskStatusLabel(status) {
+  return {
+    pending: "待做",
+    done: "已完成",
+    unconfirmed: "待确认"
+  }[status] || "待做";
 }
 
 async function persistWeeklyTasks() {
   weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks.map(normalizeWeeklyTask));
-  renderWeeklyTasks();
+  renderTaskCenter();
 }
 
 async function loadWeeklyTasks() {
@@ -1201,52 +2390,287 @@ async function loadWeeklyTasks() {
     weeklyTasks = [];
     showToast("读取任务列表失败", "error");
   }
-  renderWeeklyTasks();
+  renderTaskCenter();
 }
 
-function taskArtifactSummary(task) {
-  const parts = [];
-  if (task.chatLogPath) parts.push("对话");
-  if (task.reportPath) parts.push("报告");
-  return parts.join(" / ") || "-";
+function getIsoWeekNumber(date = new Date()) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNumber = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNumber);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  return Math.ceil(((target - yearStart) / 86400000 + 1) / 7);
 }
 
-function renderWeeklyTasks() {
-  if (!elements.taskTableBody) return;
-  elements.taskTableBody.replaceChildren();
+// 任务当前进度：返回 { index, label, ratio, barClass }
+function taskProgressInfo(task) {
+  const isActiveTask = pipelineState.active && pipelineState.taskId === task.id;
+  if (!isActiveTask && !["running", "evaluating"].includes(task.status)) {
+    const subtasks = normalizeSubtasks(task.subtasks, task.quantity);
+    const done = subtasks.filter((subtask) => subtask.status === "done").length;
+    return {
+      label: `子任务 ${done}/${subtasks.length} 完成`,
+      ratio: done / subtasks.length,
+      barClass: done === subtasks.length ? "full" : (task.status === "paused" ? "warn" : "")
+    };
+  }
+  const step = isActiveTask ? pipelineState.step : task.step;
+  const index = pipelineStepIndex(step);
+  const stepNumber = index + 1;
+  return {
+    label: `${stepNumber}/${PIPELINE_STEPS.length} ${PIPELINE_STEPS[index]?.name || ""}`,
+    ratio: stepNumber / PIPELINE_STEPS.length,
+    barClass: task.status === "paused" ? "warn" : ""
+  };
+}
 
-  if (!weeklyTasks.length) {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td class="task-empty" colspan="7">暂无任务。点击下方按钮添加本周任务。</td>`;
-    elements.taskTableBody.append(row);
+function svgIcon(name, size = 14) {
+  const bodies = {
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    dots: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+    folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>'
+  };
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${bodies[name] || ""}</svg>`;
+}
+
+function pipelineStepperHtml(currentStep) {
+  const currentIndex = pipelineStepIndex(currentStep);
+  return `<div class="pipeline">${PIPELINE_STEPS.map((step, index) => {
+    const state = index < currentIndex ? "done" : (index === currentIndex ? "now" : "");
+    const dot = index < currentIndex ? svgIcon("check", 12) : String(index + 1);
+    return `
+      <div class="pl-step ${state}">
+        <div class="pl-dot">${dot}</div>
+        <div class="pl-name">${escapeHtml(step.name)}</div>
+        <div class="pl-sub">${escapeHtml(step.desc)}</div>
+      </div>`;
+  }).join("")}</div>`;
+}
+
+function renderFocusCard() {
+  const card = elements.focusCard;
+  const task = pipelineState.active ? weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) : null;
+  if (!task) {
+    card.hidden = true;
+    card.replaceChildren();
     return;
   }
+  const folder = pipelineState.taskFolder || task.taskFolder || "";
+  card.innerHTML = `
+    <div class="focus-head">
+      <span class="live-dot"></span>
+      <h2>${escapeHtml(task.school)} · ${escapeHtml(task.course)}</h2>
+      <span class="chip">${escapeHtml(taskTypeLabel(task.taskType))} × ${Number(task.quantity) || 1}</span>
+      <div class="actions">
+        <button class="btn btn-ghost btn-sm focus-pause" type="button">暂停</button>
+        <button class="btn btn-ghost btn-sm focus-detail" type="button">查看详情</button>
+      </div>
+    </div>
+    <div class="focus-meta">负责人 ${escapeHtml(task.owner || "未指定")} · 任务文件夹 <code>${escapeHtml(folder || "尚未创建")}</code></div>
+    ${pipelineStepperHtml(pipelineState.step)}
+  `;
+  card.querySelector(".focus-pause").addEventListener("click", () => pauseTaskAutomation(task.id));
+  card.querySelector(".focus-detail").addEventListener("click", () => {
+    if (folder) window.workbench.openTaskFolder(folder);
+  });
+  card.hidden = false;
+}
 
-  for (const task of weeklyTasks) {
-    const row = document.createElement("tr");
-    row.dataset.id = task.id;
-    row.innerHTML = `
-      <td>
+function closeAllCardMenus() {
+  document.querySelectorAll(".tc-menu-pop.open").forEach((pop) => pop.classList.remove("open"));
+}
+
+// V3.2 P3-#3：记录当前展开子任务 popover 的任务 id。切换子任务状态会触发整卡重渲染，
+// 重建后的 popover 是全新元素（无 .open），导致 popover 闪关。renderTaskCenter 末尾据此恢复。
+let openSubtaskPopoverTaskId = null;
+
+function closeAllSubtaskPopovers() {
+  openSubtaskPopoverTaskId = null;
+  document.querySelectorAll(".subtask-popover.open").forEach((pop) => pop.classList.remove("open"));
+}
+
+async function updateTaskSubtaskStatus(taskId, subtaskIndex, status) {
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (!task) return;
+  const subtasks = normalizeSubtasks(task.subtasks, task.quantity).map((subtask) =>
+    subtask.index === subtaskIndex ? { ...subtask, status } : subtask
+  );
+  await updateTaskFields(taskId, { subtasks });
+}
+
+function taskCardElement(task) {
+  const card = document.createElement("div");
+  card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}`;
+  card.dataset.id = task.id;
+  const progress = taskProgressInfo(task);
+  const subtasks = normalizeSubtasks(task.subtasks, task.quantity);
+  const subtaskRows = subtasks.map((subtask) => `
+    <button class="subtask-row" type="button" data-index="${subtask.index}" data-status="${escapeHtml(subtask.status)}">
+      <span>任务 ${subtask.index}</span>
+      <b class="subtask-state ${escapeHtml(subtask.status)}">${escapeHtml(subtaskStatusLabel(subtask.status))}</b>
+    </button>
+  `).join("");
+  const chips = [];
+  if (task.chatLogPath) chips.push('<span class="file-chip">dialogue.json</span>');
+  if (task.reportPath) chips.push('<span class="file-chip">eval_report.pdf</span>');
+  const chipsHtml = chips.length ? chips.join("") : '<span class="file-chip empty">尚无产物</span>';
+  const weekdayHtml = task.weekday ? `<span>交付 <b>${escapeHtml(task.weekday)}</b></span>` : "";
+  const noteHtml = task.note ? `<div class="tc-note">备注：${escapeHtml(task.note)}</div>` : "";
+
+  let mainAction = "";
+  if (task.status === "paused") {
+    mainAction = '<button class="btn btn-teal btn-sm task-resume" type="button">继续</button>';
+  } else if (task.status === "unsubmitted") {
+    mainAction = '<button class="btn btn-teal btn-sm task-mark-completed" type="button">标记已完成</button>';
+  } else if (task.status === "completed") {
+    mainAction = '<button class="btn btn-ghost btn-sm task-open-folder" type="button">打开产物文件夹</button>';
+  } else {
+    mainAction = '<button class="btn btn-cta btn-sm task-run" type="button">执行</button>';
+  }
+
+  card.innerHTML = `
+    <div class="tc-top">
+      <div class="tc-title">
         <strong>${escapeHtml(task.school)}</strong>
-        <span>${escapeHtml(task.course)}</span>
-      </td>
-      <td>${escapeHtml(taskTypeLabel(task.taskType))}</td>
-      <td>${Number(task.quantity) || 1}</td>
-      <td><span class="task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span></td>
-      <td>${escapeHtml(task.owner)}</td>
-      <td><span class="task-path" title="${escapeHtml([task.chatLogPath, task.reportPath].filter(Boolean).join("\\n"))}">${escapeHtml(taskArtifactSummary(task))}</span></td>
-      <td>
-        <div class="task-actions">
-          <button class="secondary-button task-run" type="button">执行</button>
-          <button class="secondary-button task-edit" type="button">编辑</button>
-          <button class="danger-button task-delete" type="button">删除</button>
+        <span>${escapeHtml(task.course)} · ${escapeHtml(taskTypeLabel(task.taskType))}</span>
+      </div>
+      <span class="tc-status task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span>
+    </div>
+    <div class="tc-meta"><span>负责人 <b>${escapeHtml(task.owner || "未指定")}</b></span><span>数量 <b>${Number(task.quantity) || 1}</b></span>${weekdayHtml}</div>
+    ${noteHtml}
+    <button class="tc-progress" type="button" title="点击维护子任务进度">
+      <div class="tc-bar ${progress.barClass}"><i style="width:${Math.round(progress.ratio * 100)}%"></i></div>
+      <span>${escapeHtml(progress.label)}</span>
+    </button>
+    <div class="subtask-popover" aria-label="子任务清单">${subtaskRows}</div>
+    <div class="tc-files">${chipsHtml}</div>
+    <div class="tc-foot">
+      ${mainAction}
+      <span class="spacer"></span>
+      <div class="tc-menu-wrap">
+        <button class="icon-button tc-menu-toggle" type="button" title="更多操作" aria-label="更多操作">${svgIcon("dots")}</button>
+        <div class="tc-menu-pop">
+          ${["completed", "unsubmitted"].includes(task.status) ? '<button class="task-reopen" type="button">重新打开任务</button>' : ""}
+          <button class="task-edit" type="button">编辑</button>
+          <button class="task-delete danger" type="button">删除</button>
         </div>
-      </td>
-    `;
-    row.querySelector(".task-run").addEventListener("click", () => startTaskAutomation(task.id));
-    row.querySelector(".task-edit").addEventListener("click", () => editWeeklyTask(task.id));
-    row.querySelector(".task-delete").addEventListener("click", () => deleteWeeklyTask(task.id));
-    elements.taskTableBody.append(row);
+      </div>
+    </div>
+  `;
+
+  card.querySelector(".task-run")?.addEventListener("click", () => startTaskAutomation(task.id));
+  card.querySelector(".task-resume")?.addEventListener("click", () => resumeTaskAutomation(task.id));
+  card.querySelector(".task-mark-completed")?.addEventListener("click", () =>
+    updateTaskFields(task.id, { status: "completed", subtasks: markAllSubtasksDone(task.subtasks, task.quantity) })
+      .then(() => showToast("任务已标记为已完成", "success"))
+  );
+  card.querySelector(".task-open-folder")?.addEventListener("click", () => {
+    if (task.taskFolder) {
+      window.workbench.openTaskFolder(task.taskFolder);
+    } else {
+      showToast("该任务没有记录产物文件夹", "error");
+    }
+  });
+  const menuPop = card.querySelector(".tc-menu-pop");
+  card.querySelector(".tc-menu-toggle").addEventListener("click", () => {
+    const willOpen = !menuPop.classList.contains("open");
+    closeAllCardMenus();
+    closeAllSubtaskPopovers();
+    menuPop.classList.toggle("open", willOpen);
+  });
+  const subtaskPopover = card.querySelector(".subtask-popover");
+  card.querySelector(".tc-progress")?.addEventListener("click", () => {
+    const willOpen = !subtaskPopover.classList.contains("open");
+    closeAllCardMenus();
+    closeAllSubtaskPopovers();
+    subtaskPopover.classList.toggle("open", willOpen);
+    openSubtaskPopoverTaskId = willOpen ? task.id : null;
+  });
+  card.querySelectorAll(".subtask-row").forEach((row) => {
+    row.addEventListener("click", async () => {
+      const current = row.dataset.status || "pending";
+      await updateTaskSubtaskStatus(task.id, Number(row.dataset.index), nextSubtaskStatus(current));
+    });
+  });
+  card.querySelector(".task-reopen")?.addEventListener("click", () => {
+    closeAllCardMenus();
+    reopenWeeklyTask(task.id);
+  });
+  card.querySelector(".task-edit").addEventListener("click", () => {
+    closeAllCardMenus();
+    editWeeklyTask(task.id);
+  });
+  card.querySelector(".task-delete").addEventListener("click", () => {
+    closeAllCardMenus();
+    deleteWeeklyTask(task.id);
+  });
+  return card;
+}
+
+// 任务中心首页整体渲染：统计卡 + 聚焦卡 + 任务卡片网格 + 角标/芯片
+function renderTaskCenter() {
+  if (!elements.taskCenterView) return;
+
+  const total = weeklyTasks.length;
+  const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
+  const paused = weeklyTasks.filter((task) => task.status === "paused").length;
+  const unsubmitted = weeklyTasks.filter((task) => task.status === "unsubmitted").length;
+  const completed = weeklyTasks.filter((task) => task.status === "completed").length;
+
+  elements.statTotal.textContent = String(total);
+  elements.statRunning.textContent = String(running);
+  elements.statPaused.textContent = String(paused);
+  if (elements.statUnsubmitted) elements.statUnsubmitted.textContent = String(unsubmitted);
+  elements.statCompleted.textContent = String(completed);
+  elements.homeWeekSub.textContent = `${new Date().getFullYear()} 年第 ${getIsoWeekNumber()} 周 · 任务文档目录已挂载`;
+
+  const pendingCount = total - completed;
+  elements.taskCenterBadge.hidden = pendingCount <= 0;
+  elements.taskCenterBadge.textContent = String(pendingCount);
+
+  renderFocusCard();
+
+  // 进行中/评估中任务只出现在聚焦卡；网格展示 待处理+已暂停 / 未提交 / 已完成
+  const activeGroup = sortTasksByWeekday(weeklyTasks.filter((task) => task.status === "pending" || task.status === "paused"));
+  const unsubmittedGroup = weeklyTasks.filter((task) => task.status === "unsubmitted");
+  const doneGroup = weeklyTasks.filter((task) => task.status === "completed");
+
+  elements.taskGridActive.replaceChildren();
+  if (activeGroup.length) {
+    activeGroup.forEach((task) => elements.taskGridActive.append(taskCardElement(task)));
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "task-grid-empty";
+    empty.textContent = "暂无待处理任务。点击右上角「添加任务」开始。";
+    elements.taskGridActive.append(empty);
+  }
+
+  if (elements.sectionUnsubmitted && elements.taskGridUnsubmitted) {
+    elements.sectionUnsubmitted.hidden = unsubmittedGroup.length <= 0;
+    elements.taskGridUnsubmitted.hidden = unsubmittedGroup.length <= 0;
+    elements.taskGridUnsubmitted.replaceChildren();
+    unsubmittedGroup.forEach((task) => elements.taskGridUnsubmitted.append(taskCardElement(task)));
+  }
+
+  elements.taskGridDone.replaceChildren();
+  if (doneGroup.length) {
+    doneGroup.forEach((task) => elements.taskGridDone.append(taskCardElement(task)));
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "task-grid-empty";
+    empty.textContent = "本周还没有已完成的任务。";
+    elements.taskGridDone.append(empty);
+  }
+
+  if (activeTabId === TASK_CENTER_ID) {
+    updateTopbarForActive(null);
+  }
+
+  // V3.2 P3-#3：重渲染后恢复之前展开的子任务 popover，避免切状态时闪关
+  if (openSubtaskPopoverTaskId) {
+    const card = elements.taskCenterView.querySelector(`.task-card[data-id="${openSubtaskPopoverTaskId}"]`);
+    const popover = card?.querySelector(".subtask-popover");
+    if (popover) popover.classList.add("open");
+    else openSubtaskPopoverTaskId = null;
   }
 }
 
@@ -1261,9 +2685,13 @@ function taskFromForm() {
     quantity: Math.max(1, Number(document.querySelector("#task-quantity").value) || 1),
     status: existing.status || "pending",
     owner: document.querySelector("#task-owner").value.trim(),
+    weekday: existing.weekday || "",
+    note: existing.note || "",
+    subtasks: existing.subtasks || [],
     chatLogPath: existing.chatLogPath || "",
     reportPath: existing.reportPath || "",
-    taskFolder: existing.taskFolder || ""
+    taskFolder: existing.taskFolder || "",
+    step: existing.step || "testing"
   };
 }
 
@@ -1277,26 +2705,41 @@ async function upsertWeeklyTask(task) {
 function editWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
-  document.querySelector("#task-id").value = task.id;
-  document.querySelector("#task-school").value = task.school || "";
-  document.querySelector("#task-course").value = task.course || "";
-  document.querySelector("#task-type").value = task.taskType || "capability-setup";
-  document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
-  document.querySelector("#task-owner").value = task.owner || "";
-  if (elements.taskFormTitle) elements.taskFormTitle.textContent = "编辑任务";
-  switchTaskModalView("form");
+  openTaskForm(task);
 }
 
-async function deleteWeeklyTask(id) {
+// 重新打开已完成/未提交任务：仅回退状态到待处理；任务文件夹与产物（chatLogPath/reportPath）全部保留
+async function reopenWeeklyTask(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task || !["completed", "unsubmitted"].includes(task.status)) return;
+  await updateTaskFields(id, { status: "pending" });
+  showToast("任务已重新打开", "success");
+}
+
+// M4：删除任务改走确认 dialog（与结束任务三出口同风格），避免单击误删任务记录与产物
+let pendingDeleteTaskId = null;
+function deleteWeeklyTask(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return;
+  pendingDeleteTaskId = id;
+  if (elements.deleteTaskDesc) {
+    elements.deleteTaskDesc.textContent =
+      `确认删除「${task.school || ""} ${task.course || ""}」？删除任务记录将一并清理其临时任务文件夹（产物不可恢复），此操作无法撤销。`;
+  }
+  elements.deleteTaskDialog?.showModal();
+}
+
+async function performDeleteWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
   const folderPath = pipelineState.taskId === id ? pipelineState.taskFolder : task?.taskFolder || "";
   if (pipelineState.taskId === id) {
     pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-    updateActiveTaskMenu(null);
+    updateTaskRail(null);
   }
   if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
   await persistWeeklyTasks();
+  showToast("任务已删除", "success");
 }
 
 async function updateTaskFields(id, fields) {
@@ -1307,18 +2750,441 @@ async function updateTaskFields(id, fields) {
   return task;
 }
 
-function setupWebviewUploadInterceptor(webview) {
-  webview.addEventListener("select-file-dialog", (event) => {
-    if (!pipelineState.active || !pipelineState.uploadQueue.length) return;
-    const nextPath = pipelineState.uploadQueue.shift();
-    if (!nextPath) return;
-    event.preventDefault();
-    event.callback([nextPath]);
+function renderImportPreviewGroup(key, title, rows, { collapsed = false, selectable = true } = {}) {
+  const section = document.createElement("section");
+  section.className = "import-group";
+  let container = section;
+  if (collapsed) {
+    // 无变化组默认折叠：<details> 不带 open，点 summary 展开
+    const details = document.createElement("details");
+    details.innerHTML = `<summary><h3>${escapeHtml(title)} <span>${rows.length}</span></h3></summary>`;
+    section.append(details);
+    container = details;
+  } else {
+    section.innerHTML = `<h3>${escapeHtml(title)} <span>${rows.length}</span></h3>`;
+  }
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!rows.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    rows.forEach((row, index) => {
+      const task = row.task;
+      const item = document.createElement("label");
+      item.className = `import-row${!task.taskType ? " warning" : ""}`;
+      // 无变化组禁用勾选：导入它们没有意义，避免误操作
+      const checkbox = selectable
+        ? `<input type="checkbox" data-group="${key}" data-index="${index}" ${row.selected ? "checked" : ""} />`
+        : '<input type="checkbox" disabled />';
+      const diffs = row.diffs?.length
+        ? `<div class="import-diffs">${row.diffs.map((diff) => `<span><b>${escapeHtml(diff.label)}</b> ${escapeHtml(diff.from)} → ${escapeHtml(diff.to)}</span>`).join("")}</div>`
+        : "";
+      const warning = task.taskType ? "" : '<span class="import-warning">类型未匹配，导入后显示为未分类</span>';
+      item.innerHTML = `
+        ${checkbox}
+        <span class="import-row-body">
+          <strong>${escapeHtml(importPreviewTaskTitle(task))}</strong>
+          <small>${escapeHtml(taskStatusLabel(task.status))} · ${Number(task.quantity) || 1}个 · ${escapeHtml(task.owner || "未指定")}${task.weekday ? ` · ${escapeHtml(task.weekday)}` : ""}</small>
+          ${warning}
+          ${diffs}
+        </span>
+      `;
+      list.append(item);
+    });
+  }
+  container.append(list);
+  return section;
+}
+
+function renderImportPreview() {
+  if (!importPreviewState || !elements.importPreviewGroups) return;
+  const { added, updated, unchanged, unparsed } = importPreviewState;
+  elements.importPreviewSummary.textContent =
+    `新增 ${added.length} 条，更新 ${updated.length} 条，无变化 ${unchanged.length} 条，无法解析 ${unparsed.length} 条。新增和更新默认勾选。`;
+  elements.importPreviewGroups.replaceChildren(
+    renderImportPreviewGroup("added", "新增", added),
+    renderImportPreviewGroup("updated", "更新", updated),
+    renderImportPreviewGroup("unchanged", "无变化", unchanged, { collapsed: true, selectable: false }),
+    renderUnparsedImportGroup(unparsed)
+  );
+  elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const rows = importPreviewState?.[checkbox.dataset.group];
+      const row = rows?.[Number(checkbox.dataset.index)];
+      if (row) row.selected = checkbox.checked;
+    });
+  });
+  const selectedCount = [...added, ...updated, ...unchanged].filter((row) => row.selected).length;
+  elements.importPreviewApply.disabled = selectedCount <= 0;
+  elements.importPreviewApply.textContent = selectedCount > 0 ? `导入所选 (${selectedCount})` : "导入所选";
+  elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
+    checkbox.addEventListener("change", renderImportPreview);
   });
 }
 
+function renderUnparsedImportGroup(lines) {
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>无法解析 <span>${lines.length}</span></h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!lines.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    lines.forEach((line) => {
+      const item = document.createElement("div");
+      item.className = "import-row import-row-unparsed";
+      item.textContent = line;
+      list.append(item);
+    });
+  }
+  section.append(list);
+  return section;
+}
+
+function openImportPreview(parsed) {
+  importPreviewState = buildTodoImportPreview(parsed.tasks, parsed.unparsed);
+  renderImportPreview();
+  elements.importPreviewDialog?.showModal();
+}
+
+async function applyTodoImportSelection() {
+  if (!importPreviewState) return;
+  let addedCount = 0;
+  let updatedCount = 0;
+  const now = Date.now();
+  importPreviewState.added.filter((row) => row.selected).forEach((row, index) => {
+    weeklyTasks.push(normalizeWeeklyTask({ ...row.task, id: `task-${now}-${index}` }));
+    addedCount += 1;
+  });
+  importPreviewState.updated.filter((row) => row.selected).forEach((row) => {
+    const target = weeklyTasks.find((task) => task.id === row.existingId);
+    if (!target) return;
+    for (const field of TODO_IMPORT_FIELDS) target[field] = row.task[field];
+    updatedCount += 1;
+  });
+  await persistWeeklyTasks();
+  elements.importPreviewDialog?.close();
+  importPreviewState = null;
+  showToast(`导入完成：新增 ${addedCount} 条，更新 ${updatedCount} 条`, "success");
+}
+
+function todoReadErrorMessage(error) {
+  return {
+    "not-configured": "请先选择待做任务.txt",
+    "not-found": "待做任务.txt 不存在，请重新选择",
+    encoding: "文件编码不是 UTF-8，请用记事本另存为 UTF-8 后再导入"
+  }[error] || error || "读取待做任务失败";
+}
+
+async function handleTodoImport() {
+  try {
+    const prefs = await window.workbench.getWorkbenchPrefs();
+    if (!prefs?.todoFilePath) {
+      const picked = await window.workbench.pickTodoFile();
+      if (!picked) return;
+      setTodoPathDisplay(picked);
+    }
+    const result = await window.workbench.readTodoFile();
+    if (!result?.ok) {
+      showToast(todoReadErrorMessage(result?.error), "error");
+      return;
+    }
+    setTodoPathDisplay(result.path || "");
+    openImportPreview(parseTodoLines(result.text));
+  } catch (error) {
+    console.error("导入待做任务失败:", error);
+    showToast("导入待做任务失败", "error");
+  }
+}
+
+// ===== 任务状态写回待做任务.txt（仅手动触发） =====
+let writebackState = null;
+
+function renderWritebackChangedGroup(entries) {
+  const changed = entries.filter((entry) => entry.changed);
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>变更 <span>${changed.length}</span></h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!changed.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    for (const entry of changed) {
+      const item = document.createElement("div");
+      item.className = "import-row wb-diff-row";
+      item.innerHTML = `
+        <span class="import-row-body">
+          <small class="wb-diff-old">${escapeHtml(entry.oldLine)}</small>
+          <small class="wb-diff-new">${escapeHtml(entry.newLine)}</small>
+        </span>
+      `;
+      list.append(item);
+    }
+  }
+  section.append(list);
+  return section;
+}
+
+function renderWritebackUnchangedGroup(entries) {
+  const unchanged = entries.filter((entry) => !entry.changed && entry.oldLine.trim());
+  const section = document.createElement("section");
+  section.className = "import-group";
+  const details = document.createElement("details");
+  details.className = "wb-unchanged";
+  details.innerHTML = `<summary>无变化 <span>${unchanged.length}</span>（含未匹配/无法解析行，原样保留）</summary>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  for (const entry of unchanged) {
+    const item = document.createElement("div");
+    item.className = "import-row import-row-unparsed";
+    item.textContent = entry.oldLine;
+    list.append(item);
+  }
+  if (!unchanged.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  }
+  details.append(list);
+  section.append(details);
+  return section;
+}
+
+function renderWritebackOnlyGroup(onlyInWorkbench, appendSelected) {
+  const section = document.createElement("section");
+  section.className = "import-group";
+  section.innerHTML = `<h3>仅工作台 <span>${onlyInWorkbench.length}</span>（默认不写回，勾选后追加到文件末尾）</h3>`;
+  const list = document.createElement("div");
+  list.className = "import-list";
+  if (!onlyInWorkbench.length) {
+    const empty = document.createElement("div");
+    empty.className = "import-empty";
+    empty.textContent = "暂无";
+    list.append(empty);
+  } else {
+    onlyInWorkbench.forEach((task, index) => {
+      const item = document.createElement("label");
+      item.className = "import-row";
+      item.innerHTML = `
+        <input type="checkbox" data-append-index="${index}" ${appendSelected.has(index) ? "checked" : ""} />
+        <span class="import-row-body">
+          <strong>${escapeHtml(importPreviewTaskTitle(task))}</strong>
+          <small>${escapeHtml(serializeTodoLine(task))}</small>
+        </span>
+      `;
+      list.append(item);
+    });
+  }
+  section.append(list);
+  return section;
+}
+
+function renderWritebackPreview() {
+  if (!writebackState || !elements.writebackPreviewGroups) return;
+  const { merge, appendSelected } = writebackState;
+  const changedCount = merge.entries.filter((entry) => entry.changed).length;
+  elements.writebackPreviewSummary.textContent =
+    `变更 ${changedCount} 行，仅工作台 ${merge.onlyInWorkbench.length} 条（已勾选 ${appendSelected.size}）。确认前将自动备份 待做任务.txt.bak。`;
+  elements.writebackPreviewGroups.replaceChildren(
+    renderWritebackChangedGroup(merge.entries),
+    renderWritebackUnchangedGroup(merge.entries),
+    renderWritebackOnlyGroup(merge.onlyInWorkbench, appendSelected)
+  );
+  elements.writebackPreviewGroups.querySelectorAll("input[data-append-index]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      const index = Number(checkbox.dataset.appendIndex);
+      if (checkbox.checked) appendSelected.add(index);
+      else appendSelected.delete(index);
+      renderWritebackPreview();
+    });
+  });
+  elements.writebackPreviewApply.disabled = changedCount <= 0 && appendSelected.size <= 0;
+  elements.writebackPreviewApply.textContent =
+    changedCount + appendSelected.size > 0 ? `确认写回 (${changedCount + appendSelected.size})` : "确认写回";
+}
+
+async function handleTodoWriteback() {
+  try {
+    const result = await window.workbench.readTodoFile();
+    if (!result?.ok) {
+      showToast(todoReadErrorMessage(result?.error), "error");
+      return;
+    }
+    writebackState = {
+      sourceText: result.text,
+      merge: mergeTodoFile(result.text, weeklyTasks),
+      appendSelected: new Set()
+    };
+    renderWritebackPreview();
+    elements.writebackPreviewDialog?.showModal();
+  } catch (error) {
+    console.error("写回预览失败:", error);
+    showToast("写回预览失败", "error");
+  }
+}
+
+async function applyTodoWriteback() {
+  if (!writebackState) return;
+  const { sourceText, merge, appendSelected } = writebackState;
+  const appendTasks = merge.onlyInWorkbench.filter((_task, index) => appendSelected.has(index));
+  const finalMerge = mergeTodoFile(sourceText, weeklyTasks, appendTasks);
+  const changedCount = finalMerge.entries.filter((entry) => entry.changed).length;
+  try {
+    const result = await window.workbench.writeTodoFile(finalMerge.text);
+    if (!result?.ok) {
+      showToast(`写回失败：${todoReadErrorMessage(result?.error)}`, "error");
+      return;
+    }
+    elements.writebackPreviewDialog?.close();
+    showToast(`写回完成：变更 ${changedCount} 行，追加 ${appendTasks.length} 行，备份已生成 .bak`, "success");
+  } catch (error) {
+    console.error("写回待做任务失败:", error);
+    showToast("写回待做任务失败", "error");
+  }
+}
+
+async function changeTodoFilePath() {
+  try {
+    const picked = await window.workbench.pickTodoFile();
+    if (!picked) return;
+    setTodoPathDisplay(picked);
+    showToast("待做任务路径已更新", "success");
+  } catch (error) {
+    console.error("选择待做任务失败:", error);
+    showToast("选择待做任务失败", "error");
+  }
+}
+
+// 上传拦截（缺陷 #2 重做）：main 进程经 CDP 拦截 fileChooser 后推送 upload:choose-files，
+// 这里决定注入来源：评估流水线队列优先 → 工作台浮层 → 异常时降级系统选择器
+async function resolveUploadRequest(requestId, paths) {
+  try {
+    const result = await window.workbench.resolveUploadFiles(requestId, paths);
+    if (paths.length && !result?.ok) {
+      showToast(`文件注入失败：${result?.error || "未知错误"}，请改用系统选择器重试`, "error");
+    }
+  } catch (error) {
+    console.error("上传注入回传失败:", error);
+    showToast("文件注入失败，请重新点击上传按钮", "error");
+  }
+}
+
+async function handleUploadChooseFiles({ requestId } = {}) {
+  if (requestId === undefined) return;
+  // 拦截开关由 main 按活动任务状态切换；若状态竞态导致无活动任务仍被拦截，降级系统选择器
+  if (!pipelineState.active) {
+    try {
+      const paths = await window.workbench.pickSystemFiles();
+      await resolveUploadRequest(requestId, Array.isArray(paths) ? paths : []);
+    } catch (error) {
+      console.error("降级系统选择器失败:", error);
+      await resolveUploadRequest(requestId, []);
+    }
+    return;
+  }
+  // 评估流水线自动注入优先（行为与 V3.1 一致，不弹浮层）
+  if (pipelineState.uploadQueue.length) {
+    const nextPath = pipelineState.uploadQueue.shift();
+    await resolveUploadRequest(requestId, nextPath ? [nextPath] : []);
+    return;
+  }
+  if (pendingFilePick) {
+    // 已有未完成的选择请求，直接取消新请求防止回调悬挂
+    await resolveUploadRequest(requestId, []);
+    return;
+  }
+  openFilePickOverlay((paths) => resolveUploadRequest(requestId, paths));
+}
+
+// ===== 全局上传注入浮层 =====
+let pendingFilePick = null;
+let filePickSelection = new Set();
+
+function resolveFilePick(paths) {
+  const callback = pendingFilePick;
+  pendingFilePick = null;
+  if (callback) {
+    try { callback(paths); } catch (error) { console.warn("文件注入回调失败:", error); }
+  }
+  if (elements.filePickDialog.open) elements.filePickDialog.close();
+}
+
+function updateFilePickInjectButton() {
+  elements.filePickInject.disabled = !filePickSelection.size;
+  elements.filePickInject.textContent = filePickSelection.size
+    ? `注入所选文件 (${filePickSelection.size})`
+    : "注入所选文件";
+}
+
+async function openFilePickOverlay(callback) {
+  pendingFilePick = callback;
+  filePickSelection = new Set();
+  updateFilePickInjectButton();
+  elements.filePickList.replaceChildren();
+
+  const folder = pipelineState.taskFolder || "";
+  let files = [];
+  if (folder) {
+    try {
+      files = (await window.workbench.listTaskFiles(folder)) || [];
+    } catch (error) {
+      console.warn("读取任务文件失败:", error);
+    }
+  }
+  if (!pendingFilePick) return;
+
+  if (files.length) {
+    for (const file of files.sort((a, b) => b.mtime - a.mtime)) {
+      const row = document.createElement("button");
+      row.className = "fp-row";
+      row.type = "button";
+      row.innerHTML = `
+        <span class="fp-check" aria-hidden="true">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </span>
+        <span class="ra-ico">${fileKindSvg(file.name)}</span>
+        <span class="ra-info">
+          <span class="ra-name">${escapeHtml(file.relPath || file.name)}</span>
+          <span class="ra-sub">${escapeHtml(`${formatFileSize(file.size)} · ${formatFileTime(file.mtime)}`)}</span>
+        </span>
+      `;
+      row.addEventListener("click", () => {
+        if (filePickSelection.has(file.path)) {
+          filePickSelection.delete(file.path);
+          row.classList.remove("selected");
+        } else {
+          filePickSelection.add(file.path);
+          row.classList.add("selected");
+        }
+        updateFilePickInjectButton();
+      });
+      elements.filePickList.append(row);
+    }
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "fp-empty";
+    empty.textContent = "任务文件夹暂无文件。可改用系统选择器。";
+    elements.filePickList.append(empty);
+  }
+
+  setWebviewPointerEvents(false);
+  elements.filePickDialog.showModal();
+}
+
 function findTabByUrlPart(part) {
-  return tabs.find((tab) => tab.url.toLowerCase().includes(part));
+  return tabs.find((tab) => String(tab.url || "").toLowerCase().includes(part));
 }
 
 function activateOrCreateTab(id, name, url) {
@@ -1334,31 +3200,99 @@ function activateOrCreateTab(id, name, url) {
 }
 
 async function startTaskAutomation(id) {
+  if (pipelineState.active) {
+    showToast("当前已有正在运行的任务，请先暂停或结束当前任务。", "error");
+    return;
+  }
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
-  const taskFolder = await window.workbench.prepareTaskFolder(task);
+  // 缺陷 #7：执行先落 prepare（1/5），任务文件夹创建成功后才推进 testing（2/5）
   pipelineState = {
     active: true,
     taskId: id,
-    step: "testing",
+    step: "prepare",
     chatPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
-    taskFolder,
+    taskFolder: "",
     uploadQueue: []
   };
-  await updateTaskFields(id, { status: "running", taskFolder });
-  updateActiveTaskMenu(task);
-  closeTaskPanel();
+  await updateTaskFields(id, { status: "running", step: "prepare" });
+  taskRailCollapsed = false;
+  updateTaskRail(task);
+  let taskFolder = "";
+  try {
+    taskFolder = await window.workbench.prepareTaskFolder(task);
+  } catch (error) {
+    console.error("创建任务文件夹失败:", error);
+  }
+  if (!taskFolder) {
+    showToast("任务文件夹创建失败，流程停留在「准备」步骤，请重试。", "error");
+    return;
+  }
+  pipelineState.taskFolder = taskFolder;
+  pipelineState.step = "testing";
+  await updateTaskFields(id, { taskFolder, step: "testing" });
+  updateTaskRail(task);
   showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
+}
+
+async function pauseTaskAutomation(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return;
+
+  if (pipelineState.active && pipelineState.taskId === id) {
+    task.chatLogPath = pipelineState.chatPath || "";
+    task.reportPath = pipelineState.reportPath || "";
+    task.taskFolder = pipelineState.taskFolder || "";
+    task.step = pipelineState.step || "testing";
+  }
+
+  task.status = "paused";
+  pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+  updateTaskRail(null);
+  await persistWeeklyTasks();
+  showToast(`任务已暂停：${task.school || ""} ${task.course || ""}`, "success");
+}
+
+async function resumeTaskAutomation(id) {
+  const task = weeklyTasks.find((candidate) => candidate.id === id);
+  if (!task) return;
+
+  if (pipelineState.active) {
+    showToast("当前已有正在运行的任务，请先暂停或结束当前任务。", "error");
+    return;
+  }
+
+  pipelineState = {
+    active: true,
+    taskId: id,
+    step: task.step || "testing",
+    chatPath: task.chatLogPath || "",
+    reportPath: task.reportPath || "",
+    taskFolder: task.taskFolder || "",
+    uploadQueue: []
+  };
+
+  const nextStatus = pipelineState.step === "evaluating" ? "evaluating" : "running";
+  await updateTaskFields(id, { status: nextStatus });
+  taskRailCollapsed = false;
+  updateTaskRail(task);
+  showToast(`任务已恢复执行：${task.school || ""} ${task.course || ""}`, "success");
 }
 
 async function handleDownloadCompleted(download) {
   if (!pipelineState.active || !pipelineState.taskId) return;
 
+  if (download.type === "generic") {
+    if (download.captured) showToast(`已捕获到任务文件夹: ${download.filename}`, "success");
+    return;
+  }
+
   if (download.type === "chat") {
     pipelineState.chatPath = download.path;
     pipelineState.step = "evaluating";
-    await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path });
+    const task = await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path, step: "evaluating" });
+    updateTaskRail(task);
     activateOrCreateTab("evaluation", "评估", "https://www.wl363eval.top/");
     setTimeout(() => runEvaluationUpload(), 1200);
     return;
@@ -1366,10 +3300,10 @@ async function handleDownloadCompleted(download) {
 
   if (download.type === "report") {
     pipelineState.reportPath = download.path;
-    pipelineState.step = "analysis";
-    await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path });
-    elements.activeTaskHermes.hidden = false;
-    showToast("评估报告已保存，可加载至 Hermes 后确认发送。", "success");
+    pipelineState.step = "report";
+    const task = await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path, step: "report" });
+    updateTaskRail(task);
+    showToast("评估报告已保存，可在任务舱「加载至 Hermes」后确认发送。", "success");
   }
 }
 
@@ -1377,6 +3311,13 @@ function runEvaluationUpload() {
   const webview = activeWebview();
   if (!webview || !pipelineState.chatPath) return;
   pipelineState.uploadQueue = [pipelineState.chatPath];
+  // M1：上传控件 click 未触发拦截时 uploadQueue 会残留，导致之后任意网页点上传被静默注入
+  // dialogue.json 而非弹浮层。设超时兜底：到点仍未消费则清空队列。
+  const queuePath = pipelineState.chatPath;
+  const clearStaleQueue = () => {
+    if (pipelineState.uploadQueue[0] === queuePath) pipelineState.uploadQueue = [];
+  };
+  const failTimer = setTimeout(clearStaleQueue, 8000);
   webview.executeJavaScript(`
     (() => {
       const input = document.querySelector('input[type="file"]');
@@ -1386,8 +3327,14 @@ function runEvaluationUpload() {
       return { fileInputs: input ? 1 : 0, submitted: Boolean(submit) };
     })();
   `).then((result) => {
-    if (!result?.fileInputs) showToast("评估页没有检测到文件上传控件，请手动上传后继续。", "error");
+    if (!result?.fileInputs) {
+      clearTimeout(failTimer);
+      clearStaleQueue();
+      showToast("评估页没有检测到文件上传控件，请手动上传后继续。", "error");
+    }
   }).catch((error) => {
+    clearTimeout(failTimer);
+    clearStaleQueue();
     console.error("自动上传评估文件失败:", error);
     showToast("自动上传评估文件失败，请检查页面是否已加载完成。", "error");
   });
@@ -1399,12 +3346,16 @@ function runHermesPrompt() {
     showToast("报告已记录。未找到 Hermes 标签页，请打开后粘贴自动分析提示。", "success");
     return;
   }
+  if (pipelineState.active) {
+    pipelineState.step = "hermes";
+    updateTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
+  }
   activateTab(hermesTab.id);
   const promptText = [
     `测试对话记录地址：${pipelineState.chatPath || ""}`,
     `评估报告地址：${pipelineState.reportPath || ""}`,
     "请读取上述本地文件路径后进行诊断分析。"
-  ].join("\\n");
+  ].join("\n");
   setTimeout(() => {
     const webview = activeWebview();
     webview?.executeJavaScript(`
@@ -1481,11 +3432,14 @@ function renderExtensionsInTopbar(results) {
 
 function toggleTabExtension(tabId, name, url) {
   const viewport = document.querySelector(`.tab-viewport[data-id="${tabId}"]`);
-  if (!viewport) return;
-  
-  const extPanel = viewport.querySelector(".tab-extension-panel");
-  const extBody = viewport.querySelector(".tab-extension-body");
-  const extTitle = viewport.querySelector(".tab-extension-title");
+  const extPanel = viewport?.querySelector(".tab-extension-panel");
+  const extBody = viewport?.querySelector(".tab-extension-body");
+  const extTitle = viewport?.querySelector(".tab-extension-title");
+  // 缺陷 #4：任务中心/桌面应用/CLI 等非 web 标签没有扩展面板结构，guard + toast，不崩不静默
+  if (!viewport || !extPanel || !extBody || !extTitle) {
+    showToast("当前标签页不支持扩展面板", "error");
+    return;
+  }
   
   // Check if this extension is already open
   const existingWebview = extBody.querySelector("webview");
@@ -1601,21 +3555,206 @@ function moveTab(direction) {
 }
 
 document.querySelector("#add-tab-button").addEventListener("click", () => openTabDialog());
-elements.menuTaskButton?.addEventListener("click", openTaskPanel);
-elements.menuTerminalButton?.addEventListener("click", () => toggleTerminal());
-elements.menuSettingsButton?.addEventListener("click", openSettings);
-elements.menuReloadButton?.addEventListener("click", () => activeWebview()?.reload?.());
-document.querySelectorAll("[data-command]").forEach((button) => {
-  button.addEventListener("click", () => document.execCommand(button.dataset.command));
+elements.menuSettingsButton?.addEventListener("click", () => {
+  elements.menuMorePop.classList.remove("open");
+  openSettings();
 });
-elements.activeTaskFinish?.addEventListener("click", () => finishActiveTask());
-elements.activeTaskHermes?.addEventListener("click", () => runHermesPrompt());
-window.workbench.onMenuToggleTasks(openTaskPanel);
+elements.menuReloadButton?.addEventListener("click", () => {
+  elements.menuMorePop.classList.remove("open");
+  activeWebview()?.reload?.();
+});
+// 工作台偏好：裁切方向 + 像素数
+elements.menuPrefsButton?.addEventListener("click", async () => {
+  elements.menuMorePop.classList.remove("open");
+  try {
+    const prefs = await window.workbench.getWorkbenchPrefs();
+    elements.prefCropSide.value = prefs?.cropSide || "bottom";
+    elements.prefCropPixels.value = prefs?.cropPixels || 100;
+    setTodoPathDisplay(prefs?.todoFilePath || "");
+    if (elements.prefPlatformMap) {
+      const map = prefs?.platformFieldMap || {};
+      elements.prefPlatformMap.value = Object.keys(map).length ? JSON.stringify(map, null, 2) : "";
+    }
+  } catch {
+    elements.prefCropSide.value = "bottom";
+    elements.prefCropPixels.value = 100;
+    setTodoPathDisplay("");
+    if (elements.prefPlatformMap) elements.prefPlatformMap.value = "";
+  }
+  elements.prefsDialog.showModal();
+});
+document.querySelectorAll(".prefs-close").forEach((button) =>
+  button.addEventListener("click", () => elements.prefsDialog.close())
+);
+elements.prefsForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  // platformFieldMap：空白视为清空；非法 JSON 阻止保存并提示，不污染偏好
+  let platformFieldMap = {};
+  const rawMap = elements.prefPlatformMap?.value.trim();
+  if (rawMap) {
+    try {
+      const parsed = JSON.parse(rawMap);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("需为对象");
+      platformFieldMap = parsed;
+    } catch (error) {
+      showToast(`平台字段映射 JSON 格式错误：${error.message}`, "error");
+      return;
+    }
+  }
+  await window.workbench.setWorkbenchPrefs({
+    cropSide: elements.prefCropSide.value,
+    cropPixels: Number(elements.prefCropPixels.value),
+    platformFieldMap
+  });
+  elements.prefsDialog.close();
+  showToast("工作台偏好已保存", "success");
+});
+// 平台单字段试注入（V3.4 P1）：读取偏好映射 → 取当前激活 webview → 注入指定字段
+elements.prefInjectRun?.addEventListener("click", async () => {
+  const field = elements.prefInjectField?.value.trim();
+  const value = elements.prefInjectValue?.value ?? "";
+  if (!field) {
+    showToast("请填写要试注入的字段名", "error");
+    return;
+  }
+  let prefs;
+  try {
+    prefs = await window.workbench.getWorkbenchPrefs();
+  } catch {
+    showToast("读取偏好失败", "error");
+    return;
+  }
+  const selector = prefs?.platformFieldMap?.[field];
+  if (!selector) {
+    showToast(`字段「${field}」未在映射中配置选择器`, "error");
+    return;
+  }
+  const webview = activeWebview();
+  if (!webview) {
+    showToast("当前标签页不是网页，无法注入。请先切换到平台网页标签。", "error");
+    return;
+  }
+  let webContentsId;
+  try {
+    webContentsId = webview.getWebContentsId();
+  } catch {
+    showToast("当前网页尚未加载完成，请稍后重试", "error");
+    return;
+  }
+  try {
+    const result = await window.workbench.testInjectField(webContentsId, selector, value);
+    if (result?.ok) {
+      showToast(`试注入成功（${result.kind}）：${field} → ${selector}`, "success");
+    } else {
+      showToast(`试注入失败：${result?.error || "未知错误"}`, "error");
+    }
+  } catch (error) {
+    console.error("试注入失败:", error);
+    showToast("试注入调用失败", "error");
+  }
+});
+document.querySelectorAll("[data-command]").forEach((button) => {
+  button.addEventListener("click", () => {
+    elements.menuMorePop.classList.remove("open");
+    document.execCommand(button.dataset.command);
+  });
+});
+// 「⋯ 更多」popover：click 展开 + 外点关闭（composedPath 判定）
+elements.menuMoreButton?.addEventListener("click", () => {
+  elements.menuMorePop.classList.toggle("open");
+});
+window.workbench.onMenuToggleTasks(() => activateTab(TASK_CENTER_ID));
 window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);
-elements.addNewTask?.addEventListener("click", () => {
-  resetTaskForm();
-  switchTaskModalView("form");
+elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
+elements.addNewTask?.addEventListener("click", () => openTaskForm());
+elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
+elements.btnWritebackTodo?.addEventListener("click", () => handleTodoWriteback());
+elements.writebackPreviewApply?.addEventListener("click", () => applyTodoWriteback());
+elements.writebackPreviewCancel?.addEventListener("click", () => elements.writebackPreviewDialog?.close());
+elements.writebackPreviewCancelX?.addEventListener("click", () => elements.writebackPreviewDialog?.close());
+elements.writebackPreviewDialog?.addEventListener("close", () => {
+  writebackState = null;
+});
+elements.prefTodoChange?.addEventListener("click", (event) => {
+  event.preventDefault();
+  changeTodoFilePath();
+});
+elements.importPreviewApply?.addEventListener("click", () => applyTodoImportSelection());
+elements.importPreviewCancel?.addEventListener("click", () => elements.importPreviewDialog?.close());
+elements.importPreviewCancelX?.addEventListener("click", () => elements.importPreviewDialog?.close());
+elements.importPreviewDialog?.addEventListener("close", () => {
+  importPreviewState = null;
+});
+elements.sbTerminal?.addEventListener("click", () => toggleTerminal());
+elements.sbTaskChip?.addEventListener("click", expandTaskRail);
+elements.railHandle?.addEventListener("click", expandTaskRail);
+elements.railCollapse?.addEventListener("click", collapseTaskRail);
+elements.railHermes?.addEventListener("click", () => runHermesPrompt());
+elements.railCardsStream?.addEventListener("change", () => {
+  railCardsStreamOn = Boolean(elements.railCardsStream.checked);
+  updateCardStreamHighlight();
+});
+elements.railCardsReparse?.addEventListener("click", async () => {
+  if (!pipelineState.active) return;
+  const task = weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId);
+  const folder = pipelineState.taskFolder || task?.taskFolder || "";
+  if (!task || !folder) return;
+  let files = [];
+  try {
+    files = (await window.workbench.listTaskFiles(folder)) || [];
+  } catch (error) {
+    console.warn("重新解析读取任务文件失败:", error);
+  }
+  const cardsFile = files.find((file) => /^cards\.md$/i.test(file.name));
+  await syncRailCards(task, cardsFile || null, true);
+  showToast(cardsFile ? "cards.md 已重新解析" : "任务文件夹内未找到 cards.md", cardsFile ? "success" : "error");
+});
+elements.railPause?.addEventListener("click", () => {
+  if (pipelineState.taskId) pauseTaskAutomation(pipelineState.taskId);
+});
+elements.railFinish?.addEventListener("click", () => finishActiveTask());
+elements.finishTaskSubmitted?.addEventListener("click", () => {
+  elements.finishTaskDialog?.close();
+  completeActiveTask(true);
+});
+elements.finishTaskUnsubmitted?.addEventListener("click", () => {
+  elements.finishTaskDialog?.close();
+  completeActiveTask(false);
+});
+elements.finishTaskCancel?.addEventListener("click", () => elements.finishTaskDialog?.close());
+elements.finishTaskCancelX?.addEventListener("click", () => elements.finishTaskDialog?.close());
+elements.deleteTaskConfirm?.addEventListener("click", async () => {
+  const id = pendingDeleteTaskId;
+  pendingDeleteTaskId = null;
+  elements.deleteTaskDialog?.close();
+  if (id) await performDeleteWeeklyTask(id);
+});
+elements.deleteTaskCancel?.addEventListener("click", () => elements.deleteTaskDialog?.close());
+elements.deleteTaskCancelX?.addEventListener("click", () => elements.deleteTaskDialog?.close());
+elements.deleteTaskDialog?.addEventListener("close", () => { pendingDeleteTaskId = null; });
+elements.filePickInject?.addEventListener("click", () => {
+  if (filePickSelection.size) resolveFilePick([...filePickSelection]);
+});
+elements.filePickSystem?.addEventListener("click", async () => {
+  try {
+    const paths = await window.workbench.pickSystemFiles();
+    resolveFilePick(Array.isArray(paths) ? paths : []);
+  } catch (error) {
+    console.error("系统选择器调用失败:", error);
+    resolveFilePick([]);
+  }
+});
+elements.filePickCancel?.addEventListener("click", () => resolveFilePick([]));
+elements.filePickClose?.addEventListener("click", () => resolveFilePick([]));
+// ESC / dialog 关闭 = 取消本次选择；恢复 webview 指针事件
+elements.filePickDialog?.addEventListener("close", () => {
+  setWebviewPointerEvents(true);
+  if (pendingFilePick) {
+    const callback = pendingFilePick;
+    pendingFilePick = null;
+    try { callback([]); } catch {}
+  }
 });
 document.querySelector("#sidebar-toggle").addEventListener("click", () => {
   setSidebarCollapsed(!elements.appShell.classList.contains("sidebar-collapsed"));
@@ -1701,11 +3840,7 @@ elements.bottomSidebarClose.addEventListener("click", () => toggleBottomSidebar(
 
 document.querySelectorAll(".dialog-close").forEach((button) => button.addEventListener("click", () => elements.tabDialog.close()));
 document.querySelectorAll(".settings-close").forEach((button) => button.addEventListener("click", () => elements.settingsDialog.close()));
-document.querySelectorAll(".task-close").forEach((button) => button.addEventListener("click", closeTaskPanel));
-document.querySelectorAll(".task-cancel").forEach((button) => button.addEventListener("click", () => {
-  resetTaskForm();
-  switchTaskModalView("list");
-}));
+document.querySelectorAll(".task-cancel").forEach((button) => button.addEventListener("click", closeTaskForm));
 
 elements.taskForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1715,9 +3850,8 @@ elements.taskForm?.addEventListener("submit", async (event) => {
     return;
   }
   await upsertWeeklyTask(task);
-  resetTaskForm();
+  closeTaskForm();
   showToast("任务已保存", "success");
-  switchTaskModalView("list");
 });
 
 document.querySelector("#task-reset-button")?.addEventListener("click", resetTaskForm);
@@ -1753,7 +3887,7 @@ elements.tabForm.addEventListener("submit", (event) => {
   const existing = tabs.findIndex((tab) => tab.id === data.id);
   if (existing >= 0) {
     tabs[existing] = data;
-    window.workbench.cleanupTabResources(data.id);
+    runTabCleanup(data.id);
     document.querySelector(`.tab-viewport[data-id="${data.id}"]`)?.remove();
   } else {
     tabs.push(data);
@@ -1780,7 +3914,7 @@ document.querySelector("#delete-tab-button").addEventListener("click", () => {
     toggleBottomSidebar(false);
   }
   
-  window.workbench.cleanupTabResources(id);
+  runTabCleanup(id);
 
   tabs = tabs.filter((tab) => tab.id !== id);
   document.querySelector(`.tab-viewport[data-id="${id}"]`)?.remove();
@@ -2312,35 +4446,30 @@ window.workbench.onDragAddTab((payload) => {
   showToast(`已成功添加标签: ${name}`, "success");
 });
 
-// Close task panel on escape key
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && elements.taskPanel?.classList.contains("open")) {
-    const activeDialog = document.querySelector("dialog[open]");
-    if (!activeDialog) {
-      closeTaskPanel();
-      event.preventDefault();
-    }
-  }
-});
-
-// Close task panel on overlay click
-elements.taskPanelOverlay?.addEventListener("click", closeTaskPanel);
-
+// 全局外点关闭：「⋯ 更多」popover 与任务卡「⋯」菜单（composedPath 判定，覆盖 webview 边界）
 document.addEventListener("click", (event) => {
-  const panel = elements.taskPanel;
-  if (!panel?.classList.contains("open")) return;
-
-  const taskButton = elements.menuTaskButton;
   const path = event.composedPath();
-  if (path.includes(panel) || path.includes(taskButton)) return;
-
-  closeTaskPanel();
+  if (elements.menuMorePop?.classList.contains("open")
+    && !path.includes(elements.menuMorePop) && !path.includes(elements.menuMoreButton)) {
+    elements.menuMorePop.classList.remove("open");
+  }
+  const openMenu = document.querySelector(".tc-menu-pop.open");
+  if (openMenu && !path.some((node) => node instanceof Element && node.classList?.contains("tc-menu-wrap"))) {
+    closeAllCardMenus();
+  }
+  const openSubtasks = document.querySelector(".subtask-popover.open");
+  if (openSubtasks && !path.some((node) => node instanceof Element && (node.classList?.contains("subtask-popover") || node.classList?.contains("tc-progress")))) {
+    closeAllSubtaskPopovers();
+  }
 });
 
 initTerminal();
 renderTabs();
+activateTab(TASK_CENTER_ID);
 window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 loadWeeklyTasks();
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
+window.workbench.onUploadChooseFiles(handleUploadChooseFiles);
+window.workbench.onTaskFolderChanged(() => refreshRailTray());
 window.workbench.getExtensions().then(({ results }) => renderExtensionsInTopbar(results));

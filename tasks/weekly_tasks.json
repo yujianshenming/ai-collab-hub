@@ -9,7 +9,8 @@
     "owner": "李姝琦",
     "chatLogPath": "",
     "reportPath": "",
-    "taskFolder": ""
+    "taskFolder": "",
+    "step": "testing"
   },
   {
     "id": "task-1780650321123",
@@ -17,11 +18,12 @@
     "course": "生物医用材料",
     "taskType": "capability-setup",
     "quantity": 5,
-    "status": "pending",
+    "status": "completed",
     "owner": "赵俞蓉",
     "chatLogPath": "",
     "reportPath": "",
-    "taskFolder": ""
+    "taskFolder": "",
+    "step": "testing"
   },
   {
     "id": "task-1780650341199",
@@ -33,7 +35,8 @@
     "owner": "李漫1",
     "chatLogPath": "",
     "reportPath": "",
-    "taskFolder": ""
+    "taskFolder": "",
+    "step": "testing"
   },
   {
     "id": "task-1780650363177",
@@ -45,6 +48,7 @@
     "owner": "姜唯一",
     "chatLogPath": "",
     "reportPath": "",
-    "taskFolder": ""
+    "taskFolder": "",
+    "step": "testing"
   }
 ]

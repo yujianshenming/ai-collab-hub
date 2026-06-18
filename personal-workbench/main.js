@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -31,6 +31,25 @@ let allTabs = [];
 const sseClients = [];
 const sharedStateMap = new Map();
 let heartbeatInterval = null;
+
+function isAttachConsoleError(error) {
+  return /AttachConsole failed/i.test(String(error?.message || error || ""));
+}
+
+function reportTerminalError(error, channel = "terminal:data") {
+  const message = error?.message || String(error);
+  console.warn("Terminal initialization failed:", message);
+  sendToRenderer(channel, `\r\n[启动终端失败: ${message}]\r\n`);
+}
+
+process.on("uncaughtException", (error) => {
+  if (isAttachConsoleError(error)) {
+    reportTerminalError(error);
+    return;
+  }
+  console.error("Unhandled main process exception:", error);
+  throw error;
+});
 
 
 let resolvedScriptPath = "";
@@ -286,12 +305,18 @@ function startTerminal(size = {}) {
   if (terminalProcess) return;
 
   updateTerminalSize(size);
-  terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
-    cols: lastTerminalSize.cols,
-    rows: lastTerminalSize.rows,
-    cwd: os.homedir(),
-    env: { ...process.env, TERM: "xterm-256color" }
-  });
+  try {
+    terminalProcess = pty.spawn("cmd.exe", ["/Q", "/K", "chcp 65001>nul"], {
+      cols: lastTerminalSize.cols,
+      rows: lastTerminalSize.rows,
+      cwd: os.homedir(),
+      env: { ...process.env, TERM: "xterm-256color" }
+    });
+  } catch (error) {
+    terminalProcess = null;
+    reportTerminalError(error);
+    return;
+  }
 
   terminalProcess.onData((data) => sendToRenderer("terminal:data", data));
   terminalProcess.onExit(({ exitCode }) => {
@@ -309,6 +334,101 @@ function updateTerminalSize(size = {}) {
 
 function canLoadInWebview(url) {
   return /^(https?|file|chrome-extension):\/\//i.test(url);
+}
+
+// ===== 上传拦截（缺陷 #2 重做）：CDP Page.setInterceptFileChooserDialog =====
+// 旧实现监听 webview 的 select-file-dialog 事件，该事件不在 Electron 36 官方事件列表中，从未触发。
+// 新机制：活动任务期间对所有 webview webContents attach debugger 并开启 fileChooser 拦截；
+// Page.fileChooserOpened 事件转发 renderer 弹工作台浮层，选择结果用 DOM.setFileInputFiles 注入。
+// 任一环节异常 → 降级为主进程系统选择器注入，保证上传按钮不会点了没反应。
+const webviewContentsSet = new Set();
+const pendingUploadRequests = new Map();
+let uploadRequestSeq = 0;
+let uploadInterceptionEnabled = false;
+
+function setWebviewFileChooserInterception(contents, enabled) {
+  if (contents.isDestroyed()) return;
+  try {
+    if (enabled) {
+      if (!contents.debugger.isAttached()) {
+        contents.debugger.attach("1.3");
+        contents.debugger.on("message", (_event, method, params) => {
+          if (method === "Page.fileChooserOpened") {
+            handleFileChooserOpened(contents, params);
+          }
+        });
+      }
+      contents.debugger.sendCommand("Page.enable").catch(() => {});
+      contents.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }).catch((error) => {
+        console.warn("开启上传拦截失败，保持系统选择器:", error);
+      });
+    } else if (contents.debugger.isAttached()) {
+      contents.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+    }
+  } catch (error) {
+    // attach 失败（如 devtools 占用）：不拦截，webview 走原生系统选择器，属于自然降级
+    console.warn("上传拦截 debugger 操作失败，降级系统选择器:", error);
+  }
+}
+
+function refreshUploadInterception() {
+  const enabled = Boolean(activeTaskFolder);
+  if (enabled === uploadInterceptionEnabled) return;
+  uploadInterceptionEnabled = enabled;
+  for (const contents of webviewContentsSet) {
+    setWebviewFileChooserInterception(contents, enabled);
+  }
+}
+
+function registerWebviewContents(contents) {
+  webviewContentsSet.add(contents);
+  contents.once("destroyed", () => {
+    webviewContentsSet.delete(contents);
+  });
+  if (uploadInterceptionEnabled) {
+    setWebviewFileChooserInterception(contents, true);
+  }
+}
+
+async function injectUploadFiles(contents, backendNodeId, paths) {
+  if (!Array.isArray(paths) || !paths.length) return { ok: true, injected: 0 };
+  await contents.debugger.sendCommand("DOM.setFileInputFiles", {
+    files: paths.map((item) => String(item)),
+    backendNodeId
+  });
+  return { ok: true, injected: paths.length };
+}
+
+// 降级路径：浮层流程不可用时，直接弹系统选择器并注入，绝不让上传点击无响应
+async function fallbackSystemChooser(contents, backendNodeId, mode) {
+  try {
+    const properties = ["openFile"];
+    if (mode === "selectMultiple") properties.push("multiSelections");
+    const result = await dialog.showOpenDialog(mainWindow ?? undefined, { properties });
+    if (result.canceled || !result.filePaths.length) return;
+    await injectUploadFiles(contents, backendNodeId, result.filePaths);
+  } catch (error) {
+    console.error("上传降级系统选择器失败:", error);
+  }
+}
+
+function handleFileChooserOpened(contents, params = {}) {
+  const backendNodeId = params.backendNodeId;
+  if (!backendNodeId) return;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    fallbackSystemChooser(contents, backendNodeId, params.mode);
+    return;
+  }
+  uploadRequestSeq += 1;
+  const requestId = uploadRequestSeq;
+  pendingUploadRequests.set(requestId, { contents, backendNodeId, mode: params.mode });
+  try {
+    sendToRenderer("upload:choose-files", { requestId, mode: params.mode || "selectSingle" });
+  } catch (error) {
+    console.warn("上传拦截转发 renderer 失败，降级系统选择器:", error);
+    pendingUploadRequests.delete(requestId);
+    fallbackSystemChooser(contents, backendNodeId, params.mode);
+  }
 }
 
 async function getWorkbenchCookies(details = {}) {
@@ -623,49 +743,189 @@ function safePathPart(value) {
     .slice(0, 60) || "untitled";
 }
 
-function classifyDownload(filename) {
-  const lowerName = filename.toLowerCase();
-  if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
-    return { type: "chat", folder: "chats" };
+// 已登记的测试页/评估页域名常量表（缺陷 #5）：仅这些来源的下载才允许走
+// dialogue.json / eval_report 特殊归档与流水线推进；其余一切下载按通用规则处理
+const PIPELINE_SOURCE_HOSTS = ["wl363eval.top"];
+
+function isPipelineSourceUrl(rawUrl) {
+  let candidate = String(rawUrl || "");
+  if (candidate.startsWith("blob:")) candidate = candidate.slice(5);
+  try {
+    const host = new URL(candidate).hostname.toLowerCase();
+    return PIPELINE_SOURCE_HOSTS.some((entry) => host === entry || host.endsWith(`.${entry}`));
+  } catch {
+    return false;
   }
-  if (/\.(pdf|html?)$/i.test(filename) || lowerName.includes("report") || lowerName.includes("eval")) {
-    return { type: "report", folder: "reports" };
+}
+
+function classifyDownload(filename, fromPipelineSource = false) {
+  const lowerName = filename.toLowerCase();
+  if (fromPipelineSource) {
+    if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
+      return { type: "chat", folder: "chats" };
+    }
+    if (/\.(pdf|html?)$/i.test(filename) || lowerName.includes("report") || lowerName.includes("eval")) {
+      return { type: "report", folder: "reports" };
+    }
   }
   return { type: "generic", folder: "downloads" };
 }
 
-function cleanupTaskFolder(folderPath) {
+// 工作台偏好：裁切方向 + 像素数，持久化到 userData/workbench-prefs.json
+function workbenchPrefsPath() {
+  return path.join(app.getPath("userData"), "workbench-prefs.json");
+}
+
+// platformFieldMap（V3.4 P1）：字段名 → CSS 选择器 的映射，用户可在偏好里编辑。
+// 仅保留字符串键值对，过滤非法项，避免脏数据写入注入路径。
+function normalizePlatformFieldMap(value) {
+  const map = {};
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [field, selector] of Object.entries(value)) {
+      const key = String(field || "").trim();
+      const sel = String(selector || "").trim();
+      if (key && sel) map[key] = sel;
+    }
+  }
+  return map;
+}
+
+function normalizeWorkbenchPrefs(prefs = {}) {
+  const side = ["bottom", "top", "right"].includes(prefs.cropSide) ? prefs.cropSide : "bottom";
+  const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
+  const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
+  const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
+  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap };
+}
+
+function saveWorkbenchPrefs(prefs) {
+  const normalized = normalizeWorkbenchPrefs(prefs);
+  try {
+    fs.writeFileSync(workbenchPrefsPath(), JSON.stringify(normalized, null, 2));
+  } catch (error) {
+    console.warn("保存工作台偏好失败:", error);
+  }
+  return normalized;
+}
+
+function loadWorkbenchPrefs() {
+  try {
+    return normalizeWorkbenchPrefs(JSON.parse(fs.readFileSync(workbenchPrefsPath(), "utf8")));
+  } catch {
+    return { cropSide: "bottom", cropPixels: 100 };
+  }
+}
+
+// temp/tasks 防穿越校验：合法返回绝对路径，否则返回 null（所有任务文件 IPC 统一走这里）
+function resolveTaskPath(candidate) {
   const tasksRoot = path.resolve(downloadRoot, "tasks");
-  const target = path.resolve(String(folderPath || ""));
-  if (!target.startsWith(`${tasksRoot}${path.sep}`)) return false;
+  const target = path.resolve(String(candidate || ""));
+  if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return null;
+  return target;
+}
+
+function cleanupTaskFolder(folderPath) {
+  const target = resolveTaskPath(folderPath);
+  if (!target || target === path.resolve(downloadRoot, "tasks")) return false;
   if (!fs.existsSync(target)) return false;
   fs.rmSync(target, { recursive: true, force: true });
-  if (activeTaskFolder && path.resolve(activeTaskFolder) === target) activeTaskFolder = "";
+  if (activeTaskFolder && path.resolve(activeTaskFolder) === target) {
+    activeTaskFolder = "";
+    watchActiveTaskFolder();
+    refreshUploadInterception();
+  }
   return true;
 }
 
+// 活动任务文件夹监听：500ms 防抖推送托盘刷新
+let taskFolderWatcher = null;
+let taskFolderWatchTimer = null;
+function watchActiveTaskFolder() {
+  if (taskFolderWatcher) {
+    try { taskFolderWatcher.close(); } catch {}
+    taskFolderWatcher = null;
+  }
+  clearTimeout(taskFolderWatchTimer);
+  if (!activeTaskFolder || !fs.existsSync(activeTaskFolder)) return;
+  try {
+    taskFolderWatcher = fs.watch(activeTaskFolder, { recursive: true }, () => {
+      clearTimeout(taskFolderWatchTimer);
+      taskFolderWatchTimer = setTimeout(() => {
+        sendToRenderer("task-folder-changed", { folderPath: activeTaskFolder });
+      }, 500);
+    });
+    // H1：FSWatcher 必须挂 error 监听——用户在资源管理器删除活动任务文件夹时
+    // watcher 会发 error 事件，未捕获会冒泡成主进程 uncaughtException 崩溃。
+    // 这里关闭失效 watcher 并清空活动任务，安全降级。
+    taskFolderWatcher.on("error", (error) => {
+      console.warn("任务文件夹监听异常，已停止监听:", error);
+      try { taskFolderWatcher?.close(); } catch {}
+      taskFolderWatcher = null;
+      clearTimeout(taskFolderWatchTimer);
+      if (activeTaskFolder && !fs.existsSync(activeTaskFolder)) {
+        activeTaskFolder = "";
+        refreshUploadInterception();
+        broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
+      }
+    });
+  } catch (error) {
+    console.warn("监听任务文件夹失败:", error);
+  }
+}
+
+// 重名文件追加 " (2)"、" (3)" 后缀
+function dedupeFileName(dir, filename) {
+  const extension = path.extname(filename);
+  const base = path.basename(filename, extension);
+  let candidate = filename;
+  let counter = 2;
+  while (fs.existsSync(path.join(dir, candidate))) {
+    candidate = `${base} (${counter})${extension}`;
+    counter += 1;
+  }
+  return candidate;
+}
+
 function installDownloadHandler() {
-  workbenchSession().on("will-download", (_event, item) => {
+  workbenchSession().on("will-download", (_event, item, webContents) => {
     const filename = safeDownloadName(item.getFilename());
-    const classification = classifyDownload(filename);
-    const saveDir = activeTaskFolder && classification.type !== "generic"
-      ? activeTaskFolder
-      : path.join(downloadRoot, classification.folder);
-    fs.mkdirSync(saveDir, { recursive: true });
+    let pageUrl = "";
+    try {
+      pageUrl = webContents?.getURL?.() || "";
+    } catch {}
+    const fromPipelineSource = isPipelineSourceUrl(item.getURL()) || isPipelineSourceUrl(pageUrl);
+    const classification = classifyDownload(filename, fromPipelineSource);
     const extension = path.extname(filename) || ".bin";
-    const archiveName = {
-      chat: "dialogue.json",
-      report: `eval_report${extension}`
-    }[classification.type] || `${Date.now()}_${filename}`;
+    let saveDir;
+    let archiveName;
+    if (activeTaskFolder) {
+      // 活动任务期间：所有下载汇入任务文件夹；eval_report/dialogue 特殊归档命名优先
+      saveDir = activeTaskFolder;
+      fs.mkdirSync(saveDir, { recursive: true });
+      archiveName = {
+        chat: "dialogue.json",
+        report: `eval_report${extension}`
+      }[classification.type] || dedupeFileName(saveDir, filename);
+    } else {
+      // 无活动任务：行为与现状一致
+      saveDir = path.join(downloadRoot, classification.folder);
+      fs.mkdirSync(saveDir, { recursive: true });
+      archiveName = {
+        chat: "dialogue.json",
+        report: `eval_report${extension}`
+      }[classification.type] || `${Date.now()}_${filename}`;
+    }
     const savePath = path.join(saveDir, archiveName);
     item.setSavePath(savePath);
 
+    const captured = Boolean(activeTaskFolder);
     item.once("done", (_doneEvent, state) => {
       if (state !== "completed") return;
       sendToRenderer("download-completed", {
         type: classification.type,
         path: savePath,
-        filename
+        filename,
+        captured
       });
     });
   });
@@ -805,7 +1065,11 @@ function registerIpc() {
     broadcastToSse("active-tab-changed", activeTabInfo);
   });
   ipcMain.on("task:active-update", (_event, info = {}) => {
-    activeTaskFolder = String(info.folderPath || "");
+    // 活动任务文件夹必须位于 temp/tasks 下，非法路径一律视为无活动任务
+    const validated = info.folderPath ? resolveTaskPath(info.folderPath) : null;
+    activeTaskFolder = validated && fs.existsSync(validated) ? validated : "";
+    watchActiveTaskFolder();
+    refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
   });
   ipcMain.on("tabs:list-update", (_event, list = []) => {
@@ -844,13 +1108,237 @@ function registerIpc() {
     const folderPath = path.join(downloadRoot, "tasks", folderName);
     fs.mkdirSync(folderPath, { recursive: true });
     activeTaskFolder = folderPath;
+    watchActiveTaskFolder();
+    refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return folderPath;
+  });
+  // 上传拦截浮层结果回传：paths 为空 = 用户取消（不注入，等同原生取消）
+  ipcMain.handle("upload:resolve-files", async (_event, requestId, paths) => {
+    const request = pendingUploadRequests.get(Number(requestId));
+    if (!request) return { ok: false, error: "请求不存在或已处理" };
+    pendingUploadRequests.delete(Number(requestId));
+    if (request.contents.isDestroyed()) return { ok: false, error: "页面已关闭" };
+    try {
+      return await injectUploadFiles(request.contents, request.backendNodeId, paths);
+    } catch (error) {
+      console.error("上传文件注入失败:", error);
+      return { ok: false, error: error.message };
+    }
   });
   ipcMain.handle("tasks:cleanup-folder", (_event, folderPath) => {
     const res = cleanupTaskFolder(folderPath);
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return res;
+  });
+  // 打开任务产物文件夹：仅允许 temp/tasks 下的路径，防止路径穿越
+  ipcMain.handle("tasks:open-folder", (_event, folderPath) => {
+    const target = resolveTaskPath(folderPath);
+    if (!target || !fs.existsSync(target)) return false;
+    shell.openPath(target);
+    return true;
+  });
+  // 列出任务文件夹内文件名（任务舱产物检测用），同样限制在 temp/tasks 内
+  ipcMain.handle("tasks:list-folder", (_event, folderPath) => {
+    const target = resolveTaskPath(folderPath);
+    if (!target || !fs.existsSync(target)) return [];
+    try {
+      return fs.readdirSync(target);
+    } catch {
+      return [];
+    }
+  });
+  // 托盘文件列表：任务文件夹下全部文件（子文件夹仅展开一层，不递归深层）
+  ipcMain.handle("tasks:list-files", (_event, folderPath) => {
+    const target = resolveTaskPath(folderPath);
+    if (!target || !fs.existsSync(target)) return [];
+    const entries = [];
+    const pushFile = (absPath, relPath) => {
+      try {
+        const stat = fs.statSync(absPath);
+        if (stat.isDirectory()) return;
+        entries.push({ name: path.basename(absPath), relPath, path: absPath, size: stat.size, mtime: stat.mtimeMs });
+      } catch {}
+    };
+    try {
+      for (const entry of fs.readdirSync(target)) {
+        const absPath = path.join(target, entry);
+        let stat;
+        try { stat = fs.statSync(absPath); } catch { continue; }
+        if (stat.isDirectory()) {
+          try {
+            for (const child of fs.readdirSync(absPath)) {
+              pushFile(path.join(absPath, child), `${entry}/${child}`);
+            }
+          } catch {}
+        } else {
+          pushFile(absPath, entry);
+        }
+      }
+    } catch {}
+    return entries;
+  });
+  // 上传浮层 fallback：系统文件选择器（用户主动选择，结果直接回注 webview）
+  ipcMain.handle("dialog:pick-files", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile", "multiSelections"]
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+  // 工作台偏好：读取 / 保存（持久化到 userData）
+  ipcMain.handle("prefs:get-workbench", () => loadWorkbenchPrefs());
+  ipcMain.handle("prefs:set-workbench", (_event, prefs) => {
+    // 合并保存：renderer 只传部分字段时不丢其余偏好（如 todoFilePath）
+    return saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), ...prefs });
+  });
+  // 选择待做任务.txt：系统对话框定位后写入偏好，之后一键直读
+  ipcMain.handle("dialog:pick-todo-file", async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ["openFile"],
+      filters: [{ name: "文本文件", extensions: ["txt"] }]
+    });
+    if (result.canceled || !result.filePaths.length) return "";
+    const picked = result.filePaths[0];
+    saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), todoFilePath: picked });
+    return picked;
+  });
+  // 读取待做任务.txt：只允许读偏好中登记的这一个路径；UTF-8 + BOM 兼容；
+  // 出现替换字符（U+FFFD）视为非 UTF-8 编码，提示用户转存，不做 GBK 转码（范围外）
+  ipcMain.handle("tasks:read-todo-file", () => {
+    const todoPath = loadWorkbenchPrefs().todoFilePath;
+    if (!todoPath) return { ok: false, error: "not-configured" };
+    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    let text;
+    try {
+      text = fs.readFileSync(todoPath, "utf8");
+    } catch (error) {
+      return { ok: false, error: `读取失败: ${error.message}`, path: todoPath };
+    }
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    if (text.includes("\uFFFD")) return { ok: false, error: "encoding", path: todoPath };
+    return { ok: true, text, path: todoPath };
+  });
+  // 平台单字段试注入（V3.4 P1 预研）：对目标 webview 按 CSS 选择器注入一个字段值，
+  // 验证 CDP/JS 注入路径可行。同时支持 input/textarea（value）与 contenteditable 富文本编辑器。
+  // 仅试注入，不点击提交按钮（提交动作永远由用户人工确认）。
+  ipcMain.handle("platform:test-inject", async (_event, payload = {}) => {
+    const webContentsId = Number(payload.webContentsId);
+    const selector = String(payload.selector || "").trim();
+    const value = String(payload.value ?? "");
+    if (!webContentsId || !selector) return { ok: false, error: "缺少目标页面或选择器" };
+    const target = [...webviewContentsSet].find(
+      (contents) => !contents.isDestroyed() && contents.id === webContentsId
+    );
+    if (!target) return { ok: false, error: "目标 webview 不存在或已销毁" };
+    try {
+      const result = await target.executeJavaScript(`
+        (() => {
+          const el = document.querySelector(${JSON.stringify(selector)});
+          if (!el) return { ok: false, error: "未找到匹配选择器的元素" };
+          const text = ${JSON.stringify(value)};
+          el.focus();
+          if (el.isContentEditable) {
+            el.textContent = text;
+            el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+            return { ok: true, kind: "contenteditable" };
+          }
+          if ("value" in el) {
+            const setter = Object.getOwnPropertyDescriptor(el.__proto__, "value")?.set;
+            if (setter) setter.call(el, text); else el.value = text;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+            return { ok: true, kind: el.tagName.toLowerCase() };
+          }
+          return { ok: false, error: "目标元素既非输入框也非可编辑区" };
+        })();
+      `, true);
+      return result || { ok: false, error: "注入脚本无返回" };
+    } catch (error) {
+      return { ok: false, error: `注入失败: ${error.message}` };
+    }
+  });
+  // 读取任务文件夹内文本文件（卡片舱 cards.md 用）：限制在 temp/tasks 内 + 2MB 上限
+  ipcMain.handle("tasks:read-text-file", (_event, filePath) => {
+    const target = resolveTaskPath(filePath);
+    if (!target || !fs.existsSync(target)) return { ok: false, error: "文件不存在或越出任务目录" };
+    try {
+      const stat = fs.statSync(target);
+      if (!stat.isFile()) return { ok: false, error: "目标不是文件" };
+      if (stat.size > 2 * 1024 * 1024) return { ok: false, error: "文件超过 2MB，疑似非文本产物" };
+      let text = fs.readFileSync(target, "utf8");
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      return { ok: true, text, mtime: stat.mtimeMs };
+    } catch (error) {
+      return { ok: false, error: `读取失败: ${error.message}` };
+    }
+  });
+  // 写回待做任务.txt：只允许写偏好中登记的那一个 txt 路径 + 同目录 .bak（每次覆盖，保留最近一次）；
+  // renderer 负责生成完整新文本（BOM/换行风格已在纯函数中保持），这里不做内容加工
+  ipcMain.handle("tasks:write-todo-file", (_event, newText) => {
+    const todoPath = loadWorkbenchPrefs().todoFilePath;
+    if (!todoPath) return { ok: false, error: "not-configured" };
+    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    if (typeof newText !== "string" || !newText.trim()) return { ok: false, error: "写回内容为空，已取消" };
+    const backupPath = `${todoPath}.bak`;
+    try {
+      fs.copyFileSync(todoPath, backupPath);
+    } catch (error) {
+      return { ok: false, error: `备份失败，已取消写回: ${error.message}`, path: todoPath };
+    }
+    try {
+      fs.writeFileSync(todoPath, newText, "utf8");
+    } catch (error) {
+      return { ok: false, error: `写入失败: ${error.message}`, path: todoPath };
+    }
+    return { ok: true, path: todoPath, backupPath };
+  });
+  // 图片裁切去水印：nativeImage 实现，生成 原名_cropped 新文件，原图保留
+  ipcMain.handle("tasks:crop-image", (_event, filePath) => {
+    const target = resolveTaskPath(filePath);
+    if (!target || !fs.existsSync(target)) return { ok: false, error: "文件不存在或越出任务目录" };
+    if (!/\.(png|jpe?g|webp)$/i.test(target)) return { ok: false, error: "仅支持 png/jpg/jpeg/webp 图片" };
+    const prefs = loadWorkbenchPrefs();
+    const image = nativeImage.createFromPath(target);
+    if (image.isEmpty()) return { ok: false, error: "图片读取失败" };
+    const { width, height } = image.getSize();
+    const limit = prefs.cropSide === "right" ? width : height;
+    const pixels = Math.min(prefs.cropPixels, limit - 1);
+    if (pixels <= 0) return { ok: false, error: "图片尺寸过小，无法裁切" };
+    const rect = { x: 0, y: 0, width, height };
+    if (prefs.cropSide === "bottom") rect.height = height - pixels;
+    else if (prefs.cropSide === "top") { rect.y = pixels; rect.height = height - pixels; }
+    else rect.width = width - pixels;
+    const cropped = image.crop(rect);
+    const extension = path.extname(target);
+    // nativeImage 无法编码 webp，webp 源输出为 png
+    const outExtension = /\.jpe?g$/i.test(extension) ? extension : /\.webp$/i.test(extension) ? ".png" : extension;
+    const outPath = path.join(path.dirname(target), `${path.basename(target, extension)}_cropped${outExtension}`);
+    const buffer = /\.jpe?g$/i.test(outExtension) ? cropped.toJPEG(90) : cropped.toPNG();
+    try {
+      fs.writeFileSync(outPath, buffer);
+    } catch (error) {
+      return { ok: false, error: `写入失败: ${error.message}` };
+    }
+    return { ok: true, path: outPath };
+  });
+  // 托盘文件操作：打开 / 资源管理器定位 / 删除，全部限制在 temp/tasks 内
+  ipcMain.handle("tasks:file-action", (_event, payload = {}) => {
+    const target = resolveTaskPath(payload.filePath);
+    if (!target || target === path.resolve(downloadRoot, "tasks") || !fs.existsSync(target)) return false;
+    const action = String(payload.action || "");
+    if (action === "open") {
+      shell.openPath(target);
+      return true;
+    }
+    if (action === "reveal") {
+      shell.showItemInFolder(target);
+      return true;
+    }
+    if (action === "delete") {
+      fs.rmSync(target, { recursive: true, force: true });
+      return true;
+    }
+    return false;
   });
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
@@ -1119,6 +1607,7 @@ app.whenReady().then(async () => {
 
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
+      registerWebviewContents(contents);
       contents.setWindowOpenHandler(({ url }) => {
         if (canLoadInWebview(url)) {
           contents.loadURL(url).catch(() => {});
