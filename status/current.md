@@ -1,25 +1,30 @@
 # Current Status
 
 ## Active Goal
-根据用户反馈重构个人工作台：将 Tasks/终端按钮移至左上角原生菜单栏；重构任务管理系统为列表优先，包含新任务分类且移除关联文档路径。
+个人工作台 V3.4「平台填写助手」已开发完成、回归验收通过，进入收尾阶段：合入 master 并准备 V3.5 规划。
 
 ## Current Owner
-Codex (等待 Antigravity 移交方案后执行代码重构)
+产品经理（V3.4 回归已通过验收，推进合入 master 与 V3.5 规划）
 
 ## Last Updated
-2026-06-18 16:30
+2026-06-23（对齐至最新提交，V3.4 回归四步全绿）
 
 ## Latest Summary
-1. **获取代码**：成功拉取了 Codex 先前提交的工作台自动化流水线和任务管理器首版代码（分支 `codex/personal-workbench`）。
-2. **重构规划**：在听取用户具体的交互改进意见后，Antigravity 制定了全新的第二阶段菜单栏与任务列表重构方案 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)。先前由 Antigravity 自动提出的功能拓展方向（如一键 Git 同步、可视化进度条等）已被舍弃，完全遵循用户的实际意见。
-3. **数据修正**：更新了 [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json) 任务数据模板，移除了 `docPath` 属性。
-4. **知识库归档**：成功将《Codex 最全使用技巧，5000字长文！》、《我知道的所有 Agentic Engineering 技巧（2026 年 6 月）品味与习惯》、《基于顶级 Agent（Claude Code）的 Harness 工程搭建式业务 Agent 评测方案》、《专为 Claude Code 而生的终端，开源了！》以及《「我不再手写 /goal 了」让 Codex 自写目标并分派子 Agent》五篇文章抓取并分类导入到云端 [微信文章归档](https://notebooklm.google.com/notebook/54261b3c-4085-4b53-842d-f91024a2471f) 知识库中。
+1. **主线已迭代到 V3.4**：个人工作台从早期「常驻网页 + 终端」演进为「任务驱动 + 文件总线 + 卡片舱」的完整工作台，覆盖能力训练搭建的端到端流程。
+2. **已交付版本（按累积）**：
+   - V3：任务驱动 UI、任务舱、流水线五步模型、暂停/继续、结束清理。
+   - V3.1：文件总线（全局下载捕获、文件托盘 fs.watch、上传注入、图片裁切去水印）。
+   - V3.2：任务源头（待做任务.txt 解析导入、未提交状态、子任务进度）—— 已验收通过。
+   - V3.3：文件总线可靠性（6 缺陷清零、上传拦截改 CDP）+ 任务状态写回 txt —— 已合入 master。
+   - V3.4：平台填写助手（cards.md 解析、卡片舱逐字段一键复制、流式逐项填写、平台注入预研）—— 已提交（含三个用户反馈修复：分类折叠、测试残留标签、托盘悬停抖动）。
+3. **V3.4 回归验收（2026-06-23）**：测试工程师四步全绿——①机器检查+冒烟（check+11 单测、DOM/IPC 对账、冒烟 8/8 零异常）②2 个 P1 缺陷均已修复 ③卡片舱 E2E 24/24 全通 ④安全四项 + V3.4 三修复全过。PM 验收通过。
+4. **文档对齐**：已将 status/current.md、roadmap、personal-workbench/README.md、tasks/active.md 对齐至 V3.4 真实状态（此前最多落后 5 个版本，是「感觉乱」的根因）；并新增 `personal-workbench-overview.html` 项目全景介绍页。
 
 ## Next Step
-1. Codex 本地拉取最新更改。
-2. Codex 仔细阅读 [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md) 了解重构细节。
-3. Codex 修改 `main.js` 以配置应用的原生菜单栏（工作台 -> 本周任务/本地终端/扩展设置）；移除 `index.html` 的顶部栏对应按钮；重构任务弹窗以默认呈现列表及下面的“添加任务”按钮；更新 `renderer.js` 绑定 IPC 菜单项事件、实现任务弹窗的列表/表单双视图切换逻辑、移除 `docPath` 并适配 5 种新任务类型。
-4. Codex 运行并验证修改后的工作台交互流程。
+1. 将 `codex/personal-workbench` 合入 `master`（V3.4 体验修复提交 3c95d55 + 回归测试套件 + 文档对齐）。
+2. 人工补一击：真机点一次网页上传，确认 CDP 注入路径，闭环 P1 #2（机制已健全，仅缺真机验证）。
+3. 启动 V3.5 规划（候选：平台全自动填卡、提示词自动归位、任务文档快速归档）。
 
 ## Known Risks
-- 菜单栏的快捷键（如 `Ctrl+T`、`Ctrl+` `）在某些系统环境下可能与 Electron WebView 内嵌页面的默认快捷键发生冲突，需要在 main 进程和 renderer 中做好键盘事件防冲突设计。
+- 回归清单登记 16 个已知缺陷（P1×2 已修 / P2×8 / P3×6），P2 含本地端口占用静默失败、debugger 重复注册导致浮层弹两次、上传请求 Map 泄漏等，需按版本排期清理。
+- P1 #2（上传注入）机制已修，但真机点上传尚未人工确认。

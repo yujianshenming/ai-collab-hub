@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>个人工作台 · 项目全景介绍</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0F172A;
+    --bg-soft: #1E293B;
+    --bg-card: #1a2436;
+    --border: #2c3a52;
+    --primary: #1E293B;
+    --secondary: #334155;
+    --accent: #22C55E;
+    --accent-dim: rgba(34, 197, 94, 0.12);
+    --blue: #38BDF8;
+    --amber: #FBBF24;
+    --red: #F87171;
+    --purple: #A78BFA;
+    --text: #F8FAFC;
+    --text-muted: #94A3B8;
+    --text-dim: #64748B;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { animation: none !important; transition: none !important; }
+  }
+
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  /* ---------- Layout ---------- */
+  .wrap { max-width: 1140px; margin: 0 auto; padding: 0 24px; }
+
+  section { padding: 72px 0; border-top: 1px solid var(--border); }
+  section:first-of-type { border-top: none; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 28px; height: 2px;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  h2 {
+    font-family: var(--mono);
+    font-size: clamp(1.6rem, 3.4vw, 2.3rem);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 18px;
+    line-height: 1.2;
+  }
+  h3 {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+  }
+  p.lead { color: var(--text-muted); font-size: 1.05rem; max-width: 760px; }
+
+  /* ---------- Nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1140px; margin: 0 auto; padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  .brand { display: flex; align-items: center; gap: 11px; font-family: var(--mono); font-weight: 700; font-size: 1.02rem; }
+  .brand .dot { width: 11px; height: 11px; border-radius: 3px; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
+  .nav-links { display: flex; gap: 6px; flex-wrap: wrap; }
+  .nav-links a {
+    color: var(--text-muted); text-decoration: none; font-size: 0.85rem;
+    padding: 6px 12px; border-radius: 7px; transition: color .2s, background .2s; cursor: pointer;
+  }
+  .nav-links a:hover { color: var(--text); background: var(--bg-soft); }
+  @media (max-width: 760px) { .nav-links { display: none; } }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 92px 0 80px; position: relative; }
+  .hero::after {
+    content: ""; position: absolute; inset: 0; z-index: -1;
+    background:
+      radial-gradient(620px 320px at 78% 8%, rgba(34,197,94,0.10), transparent 70%),
+      radial-gradient(520px 300px at 10% 90%, rgba(56,189,248,0.08), transparent 70%);
+    pointer-events: none;
+  }
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 0.8rem; color: var(--accent);
+    background: var(--accent-dim); border: 1px solid rgba(34,197,94,0.3);
+    padding: 6px 14px; border-radius: 999px; margin-bottom: 26px;
+  }
+  .hero-tag .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.4;transform:scale(.7);} }
+  .hero h1 {
+    font-family: var(--mono); font-weight: 700;
+    font-size: clamp(2.3rem, 6vw, 4rem); line-height: 1.08;
+    letter-spacing: -0.02em; margin-bottom: 22px;
+  }
+  .hero h1 .green { color: var(--accent); }
+  .hero p { font-size: clamp(1.05rem, 2vw, 1.25rem); color: var(--text-muted); max-width: 720px; margin-bottom: 36px; }
+  .hero-meta { display: flex; gap: 28px; flex-wrap: wrap; }
+  .hero-meta .item { font-family: var(--mono); }
+  .hero-meta .item .k { font-size: 1.7rem; font-weight: 700; color: var(--text); }
+  .hero-meta .item .v { font-size: 0.78rem; color: var(--text-dim); letter-spacing: 0.05em; text-transform: uppercase; }
+
+  /* ---------- One-liner banner ---------- */
+  .oneliner {
+    margin-top: 44px;
+    background: linear-gradient(135deg, var(--bg-soft), var(--bg-card));
+    border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    border-radius: 12px; padding: 24px 28px;
+  }
+  .oneliner .label { font-family: var(--mono); font-size: 0.74rem; color: var(--accent); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 8px; }
+  .oneliner .text { font-size: 1.18rem; font-weight: 500; }
+  .oneliner .text b { color: var(--accent); }
+
+  /* ---------- Grid / Cards ---------- */
+  .grid { display: grid; gap: 20px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 860px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; transition: border-color .2s, transform .2s, box-shadow .2s;
+  }
+  .card.hoverable:hover { border-color: var(--accent); transform: translateY(-3px); box-shadow: 0 12px 28px rgba(0,0,0,0.35); }
+  .card .icon {
+    width: 42px; height: 42px; border-radius: 10px; background: var(--accent-dim);
+    display: flex; align-items: center; justify-content: center; margin-bottom: 16px; color: var(--accent);
+  }
+  .card .icon svg { width: 22px; height: 22px; }
+  .card p { color: var(--text-muted); font-size: 0.93rem; }
+  .ver-pill {
+    font-family: var(--mono); font-size: 0.7rem; color: var(--blue);
+    background: rgba(56,189,248,0.12); padding: 2px 8px; border-radius: 5px; margin-left: auto;
+  }
+  .card .head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .card .head h3 { margin-bottom: 0; font-size: 1.05rem; }
+
+  /* ---------- Pipeline ---------- */
+  .pipeline { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; position: relative; }
+  @media (max-width: 860px) { .pipeline { grid-template-columns: 1fr; } }
+  .step {
+    background: var(--bg-card); border: 1px solid var(--border); border-radius: 11px;
+    padding: 20px 16px; text-align: center; position: relative;
+  }
+  .step .num {
+    font-family: var(--mono); font-weight: 700; font-size: 0.78rem;
+    width: 30px; height: 30px; line-height: 30px; border-radius: 50%;
+    background: var(--accent-dim); color: var(--accent); margin: 0 auto 12px;
+    border: 1px solid rgba(34,197,94,0.35);
+  }
+  .step h4 { font-family: var(--mono); font-size: 0.95rem; margin-bottom: 6px; }
+  .step p { font-size: 0.8rem; color: var(--text-dim); }
+  .step .arrow { display: none; }
+  @media (min-width: 861px) {
+    .step:not(:last-child)::after {
+      content: "→"; position: absolute; right: -11px; top: 50%; transform: translateY(-50%);
+      color: var(--accent); font-family: var(--mono); font-size: 1.1rem; z-index: 2;
+    }
+  }
+
+  /* ---------- Workflow list ---------- */
+  .flow-list { counter-reset: f; display: grid; gap: 2px; }
+  .flow-item {
+    display: flex; gap: 16px; padding: 14px 16px; border-radius: 9px;
+    counter-increment: f; align-items: flex-start; transition: background .2s;
+  }
+  .flow-item:hover { background: var(--bg-soft); }
+  .flow-item::before {
+    content: counter(f, decimal-leading-zero); font-family: var(--mono); font-weight: 600;
+    color: var(--accent); font-size: 0.85rem; min-width: 28px; padding-top: 2px;
+  }
+  .flow-item .body span { display: block; }
+  .flow-item .ttl { font-weight: 500; }
+  .flow-item .sub { color: var(--text-dim); font-size: 0.85rem; }
+
+  /* ---------- Status / table ---------- */
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+  thead th {
+    text-align: left; font-family: var(--mono); font-size: 0.76rem; letter-spacing: 0.05em;
+    text-transform: uppercase; color: var(--text-dim); padding: 12px 14px; border-bottom: 1px solid var(--border);
+  }
+  tbody td { padding: 13px 14px; border-bottom: 1px solid rgba(44,58,82,0.5); color: var(--text-muted); vertical-align: top; }
+  tbody tr:hover td { background: rgba(30,41,59,0.4); }
+  td.name, th.name { color: var(--text); font-weight: 500; }
+  .tag {
+    font-family: var(--mono); font-size: 0.72rem; padding: 3px 9px; border-radius: 5px;
+    display: inline-block; white-space: nowrap;
+  }
+  .t-done { background: var(--accent-dim); color: var(--accent); }
+  .t-prog { background: rgba(56,189,248,0.14); color: var(--blue); }
+  .t-plan { background: rgba(167,139,250,0.14); color: var(--purple); }
+  .t-warn { background: rgba(251,191,36,0.14); color: var(--amber); }
+  .t-bug  { background: rgba(248,113,113,0.14); color: var(--red); }
+
+  /* ---------- Status banner ---------- */
+  .status-banner {
+    background: linear-gradient(135deg, rgba(34,197,94,0.10), rgba(15,23,42,0.4));
+    border: 1px solid rgba(34,197,94,0.3); border-radius: 14px; padding: 30px 32px;
+  }
+  .status-banner .now { font-family: var(--mono); font-size: 1.25rem; font-weight: 600; margin-bottom: 10px; }
+  .status-banner .now .hl { color: var(--accent); }
+  .status-banner .next { color: var(--text-muted); }
+
+  /* ---------- Alert ---------- */
+  .alert {
+    border-radius: 12px; padding: 22px 24px; border: 1px solid var(--border);
+    background: var(--bg-card); border-left: 4px solid var(--amber);
+  }
+  .alert h3 { color: var(--amber); display: flex; align-items: center; gap: 9px; }
+  .alert h3 svg { width: 20px; height: 20px; }
+  .alert p { color: var(--text-muted); font-size: 0.93rem; margin-top: 8px; }
+
+  /* ---------- Stack chips ---------- */
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip {
+    font-family: var(--mono); font-size: 0.82rem; color: var(--text-muted);
+    background: var(--bg-soft); border: 1px solid var(--border); padding: 7px 14px; border-radius: 8px;
+  }
+  .chip b { color: var(--accent); }
+
+  /* ---------- Roadmap timeline ---------- */
+  .timeline { position: relative; padding-left: 28px; }
+  .timeline::before { content: ""; position: absolute; left: 7px; top: 6px; bottom: 6px; width: 2px; background: var(--border); }
+  .tl-item { position: relative; padding: 0 0 26px 0; }
+  .tl-item::before {
+    content: ""; position: absolute; left: -25px; top: 5px; width: 12px; height: 12px;
+    border-radius: 50%; background: var(--bg); border: 2px solid var(--text-dim);
+  }
+  .tl-item.is-done::before { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  .tl-item.is-prog::before { border-color: var(--blue); background: var(--blue); }
+  .tl-item.is-plan::before { border-color: var(--purple); }
+  .tl-item .v { font-family: var(--mono); font-weight: 700; font-size: 1rem; }
+  .tl-item .d { color: var(--text-muted); font-size: 0.92rem; }
+
+  /* ---------- Footer ---------- */
+  footer { border-top: 1px solid var(--border); padding: 40px 0; text-align: center; color: var(--text-dim); font-size: 0.85rem; }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer .repo { font-family: var(--mono); margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <div class="brand"><span class="dot"></span> Personal Workbench</div>
+    <div class="nav-links">
+      <a href="#overview">概览</a>
+      <a href="#workflow">工作流</a>
+      <a href="#features">功能</a>
+      <a href="#pipeline">流水线</a>
+      <a href="#status">当前阶段</a>
+      <a href="#issues">已知问题</a>
+      <a href="#roadmap">路线图</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <span class="hero-tag"><span class="pulse"></span> V3.4 已交付 · codex/personal-workbench 分支</span>
+    <h1>个人工作台<br /><span class="green">Personal Workbench</span></h1>
+    <p>一个面向 Windows 的 Electron 桌面工作台。把你所有的工作入口——常驻网页、企业微信、Codex / Cursor、终端、文件夹——全部集成进一个应用，并用「任务驱动 + 文件总线 + 卡片舱」打通能力训练搭建的端到端流程。</p>
+    <div class="hero-meta">
+      <div class="item"><div class="k">6</div><div class="v">已交付版本</div></div>
+      <div class="item"><div class="k">~7.6K</div><div class="v">核心代码行数</div></div>
+      <div class="item"><div class="k">5</div><div class="v">流水线步骤</div></div>
+      <div class="item"><div class="k">Electron 36</div><div class="v">技术载体</div></div>
+    </div>
+
+    <div class="oneliner">
+      <div class="label">// 一句话定位</div>
+      <div class="text"><b>打开工作台 = 完成全部工作</b>，不再需要打开任何额外的应用。</div>
+    </div>
+  </div>
+</header>
+
+<!-- OVERVIEW -->
+<section id="overview">
+  <div class="wrap">
+    <div class="eyebrow">Overview</div>
+    <h2>这是什么</h2>
+    <p class="lead">用户的真实工作是「能力训练搭建」：从企业微信接任务、用 Hermes 分阶段写提示词、填到公司平台、生成封面图、浏览器插件测试、上传评估、循环修改直到通过。整套流程涉及十几个网页、多个文件夹、反复的下载/上传/复制粘贴。工作台的目标就是把这条链路收进一个桌面应用里。</p>
+    <div class="grid grid-3" style="margin-top:36px;">
+      <div class="card hoverable">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18M8 18v3M16 18v3M5 21h14"/></svg>
+        </div>
+        <h3>常驻浏览器壳</h3>
+        <p>10+ 网页以常驻 webview 标签承载，切换不重载、保留登录态、表单与滚动位置。支持地址栏、左右/上下分屏、Chrome 扩展加载。</p>
+      </div>
+      <div class="card hoverable">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="16" r="3"/></svg>
+        </div>
+        <h3>任务驱动中枢</h3>
+        <p>任务中心做落地页，每个任务有专属文件夹与五步流水线，自动管理产物、下载与上传，状态可回写到「待做任务.txt」。</p>
+      </div>
+      <div class="card hoverable">
+        <div class="icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8l3 3-3 3M13 14h4"/></svg>
+        </div>
+        <h3>内置终端</h3>
+        <p>底部可拖拽高度的本地 PowerShell 终端（node-pty + xterm），并支持把 CLI 工具（如 Claude Code）作为独立标签常驻运行。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WORKFLOW -->
+<section id="workflow">
+  <div class="wrap">
+    <div class="eyebrow">End-to-end Workflow</div>
+    <h2>它在替你跑的 10 步工作流</h2>
+    <p class="lead">这是工作台所有功能的设计依据——每一个模块都对应着这条链路上原本需要手工完成的环节。</p>
+    <div class="grid grid-2" style="margin-top:30px;">
+      <div class="flow-list">
+        <div class="flow-item"><div class="body"><span class="ttl">企业微信查看本周任务</span><span class="sub">手动整合到桌面「待做任务.txt」</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">按任务找人拿任务文档</span><span class="sub">放入对应文件夹</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">打开固定页面 + 启动 Hermes</span><span class="sub">常驻 webview，登录态不丢</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">任务文档发给 Hermes</span><span class="sub">分阶段 → 审核 → 逐阶段写提示词</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">产出逐字段填到公司平台</span><span class="sub">卡片名称 / 建议轮次 / 阶段描述 / 开场白 / 提示词</span></div></div>
+      </div>
+      <div class="flow-list" style="counter-reset: f 5;">
+        <div class="flow-item"><div class="body"><span class="ttl">豆包生成封面图</span><span class="sub">裁切底部约 100px 去水印 → 填到平台</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">填写评价标准</span><span class="sub">总任务级字段</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">插件测试 → 下载测试对话</span><span class="sub">与任务文档一起上传评估页</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">不通过 → 下载评估报告</span><span class="sub">连同测试对话给 Hermes 修改 → 循环</span></div></div>
+        <div class="flow-item"><div class="body"><span class="ttl">通过 → 提示词保存归位</span><span class="sub">任务完成</span></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="wrap">
+    <div class="eyebrow">Feature Matrix</div>
+    <h2>现在到底有哪些功能</h2>
+    <p class="lead">按版本累积，以下能力<b style="color:var(--accent)">全部已落地进仓库</b>。</p>
+    <div class="grid grid-2" style="margin-top:32px;">
+
+      <div class="card hoverable">
+        <div class="head">
+          <h3>基础壳</h3><span class="ver-pill">BASE</span>
+        </div>
+        <p>常驻 webview 多标签（切换不重载 / 保登录态）、地址栏前进后退、可拖拽 PowerShell 终端、CLI 标签、Chrome 扩展加载、左右与上下分屏。</p>
+      </div>
+
+      <div class="card hoverable">
+        <div class="head">
+          <h3>任务驱动 UI</h3><span class="ver-pill">V3</span>
+        </div>
+        <p>任务中心落地页、任务卡列表、任务舱、五步流水线模型、任务暂停 / 继续（防冲突）、结束清理临时文件夹、重新打开已完成任务复用文件夹。</p>
+      </div>
+
+      <div class="card hoverable">
+        <div class="head">
+          <h3>文件总线</h3><span class="ver-pill">V3.1</span>
+        </div>
+        <p>活动任务期间全局下载自动落到任务文件夹、文件托盘 fs.watch 实时刷新、网页上传自动注入任务文件、图片底部裁切一键去水印。</p>
+      </div>
+
+      <div class="card hoverable">
+        <div class="head">
+          <h3>任务源头</h3><span class="ver-pill">V3.2</span>
+        </div>
+        <p>解析桌面「待做任务.txt」导入为任务卡（带预览 dialog）、未提交状态、子任务进度环。<span class="tag t-done" style="margin-left:6px;">验收通过</span></p>
+      </div>
+
+      <div class="card hoverable">
+        <div class="head">
+          <h3>可靠性 + 写回</h3><span class="ver-pill">V3.3</span>
+        </div>
+        <p>文件总线 6 缺陷清零、上传拦截改用 CDP 重做、按来源域名门控下载归档、任务状态写回 txt（预览 + 备份 + 反向安全合并）。</p>
+      </div>
+
+      <div class="card hoverable">
+        <div class="head">
+          <h3>平台填写助手「卡片舱」</h3><span class="ver-pill">V3.4</span>
+        </div>
+        <p>解析 <code style="font-family:var(--mono);color:var(--blue)">cards.md</code>（Hermes 五项制产出）→ 逐字段一键复制、流式逐项填写、开场白超 200 字标红、平台表单注入预研铺垫。</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- PIPELINE -->
+<section id="pipeline">
+  <div class="wrap">
+    <div class="eyebrow">Task Pipeline</div>
+    <h2>任务流水线 · 五步模型</h2>
+    <p class="lead">每个任务点「执行」后进入下面这条自动推进的流水线，侧边栏脉冲点会高亮对应阶段需要的标签。</p>
+    <div class="pipeline" style="margin-top:36px;">
+      <div class="step"><div class="num">1</div><h4>准备</h4><p>创建任务专属文件夹</p></div>
+      <div class="step"><div class="num">2</div><h4>本地测试</h4><p>浏览器插件测试对话</p></div>
+      <div class="step"><div class="num">3</div><h4>评估上传</h4><p>对话+文档注入评估页</p></div>
+      <div class="step"><div class="num">4</div><h4>捕获报告</h4><p>下载评估报告 PDF</p></div>
+      <div class="step"><div class="num">5</div><h4>完成</h4><p>解锁「加载至 Hermes」</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- STATUS -->
+<section id="status">
+  <div class="wrap">
+    <div class="eyebrow">Current Stage</div>
+    <h2>当前到了什么阶段</h2>
+    <div class="status-banner" style="margin:26px 0 36px;">
+      <div class="now">▸ 当前阶段：<span class="hl">V3.4 已开发完成并提交</span></div>
+      <p class="next">卡片舱、平台注入预研、三个用户反馈修复（分类折叠、测试残留标签、托盘悬停抖动）都已进仓库。整体处于「<b style="color:var(--text)">V3.4 收尾、等验收 / 合入 master</b>」阶段。下一站候选是 V3.5：平台全自动填卡、提示词自动归位、任务文档快速归档。</p>
+    </div>
+
+    <h3 style="margin-bottom:16px;">版本交付状态</h3>
+    <table>
+      <thead><tr><th class="name">版本</th><th>主题</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td class="name">V3</td><td>任务驱动 UI、任务舱、流水线五步模型</td><td><span class="tag t-done">已交付</span></td></tr>
+        <tr><td class="name">V3.1</td><td>文件总线：下载捕获 / 托盘 / 上传注入 / 裁切去水印</td><td><span class="tag t-done">已交付</span></td></tr>
+        <tr><td class="name">V3.2</td><td>任务源头：txt 导入 / 未提交状态 / 子任务进度</td><td><span class="tag t-done">验收通过</span></td></tr>
+        <tr><td class="name">V3.3</td><td>文件总线可靠性 + 任务状态写回 txt</td><td><span class="tag t-prog">开发完成 · 验证中</span></td></tr>
+        <tr><td class="name">V3.4</td><td>平台填写助手：卡片舱 + 平台注入预研</td><td><span class="tag t-done">已提交</span></td></tr>
+        <tr><td class="name">V3.5</td><td>全自动填卡 / 提示词归位 / 文档快速归档</td><td><span class="tag t-plan">构想中</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- DOC DRIFT -->
+<section id="drift">
+  <div class="wrap">
+    <div class="eyebrow">Diagnosis</div>
+    <h2>为什么会觉得「乱、不知道有什么功能」</h2>
+    <p class="lead">根因不在代码，而在 <b style="color:var(--red)">文档与代码严重脱节</b>。三处自相矛盾，让人一打开文档就被带偏：</p>
+    <table style="margin-top:26px;">
+      <thead><tr><th class="name">文件</th><th>文档里写的</th><th>实际代码</th><th>问题</th></tr></thead>
+      <tbody>
+        <tr><td class="name">status/current.md</td><td>停在 2026-06-09，目标还是「菜单栏重构」</td><td>已经做到 V3.4</td><td><span class="tag t-bug">落后 5 个版本</span></td></tr>
+        <tr><td class="name">roadmap.md</td><td>V3.4「待派发」、V3.3「验证中」</td><td>V3.4 已提交完成</td><td><span class="tag t-warn">状态未更新</span></td></tr>
+        <tr><td class="name">workbench/README.md</td><td>只讲「网页标签 + 终端」</td><td>早已是流水线 + 文件总线 + 卡片舱</td><td><span class="tag t-bug">完全过时</span></td></tr>
+      </tbody>
+    </table>
+    <p class="lead" style="margin-top:22px;">建议下一步先把这三份文档对齐到 V3.4 真实状态——成本低、立刻止乱，以后随时打开就知道「有什么功能、到哪了」。</p>
+  </div>
+</section>
+
+<!-- ISSUES -->
+<section id="issues">
+  <div class="wrap">
+    <div class="eyebrow">Known Issues</div>
+    <h2>已登记缺陷（回归清单附表）</h2>
+    <p class="lead">测试工程师维护的回归清单里登记了 <b>16 个</b>已知问题：<span class="tag t-bug">P1 × 2</span> <span class="tag t-warn">P2 × 8</span> <span style="color:var(--text-dim);font-family:var(--mono);font-size:.8rem;">P3 × 6</span>。其中两个 P1 较关键，建议优先处理：</p>
+    <div class="grid grid-2" style="margin-top:28px;">
+      <div class="alert" style="border-left-color:var(--red);">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> P1 · Hermes 阶段崩溃</h3>
+        <p><code style="font-family:var(--mono);color:var(--blue)">findTabByUrlPart</code> 对无 url 字段的标签（desktop-app / cli-app）抛 TypeError。Hermes 阶段或点「加载至 Hermes」时即崩。 <span style="color:var(--text-dim)">renderer.js:1938</span></p>
+      </div>
+      <div class="alert" style="border-left-color:var(--red);">
+        <h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg> P1 · 上传注入可能失效</h3>
+        <p><code style="font-family:var(--mono);color:var(--blue)">select-file-dialog</code> 可能不在 Electron 36 官方 webview 事件中，上传拦截 / 自动注入或许从未真正生效（待真机点上传确认）。 <span style="color:var(--text-dim)">renderer.js:1842</span></p>
+      </div>
+    </div>
+    <p class="lead" style="margin-top:22px;color:var(--text-dim);">其余 P2（扩展卸载、本地端口占用、debugger 重复注册、上传请求泄漏等）与 P3（Hermes 换行字面量、prepare 步骤、死代码 swapTabs 等）已全部编号登记，可按版本排期清理。</p>
+  </div>
+</section>
+
+<!-- ROADMAP -->
+<section id="roadmap">
+  <div class="wrap">
+    <div class="eyebrow">Roadmap</div>
+    <h2>版本路线图</h2>
+    <div class="grid grid-2" style="margin-top:30px; align-items:start;">
+      <div class="timeline">
+        <div class="tl-item is-done"><div class="v">V3 · 任务驱动 UI</div><div class="d">任务舱、流水线五步模型 — 已交付</div></div>
+        <div class="tl-item is-done"><div class="v">V3.1 · 文件总线</div><div class="d">下载捕获、托盘、上传注入、裁切 — 已交付</div></div>
+        <div class="tl-item is-done"><div class="v">V3.2 · 任务源头</div><div class="d">txt 导入、未提交状态、子任务进度 — 验收通过</div></div>
+        <div class="tl-item is-prog"><div class="v">V3.3 · 可靠性 + 写回</div><div class="d">6 缺陷清零、状态写回 txt — 验证中</div></div>
+        <div class="tl-item is-done"><div class="v">V3.4 · 平台填写助手</div><div class="d">卡片舱、平台注入预研 — 已提交</div></div>
+        <div class="tl-item is-plan"><div class="v">V3.5 · 全自动（候选）</div><div class="d">全自动填卡、提示词归位、文档归档 — 构想中</div></div>
+      </div>
+      <div>
+        <h3 style="margin-bottom:16px;">技术栈</h3>
+        <div class="chips" style="margin-bottom:30px;">
+          <span class="chip"><b>Electron</b> 36</span>
+          <span class="chip"><b>node-pty</b> PowerShell</span>
+          <span class="chip"><b>@xterm</b> 终端</span>
+          <span class="chip">contextIsolation</span>
+          <span class="chip">CDP 拦截</span>
+          <span class="chip">fs.watch 托盘</span>
+          <span class="chip">本地 HTTP / SSE 总线</span>
+        </div>
+        <h3 style="margin-bottom:14px;">交付纪律</h3>
+        <div class="card">
+          <p style="margin-bottom:10px;"><b style="color:var(--text)">单一主线</b>：以 <code style="font-family:var(--mono);color:var(--blue)">personal-workbench/</code> 为唯一主线，根目录旧工作台已废弃。</p>
+          <p style="margin-bottom:10px;"><b style="color:var(--text)">分支策略</b>：开发在 <code style="font-family:var(--mono);color:var(--blue)">codex/personal-workbench</code>，<code style="font-family:var(--mono);color:var(--blue)">master</code> 只收验收通过的代码。</p>
+          <p><b style="color:var(--text)">流程</b>：工程师完成 → <code style="font-family:var(--mono);color:var(--blue)">npm run check</code> + 测试 → 测试工程师验证 → PM 验收 → 推 GitHub。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="repo">github.com/yujianshenming/ai-collab-hub · branch: codex/personal-workbench</div>
+    <div>个人工作台项目全景介绍 · 由产品经理梳理生成 · 数据截至最新提交 <code style="font-family:var(--mono)">3c95d55</code></div>
+  </div>
+</footer>
+
+</body>
+</html>

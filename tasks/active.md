@@ -2,7 +2,15 @@
 
 进行中的任务。
 
-* [ ] 根据用户的最新意见，重构工作台的菜单栏（Tasks/终端按钮移至左上角原生菜单）与任务管理系统（列表优先、独立新增界面、新任务类型、移除关联文档路径）。
+* [ ] **V3.4 收尾**：回归验收平台填写助手（卡片舱），通过后将 `codex/personal-workbench` 合入 `master`。
+  - Owner: 测试工程师（回归）→ Codex（合入）
+  - 依据：`../personal-workbench-v3.4-spec.md`、`../personal-workbench/regression-checklist.md`
+
+* [ ] **优先清理 2 个 P1 缺陷**（影响 Hermes 流程与上传）：
+  - #1 `findTabByUrlPart` 对无 url 标签抛 TypeError（renderer.js:1938）。
+  - #2 `select-file-dialog` 在 Electron 36 可能不存在，上传注入或未生效（renderer.js:1842，待真机确认）。
   - Owner: Codex
-  - Plan File: [personal-workbench-automation-plan.md](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/personal-workbench-automation-plan.md)
-  - Tasks JSON: [weekly_tasks.json](file:///C:/Users/24391/.gemini/antigravity/scratch/ai-collab-hub/tasks/weekly_tasks.json)
+
+* [ ] **V3.5 规划（候选）**：平台全自动填卡、提示词自动归位、任务文档快速归档。
+  - Owner: 产品经理（规格书）
+  - 状态：构想中，待 V3.4 验收与 P1 修复后启动
