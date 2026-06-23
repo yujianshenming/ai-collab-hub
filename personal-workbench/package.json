@@ -6,7 +6,9 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check preload-popup.js && node --check renderer.js",
-    "test": "npm run check",
+    "test": "npm run check && node --test tests/parse-cards-document.test.js tests/parse-todo-lines.test.js tests/security-v34-regression.test.js",
+    "test:e2e": "node tests/smoke.e2e.js && node tests/cards-bay.e2e.js && node tests/p1-defects.e2e.js && node tests/security-http.e2e.js",
+    "test:all": "npm test && npm run test:e2e",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win portable"
   },

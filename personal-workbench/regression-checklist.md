@@ -80,14 +80,17 @@
 ---
 
 ## 附：已知问题登记（修复后移除）
+
+> 2026-06-23 V3.4 回归实测：#1 / #2 / #6 已修复并验证通过（详见下表标注），待下次清理时从附表物理移除。
+
 | # | 级别 | 描述 | 位置 |
 |---|------|------|------|
-| 1 | P1 | `findTabByUrlPart` 对无 `url` 字段标签（desktop-app/cli-app/builtin）抛 TypeError，Hermes 阶段/点击「加载至 Hermes」即崩 | renderer.js:1938 |
-| 2 | P1(待确认) | `select-file-dialog` 不在 Electron 36 官方 webview 事件中，上传拦截/自动注入可能从未生效 | renderer.js:1842 |
+| ~~1~~ | ~~P1~~ ✅已修 | `findTabByUrlPart` 已加 `String(tab.url\|\|"")` 防护，无 url 标签不再抛错；Hermes 阶段实测 13/13 通过（commit 3db281e） | renderer.js |
+| ~~2~~ | ~~P1~~ ✅机制已修 | 旧 `select-file-dialog` 已废弃，改用 CDP `Page.fileChooserOpened` + `DOM.setFileInputFiles` + 系统选择器降级（commit 2eb1a87）；真机点公司平台上传【待人工】 | main.js |
 | 3 | P2 | `DOMNodeRemovedFromDocument` 突变事件已被 Chromium 127+ 移除，删除标签后桌面应用轮询定时器与 CLI 监听器泄漏 | renderer.js:560/685/890 |
 | 4 | P2 | 非 web 标签激活时点击顶栏扩展按钮 TypeError（`extBody` 为 null） | renderer.js:2158 |
 | 5 | P2(待确认) | 全局下载捕获下，任意 .txt/.md/.json 被改名 dialogue.json 并误触发流水线推进 | main.js:651 |
-| 6 | P3 | Hermes 提示词 `join("\\n")` 产生字面 `\n` 而非换行 | renderer.js:2083 |
+| ~~6~~ | ~~P3~~ ✅已修 | Hermes 提示词换行已修为真换行（实测确认） | renderer.js |
 | 7 | P3 | 流水线 `prepare` 步骤定义后从未被置为当前步骤（执行后直接 testing，2/5 起步） | renderer.js:1965 |
 | 8 | P2 | 上传拦截 debugger 意外 detach（devtools 抢占）后重开拦截会重复注册 `debugger.on("message")`，fileChooserOpened 双处理、浮层弹两次（原扫描 M2） | main.js `setWebviewFileChooserInterception` |
 | 9 | P2 | renderer 重载/无响应时 `pendingUploadRequests` 条目永久残留（Map 泄漏 + 该次选择悬挂）；建议 webContents destroyed/did-navigate 时清理（原扫描 M3） | main.js `handleFileChooserOpened` |
