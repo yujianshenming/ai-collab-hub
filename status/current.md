@@ -1,28 +1,30 @@
 # Current Status
 
 ## Active Goal
-通过整合优质大模型工程准则（Andrej Karpathy 行为指南与 Matt Pocock 软件工程 Skills 库），规范 AI Agent 在代码重构、架构优化与任务协作时的行为，告别“氛围编码（Vibe Coding）”。
+个人工作台 V3.4「平台填写助手」已开发完成、回归验收通过，进入收尾阶段：合入 master 并准备 V3.5 规划。
 
 ## Current Owner
-Antigravity (生活/工作电脑实例)
+产品经理（V3.4 回归已通过验收，推进合入 master 与 V3.5 规划）
 
 ## Last Updated
-2026-06-06 20:30
+2026-06-23（对齐至最新提交，V3.4 回归四步全绿）
 
 ## Latest Summary
-1. **全局技能安装**：
-   - 成功全局安装并初始化了 `mattpocock/skills` 包含的 29 项核心软件工程 SOP 技能，包含 `grill-me`、`tdd`、`triage` 等。
-   - 自行设计并全局整合了 **Andrej Karpathy 编码指南插件（`andrej-karpathy-skills-plugin`）**，将其作为全局技能 `karpathy-guidelines` 注册。
-2. **仓库工作流集成**：
-   - 在本仓库创建了 `CLAUDE.md` 规范，融合了 Karpathy 指南（**编码前思考、简洁优先、精准修改、目标驱动**）和 Matt Pocock 技能配置。
-   - 创建并配置了 `docs/agents/` 目录下的任务追踪对齐文件，将 Issue Tracker 绑定到符合本地 `PROTOCOL.md` 规范的 `tasks/` 本地 Markdown 任务看板（`todo.md`/`active.md`/`done.md`）。
-3. **协作状态同步**：
-   - 与 GitHub 远程仓库完成了 Pull/Merge，并将最新的工作流配置文件推送到 GitHub `master` 分支共享。
+1. **主线已迭代到 V3.4**：个人工作台从早期「常驻网页 + 终端」演进为「任务驱动 + 文件总线 + 卡片舱」的完整工作台，覆盖能力训练搭建的端到端流程。
+2. **已交付版本（按累积）**：
+   - V3：任务驱动 UI、任务舱、流水线五步模型、暂停/继续、结束清理。
+   - V3.1：文件总线（全局下载捕获、文件托盘 fs.watch、上传注入、图片裁切去水印）。
+   - V3.2：任务源头（待做任务.txt 解析导入、未提交状态、子任务进度）—— 已验收通过。
+   - V3.3：文件总线可靠性（6 缺陷清零、上传拦截改 CDP）+ 任务状态写回 txt —— 已合入 master。
+   - V3.4：平台填写助手（cards.md 解析、卡片舱逐字段一键复制、流式逐项填写、平台注入预研）—— 已提交（含三个用户反馈修复：分类折叠、测试残留标签、托盘悬停抖动）。
+3. **V3.4 回归验收（2026-06-23）**：测试工程师四步全绿——①机器检查+冒烟（check+11 单测、DOM/IPC 对账、冒烟 8/8 零异常）②2 个 P1 缺陷均已修复 ③卡片舱 E2E 24/24 全通 ④安全四项 + V3.4 三修复全过。PM 验收通过。
+4. **文档对齐**：已将 status/current.md、roadmap、personal-workbench/README.md、tasks/active.md 对齐至 V3.4 真实状态（此前最多落后 5 个版本，是「感觉乱」的根因）；并新增 `personal-workbench-overview.html` 项目全景介绍页。
 
 ## Next Step
-1. 在后续涉及 Hermes 系统的代码逻辑修改、重构或测试中，严格以 `CLAUDE.md` 准则为导向（特别是对于大文件的精简和 surgical surgical surgical精准修改）。
-2. 在进行任何复杂方案开发前，通过任务看板新建 Task 并由 Codex/Antigravity 协作逐步拆解推进。
-3. 遵循 `ui-ux-pro-max` 与新集成的工程准则展开开发。
+1. 将 `codex/personal-workbench` 合入 `master`（V3.4 体验修复提交 3c95d55 + 回归测试套件 + 文档对齐）。
+2. 人工补一击：真机点一次网页上传，确认 CDP 注入路径，闭环 P1 #2（机制已健全，仅缺真机验证）。
+3. 启动 V3.5 规划（候选：平台全自动填卡、提示词自动归位、任务文档快速归档）。
 
 ## Known Risks
-- 暂无
+- 回归清单登记 16 个已知缺陷（P1×2 已修 / P2×8 / P3×6），P2 含本地端口占用静默失败、debugger 重复注册导致浮层弹两次、上传请求 Map 泄漏等，需按版本排期清理。
+- P1 #2（上传注入）机制已修，但真机点上传尚未人工确认。

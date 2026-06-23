@@ -1450,10 +1450,27 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 }
 .rail-artifact.ready .ra-badge { background: var(--ok-bg); color: var(--ok); }
 
-/* 托盘悬停操作区：默认隐藏，悬停时替换徽章位置 */
-.rail-artifact .ra-actions { display: none; flex: 0 0 auto; gap: 2px; align-items: center; }
-.rail-artifact:hover .ra-actions { display: inline-flex; }
-.rail-artifact:hover .ra-badge { display: none; }
+/* 托盘悬停操作区：默认隐藏，悬停时替换徽章位置。
+   缺陷③修复：display:none↔inline-flex 切换会改变行内布局 → 鼠标下元素位移 →
+   hover 失效又恢复，光标停在边界时疯狂颤抖。改为绝对定位脱离文档流 +
+   visibility/opacity 切换，徽章用 visibility 隐藏保留占位，hover 前后盒模型零变化。 */
+.rail-artifact { position: relative; }
+.rail-artifact .ra-actions {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  visibility: hidden;
+  opacity: 0;
+  background: var(--bg-surface);
+  border-radius: 6px;
+  transition: opacity 120ms ease;
+}
+.rail-artifact:hover .ra-actions { visibility: visible; opacity: 1; }
+.rail-artifact:hover .ra-badge { visibility: hidden; }
 .ra-act {
   display: grid;
   place-items: center;
