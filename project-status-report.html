@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>通用强辅助工作台 · Workflow OS 进展与方向</title>
   <style>
+    /*
+    STYLE CHECKLIST:
+    [ ] Distinct visual treatment for capability blocks
+    [ ] Distinct visual treatment for the four future directions
+    [ ] Sequencing section reads like a roadmap rail, not a text paragraph
+    [ ] Review-impact section visually signals risk discipline
+    [ ] Page remains readable on narrow screens
+    */
     :root {
       --bg: #0f1115;
       --bg-soft: #171a20;
@@ -427,6 +435,216 @@
     }
     .module li { margin: 7px 0; }
 
+    .cap-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
+    }
+    .cap-card {
+      min-height: 292px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015)),
+        var(--panel-strong);
+      border-color: rgba(255,255,255,0.12);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.34);
+    }
+    .cap-card::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(150deg, rgba(255,255,255,0.08), transparent 40%);
+      pointer-events: none;
+    }
+    .cap-card > * {
+      position: relative;
+      z-index: 1;
+    }
+    .cap-card .pill { margin-bottom: 14px; }
+    .cap-card h3 { max-width: 14ch; }
+    .cap-card ul {
+      display: grid;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .cap-card.tone-task { border-color: rgba(113,209,139,0.22); }
+    .cap-card.tone-file { border-color: rgba(107,200,255,0.22); }
+    .cap-card.tone-page { border-color: rgba(105,217,196,0.22); }
+    .cap-card.tone-agent { border-color: rgba(195,155,255,0.24); }
+    .cap-card.tone-action { border-color: rgba(243,201,107,0.24); }
+
+    .direction-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .direction-card {
+      position: relative;
+      overflow: hidden;
+      min-height: 280px;
+      padding-top: 54px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.015)),
+        var(--panel);
+      border-color: rgba(255,255,255,0.12);
+    }
+    .direction-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 4px;
+      opacity: 0.95;
+    }
+    .direction-card::after {
+      content: "";
+      position: absolute;
+      right: -40px;
+      top: -28px;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.08), transparent 68%);
+      pointer-events: none;
+    }
+    .direction-card > * {
+      position: relative;
+      z-index: 1;
+    }
+    .direction-card .direction-number {
+      position: absolute;
+      right: 20px;
+      top: 16px;
+      font-family: var(--mono);
+      font-size: 3rem;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      opacity: 0.16;
+    }
+    .direction-card .metric-v { max-width: 72%; }
+    .direction-card.tone-1 { border-color: rgba(113,209,139,0.22); }
+    .direction-card.tone-1::before { background: linear-gradient(90deg, var(--green), rgba(113,209,139,0)); }
+    .direction-card.tone-2 { border-color: rgba(107,200,255,0.22); }
+    .direction-card.tone-2::before { background: linear-gradient(90deg, var(--blue), rgba(107,200,255,0)); }
+    .direction-card.tone-3 { border-color: rgba(195,155,255,0.24); }
+    .direction-card.tone-3::before { background: linear-gradient(90deg, var(--purple), rgba(195,155,255,0)); }
+    .direction-card.tone-4 { border-color: rgba(243,201,107,0.24); }
+    .direction-card.tone-4::before { background: linear-gradient(90deg, var(--amber), rgba(243,201,107,0)); }
+
+    .sequence-layout {
+      display: grid;
+      grid-template-columns: 1.04fr 0.96fr;
+      gap: 18px;
+    }
+    .sequence-panel {
+      background:
+        linear-gradient(180deg, rgba(107,200,255,0.06), rgba(255,255,255,0.02)),
+        var(--panel);
+    }
+    .sequence-rail {
+      position: relative;
+      display: grid;
+      gap: 14px;
+      padding-left: 24px;
+    }
+    .sequence-rail::before {
+      content: "";
+      position: absolute;
+      left: 8px;
+      top: 12px;
+      bottom: 12px;
+      width: 2px;
+      background: linear-gradient(180deg, rgba(113,209,139,0.72), rgba(107,200,255,0.52), rgba(243,201,107,0.34), rgba(195,155,255,0.26));
+    }
+    .sequence-step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 120px 1fr;
+      gap: 16px;
+      align-items: start;
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .sequence-step::before {
+      content: "";
+      position: absolute;
+      left: -22px;
+      top: 24px;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--panel-strong);
+      border: 2px solid var(--line-strong);
+    }
+    .sequence-step .sequence-label {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--dim);
+      padding-top: 3px;
+    }
+    .sequence-step .sequence-copy h3 {
+      margin: 0 0 6px;
+      font-size: 1.08rem;
+    }
+    .sequence-step .sequence-copy p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .sequence-step.step-1::before { background: var(--green); border-color: var(--green); }
+    .sequence-step.step-2::before { background: var(--blue); border-color: var(--blue); }
+    .sequence-step.step-4::before { background: var(--amber); border-color: var(--amber); }
+    .sequence-step.step-3::before { border-color: var(--purple); }
+    .sequence-logic .metric-v { max-width: 17ch; }
+    .sequence-logic .status-lane { margin-top: 14px; }
+    .sequence-logic .lane-item { background: rgba(255,255,255,0.04); }
+
+    .review-warning {
+      position: relative;
+      padding: 26px;
+      border-radius: 22px;
+      background:
+        linear-gradient(135deg, rgba(255,143,136,0.12), transparent 42%),
+        linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015)),
+        var(--panel-strong);
+      border: 1px solid rgba(255,143,136,0.26);
+      border-left: 4px solid var(--red);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36);
+    }
+    .review-warning::before {
+      content: "Risk discipline";
+      display: inline-block;
+      margin-bottom: 14px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,143,136,0.12);
+      border: 1px solid rgba(255,143,136,0.18);
+      color: var(--red);
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .review-warning .review-card {
+      background: rgba(255,255,255,0.035);
+      border-color: rgba(255,143,136,0.1);
+    }
+
+    @media (max-width: 1100px) {
+      .cap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 900px) {
+      .sequence-layout { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .cap-grid,
+      .direction-grid { grid-template-columns: 1fr; }
+      .sequence-step { grid-template-columns: 1fr; }
+      .direction-card .metric-v { max-width: none; }
+    }
+
     .timeline {
       position: relative;
       padding-left: 28px;
@@ -726,8 +944,8 @@
         </p>
       </div>
 
-      <div class="grid-3">
-        <article class="panel module">
+      <div class="cap-grid">
+        <article class="panel module cap-card tone-task">
           <span class="pill green">Task</span>
           <h3>任务：承载任何 workflow 的主对象</h3>
           <ul>
@@ -737,7 +955,7 @@
           </ul>
         </article>
 
-        <article class="panel module">
+        <article class="panel module cap-card tone-file">
           <span class="pill green">File</span>
           <h3>文件：下载、上传、裁切、归档、回写的产物总线</h3>
           <ul>
@@ -747,7 +965,7 @@
           </ul>
         </article>
 
-        <article class="panel module">
+        <article class="panel module cap-card tone-page">
           <span class="pill green">Page</span>
           <h3>页面：常驻网页、本地视图、终端与扩展的统一承载层</h3>
           <ul>
@@ -757,7 +975,7 @@
           </ul>
         </article>
 
-        <article class="panel module">
+        <article class="panel module cap-card tone-agent">
           <span class="pill blue">Agent</span>
           <h3>智能体：计划、执行、验证、审查的强辅助协作者</h3>
           <ul>
@@ -767,7 +985,7 @@
           </ul>
         </article>
 
-        <article class="panel module">
+        <article class="panel module cap-card tone-action">
           <span class="pill purple">Action</span>
           <h3>动作：复制、注入、拉起、检查、回写等可编排操作</h3>
           <ul>
@@ -790,8 +1008,9 @@
         </p>
       </div>
 
-      <div class="grid-2">
-        <article class="panel metric-card">
+      <div class="direction-grid">
+        <article class="panel metric-card direction-card tone-1">
+          <div class="direction-number">01</div>
           <div class="metric-top">
             <div>
               <div class="metric-k">方向 1</div>
@@ -802,7 +1021,8 @@
           <p>把当前只服务一类任务的流程，提升成可配置的任务模板系统：不同任务类型可以拥有自己的阶段、输入、产物、完成条件与回写规则，而不是继续把所有变化写死在一条流水线上。</p>
         </article>
 
-        <article class="panel metric-card">
+        <article class="panel metric-card direction-card tone-2">
+          <div class="direction-number">02</div>
           <div class="metric-top">
             <div>
               <div class="metric-k">方向 2</div>
@@ -813,7 +1033,8 @@
           <p>把下载捕获、上传注入、文件托盘、裁切与状态写回，从当前任务的有效实现，收紧成所有 workflow 都能接入的统一产物流转层，让文件逻辑不再跟单一业务绑死。</p>
         </article>
 
-        <article class="panel metric-card">
+        <article class="panel metric-card direction-card tone-3">
+          <div class="direction-number">03</div>
           <div class="metric-top">
             <div>
               <div class="metric-k">方向 3</div>
@@ -824,7 +1045,8 @@
           <p>未来可以让计划、执行、验证、审查与 handoff 的智能体共享任务、文件、页面与协作上下文，但这一层必须建立在稳定的任务模型与动作层之上，不能先扩面再补底座。</p>
         </article>
 
-        <article class="panel metric-card">
+        <article class="panel metric-card direction-card tone-4">
+          <div class="direction-number">04</div>
           <div class="metric-top">
             <div>
               <div class="metric-k">方向 4</div>
@@ -848,29 +1070,42 @@
         </p>
       </div>
 
-      <div class="grid-2">
-        <div class="panel">
-          <div class="timeline">
-            <div class="step-item done">
-              <h3>1 · 先做通用任务引擎</h3>
-              <p>先解决“系统如何承载不止一种任务”的问题，否则所有新增能力都只是在单流程上继续打补丁。</p>
-            </div>
-            <div class="step-item progress">
-              <h3>2 · 再继续收紧文件与产物总线</h3>
-              <p>文件上下文决定很多 workflow 能否闭环。没有稳定产物流转，任务模型再通用也会卡在落地执行面。</p>
-            </div>
-            <div class="step-item plan">
-              <h3>4 · 然后抽出自动化动作编排</h3>
-              <p>动作层负责把当前已经有效的复制、注入、运行、回写能力组合起来，为更多 workflow 复用，而不是在每个场景里重复造轮子。</p>
-            </div>
-            <div class="step-item plan">
-              <h3>3 · 最后让 Agent 协作层落位</h3>
-              <p>只有当任务、文件、动作三层稳定后，Agent 才能真正承担计划与执行，而不是放大底层的不稳定性。</p>
-            </div>
+      <div class="sequence-layout">
+        <div class="panel sequence-panel">
+          <div class="metric-k" style="margin-bottom: 14px;">Roadmap Rail</div>
+          <div class="sequence-rail">
+            <article class="sequence-step step-1">
+              <div class="sequence-label">Step 1</div>
+              <div class="sequence-copy">
+                <h3>1 · 先做通用任务引擎</h3>
+                <p>先解决“系统如何承载不止一种任务”的问题，否则所有新增能力都只是在单流程上继续打补丁。</p>
+              </div>
+            </article>
+            <article class="sequence-step step-2">
+              <div class="sequence-label">Step 2</div>
+              <div class="sequence-copy">
+                <h3>2 · 再继续收紧文件与产物总线</h3>
+                <p>文件上下文决定很多 workflow 能否闭环。没有稳定产物流转，任务模型再通用也会卡在落地执行面。</p>
+              </div>
+            </article>
+            <article class="sequence-step step-4">
+              <div class="sequence-label">Step 4</div>
+              <div class="sequence-copy">
+                <h3>4 · 然后抽出自动化动作编排</h3>
+                <p>动作层负责把当前已经有效的复制、注入、运行、回写能力组合起来，为更多 workflow 复用，而不是在每个场景里重复造轮子。</p>
+              </div>
+            </article>
+            <article class="sequence-step step-3">
+              <div class="sequence-label">Step 3</div>
+              <div class="sequence-copy">
+                <h3>3 · 最后让 Agent 协作层落位</h3>
+                <p>只有当任务、文件、动作三层稳定后，Agent 才能真正承担计划与执行，而不是放大底层的不稳定性。</p>
+              </div>
+            </article>
           </div>
         </div>
 
-        <div class="panel">
+        <div class="panel sequence-logic">
           <div class="metric-k">为什么不是先上 Agent</div>
           <div class="metric-v" style="margin: 6px 0 16px;">因为系统现在最需要的是稳定边界，不是更大的控制面。</div>
           <div class="status-lane">
@@ -982,7 +1217,7 @@
         </p>
       </div>
 
-      <div class="review-box">
+      <div class="review-box review-warning">
         <h3>路线规则：<span style="color: var(--blue);">tighten risky surfaces before expanding capability surfaces</span></h3>
         <p>第一轮审查已经把高风险边界画出来，包括 Electron 主进程权限边界、loopback 本地 HTTP API、token 暴露链路、上传/下载自动化路径，以及文件系统与本地应用执行面。它们决定了后续功能扩展不能只看“能不能做”，还要先看“风险有没有收口”。</p>
         <div class="review-grid">
