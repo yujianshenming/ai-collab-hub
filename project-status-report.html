@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>通用强辅助工作台 · Workflow OS 进展与方向</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --bg-soft: #171a20;
+      --panel: rgba(24, 29, 38, 0.86);
+      --panel-strong: rgba(20, 23, 31, 0.96);
+      --line: rgba(255, 255, 255, 0.1);
+      --line-strong: rgba(255, 255, 255, 0.18);
+      --text: #f5f1e8;
+      --muted: #b8b0a2;
+      --dim: #8f887c;
+      --green: #71d18b;
+      --blue: #6bc8ff;
+      --amber: #f3c96b;
+      --red: #ff8f88;
+      --purple: #c39bff;
+      --teal: #69d9c4;
+      --hero-a: rgba(113, 209, 139, 0.22);
+      --hero-b: rgba(107, 200, 255, 0.18);
+      --hero-c: rgba(195, 155, 255, 0.14);
+      --shadow: 0 20px 60px rgba(0, 0, 0, 0.32);
+      --radius: 22px;
+      --mono: 'IBM Plex Mono', monospace;
+      --sans: 'IBM Plex Sans', sans-serif;
+      --serif: 'Noto Serif SC', serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, var(--hero-a), transparent 32%),
+        radial-gradient(circle at top right, var(--hero-b), transparent 28%),
+        radial-gradient(circle at 50% 22%, var(--hero-c), transparent 26%),
+        linear-gradient(180deg, #0b0d11 0%, #101318 36%, #0f1115 100%);
+      line-height: 1.6;
+      letter-spacing: 0.01em;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      * { animation: none !important; transition: none !important; }
+    }
+    ::selection { background: rgba(113, 209, 139, 0.35); color: var(--text); }
+
+    .shell {
+      width: min(1240px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      backdrop-filter: blur(18px);
+      background: rgba(11, 13, 17, 0.74);
+      border-bottom: 1px solid var(--line);
+    }
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 14px 0;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-family: var(--mono);
+      font-size: 0.92rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .brand-mark {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      background: linear-gradient(135deg, var(--green), var(--blue));
+      box-shadow: 0 0 18px rgba(113, 209, 139, 0.4);
+    }
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .nav a {
+      color: var(--dim);
+      text-decoration: none;
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-size: 0.86rem;
+      transition: background 0.2s ease, color 0.2s ease;
+    }
+    .nav a:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+    }
+    @media (max-width: 860px) {
+      .nav { display: none; }
+    }
+
+    .hero {
+      padding: 56px 0 36px;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.32fr 0.92fr;
+      gap: 26px;
+      align-items: stretch;
+    }
+    @media (max-width: 980px) {
+      .hero-grid { grid-template-columns: 1fr; }
+    }
+    .hero-main,
+    .hero-side,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .hero-main {
+      padding: 34px 34px 30px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-main::after {
+      content: "";
+      position: absolute;
+      inset: auto -12% -22% auto;
+      width: 360px;
+      height: 360px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(113,209,139,0.13), transparent 64%);
+      pointer-events: none;
+    }
+    .kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(113, 209, 139, 0.09);
+      border: 1px solid rgba(113, 209, 139, 0.24);
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .kicker .pulse {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 0 rgba(113, 209, 139, 0.5);
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(113, 209, 139, 0.48); }
+      70% { box-shadow: 0 0 0 14px rgba(113, 209, 139, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(113, 209, 139, 0); }
+    }
+    h1 {
+      margin: 18px 0 16px;
+      font-family: var(--serif);
+      font-size: clamp(2.4rem, 5.5vw, 4.8rem);
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+      font-weight: 700;
+    }
+    .hero-main .summary {
+      max-width: 780px;
+      color: var(--muted);
+      font-size: 1.07rem;
+    }
+    .hero-strip {
+      margin-top: 24px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 720px) {
+      .hero-strip { grid-template-columns: 1fr; }
+    }
+    .hero-chip {
+      padding: 16px 18px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+    }
+    .hero-chip .label {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--dim);
+      margin-bottom: 7px;
+    }
+    .hero-chip .value {
+      font-size: 1.04rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .hero-side {
+      display: grid;
+      grid-template-rows: auto auto;
+      gap: 0;
+      overflow: hidden;
+    }
+    .hero-side section {
+      padding: 26px 28px;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero-side section:last-child { border-bottom: 0; }
+    .mini-title {
+      margin: 0 0 10px;
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--dim);
+    }
+    .big-state {
+      font-size: 1.55rem;
+      line-height: 1.18;
+      font-weight: 700;
+      margin: 0 0 8px;
+      color: var(--text);
+    }
+    .hero-side p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+    .signal-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .signal {
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .signal .s-label {
+      font-size: 0.73rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--dim);
+      margin-bottom: 6px;
+      font-family: var(--mono);
+    }
+    .signal .s-value {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    .section {
+      padding: 22px 0 10px;
+    }
+    .section-head {
+      display: grid;
+      grid-template-columns: 0.95fr 1.05fr;
+      gap: 20px;
+      align-items: end;
+      margin-bottom: 22px;
+    }
+    @media (max-width: 860px) {
+      .section-head { grid-template-columns: 1fr; }
+    }
+    .eyebrow {
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--green);
+      margin-bottom: 12px;
+    }
+    h2 {
+      margin: 0;
+      font-family: var(--serif);
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      line-height: 1.06;
+      letter-spacing: -0.025em;
+    }
+    .lead {
+      color: var(--muted);
+      margin: 0;
+      max-width: 760px;
+      font-size: 1rem;
+    }
+
+    .grid-3,
+    .grid-2 {
+      display: grid;
+      gap: 18px;
+    }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+    @media (max-width: 980px) {
+      .grid-3 { grid-template-columns: 1fr; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    .panel {
+      padding: 24px;
+    }
+    .metric-card {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 220px;
+      transition: transform 0.18s ease, border-color 0.18s ease;
+    }
+    .metric-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--line-strong);
+    }
+    .metric-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+    .metric-k {
+      font-family: var(--mono);
+      color: var(--dim);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .metric-v {
+      font-size: 1.42rem;
+      line-height: 1.15;
+      font-weight: 700;
+      max-width: 90%;
+    }
+    .metric-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .pill.green { color: var(--green); background: rgba(113,209,139,0.1); }
+    .pill.blue { color: var(--blue); background: rgba(107,200,255,0.1); }
+    .pill.amber { color: var(--amber); background: rgba(243,201,107,0.12); }
+    .pill.purple { color: var(--purple); background: rgba(195,155,255,0.11); }
+    .pill.red { color: var(--red); background: rgba(255,143,136,0.1); }
+
+    .status-lane {
+      display: grid;
+      gap: 12px;
+    }
+    .lane-item {
+      padding: 14px 16px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.07);
+      display: grid;
+      grid-template-columns: 148px 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 760px) {
+      .lane-item { grid-template-columns: 1fr; gap: 8px; }
+    }
+    .lane-item .lane-name {
+      font-family: var(--mono);
+      color: var(--text);
+      font-size: 0.88rem;
+    }
+    .lane-item .lane-text {
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+
+    .module {
+      min-height: 256px;
+      position: relative;
+      overflow: hidden;
+    }
+    .module::before {
+      content: "";
+      position: absolute;
+      right: -18px;
+      top: -18px;
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,255,255,0.08), transparent 68%);
+      pointer-events: none;
+    }
+    .module h3 {
+      margin: 0 0 10px;
+      font-size: 1.18rem;
+      line-height: 1.2;
+    }
+    .module ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+    .module li { margin: 7px 0; }
+
+    .timeline {
+      position: relative;
+      padding-left: 28px;
+      display: grid;
+      gap: 18px;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 7px;
+      top: 6px;
+      bottom: 6px;
+      width: 2px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.05));
+    }
+    .step-item {
+      position: relative;
+      padding-left: 14px;
+    }
+    .step-item::before {
+      content: "";
+      position: absolute;
+      left: -28px;
+      top: 7px;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--panel-strong);
+      border: 2px solid var(--line-strong);
+    }
+    .step-item.done::before { background: var(--green); border-color: var(--green); }
+    .step-item.progress::before { background: var(--blue); border-color: var(--blue); }
+    .step-item.plan::before { border-color: var(--purple); }
+    .step-item h3 {
+      margin: 0 0 6px;
+      font-size: 1.08rem;
+    }
+    .step-item p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .reality-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+      overflow: hidden;
+      border-radius: 18px;
+    }
+    .reality-table thead th {
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 0.74rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--dim);
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .reality-table tbody td {
+      padding: 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      color: var(--muted);
+      vertical-align: top;
+    }
+    .reality-table tbody tr:last-child td { border-bottom: 0; }
+    .reality-table tbody td:first-child { color: var(--text); font-weight: 600; }
+
+    .evidence-list {
+      display: grid;
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .evidence {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 14px 16px;
+      border-radius: 15px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .evidence code {
+      font-family: var(--mono);
+      font-size: 0.84rem;
+      color: var(--blue);
+      white-space: nowrap;
+    }
+    .evidence p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .review-box {
+      padding: 24px;
+      border-radius: 18px;
+      background:
+        linear-gradient(135deg, rgba(107,200,255,0.08), rgba(195,155,255,0.06)),
+        var(--panel);
+      border: 1px solid rgba(107,200,255,0.22);
+      box-shadow: var(--shadow);
+    }
+    .review-box h3 {
+      margin: 0 0 10px;
+      font-size: 1.2rem;
+    }
+    .review-box p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .review-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 18px;
+    }
+    @media (max-width: 760px) {
+      .review-grid { grid-template-columns: 1fr; }
+    }
+    .review-card {
+      padding: 16px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .review-card .title {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 8px;
+    }
+
+    .footer {
+      padding: 34px 0 54px;
+      color: var(--dim);
+      font-size: 0.88rem;
+    }
+    .footer-inner {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+    }
+    .footer code {
+      font-family: var(--mono);
+      color: var(--blue);
+    }
+  </style>
+</head>
+<body>
+  <!--
+  CHECKLIST:
+  [ ] Hero reframes the product as a strong assistant workbench / Workflow OS
+  [ ] Section explains why single-workflow framing no longer fits
+  [ ] Section lists the five capability blocks
+  [ ] Section presents the four future directions
+  [ ] Section shows priority order 1 -> 2 -> 4 -> 3
+  [ ] Section explains which current capabilities are preserved and tightened
+  [ ] Section ties adversarial review results to roadmap discipline
+  -->
+
+  <div class="topbar">
+    <div class="shell topbar-inner">
+      <div class="brand"><span class="brand-mark"></span> AI Collaboration Hub / Workflow OS Narrative</div>
+      <nav class="nav">
+        <a href="#hero">定位</a>
+        <a href="#why-turn">为什么转向</a>
+        <a href="#capability-blocks">能力块</a>
+        <a href="#four-directions">四个方向</a>
+        <a href="#sequencing">推进顺序</a>
+        <a href="#preserve-tighten">保留与收紧</a>
+        <a href="#review-impact">审查影响</a>
+      </nav>
+    </div>
+  </div>
+
+  <main class="shell">
+    <section class="hero" id="hero">
+      <div class="hero-grid">
+        <div class="hero-main">
+          <div class="kicker"><span class="pulse"></span> strategic read · 2026-07-06</div>
+          <h1><span style="color:var(--green)">personal-workbench</span> 的下一句定义，<br/>应该是通用强辅助工作台 / Workflow OS。</h1>
+          <p class="summary">
+            这不是推翻 V3.4 之前成果的改写，而是对现状更准确的命名。当前产品已经把任务中心、文件总线、常驻页面、终端、本地工具与卡片舱收进同一个工作壳里。新的页面叙事要表达的是：<b>这些已完成能力不是某一条专用流程的临时拼装，而是在为一个可承接多种工作流的 Workflow OS 打基础。</b>
+          </p>
+          <div class="hero-strip">
+            <div class="hero-chip">
+              <div class="label">当前事实</div>
+              <div class="value">V3.4 已交付，能力已跨过原型期</div>
+            </div>
+            <div class="hero-chip">
+              <div class="label">叙事转向</div>
+              <div class="value">从单流程工具，升级为通用能力底座</div>
+            </div>
+            <div class="hero-chip">
+              <div class="label">路线纪律</div>
+              <div class="value">先收紧风险面，再扩展能力面</div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="hero-side">
+          <section>
+            <div class="mini-title">一句话判断</div>
+            <div class="big-state">产品要摆脱“只服务一种工作流”的表述，但不能制造“要重写一遍”的误解。</div>
+            <p>新版页面必须同时讲清两件事：一是为什么旧叙事已经不够，二是当前完成的能力会被保留、升格并继续收紧，而不是被替换掉。</p>
+          </section>
+          <section>
+            <div class="mini-title">五个核心能力块</div>
+            <div class="signal-grid">
+              <div class="signal">
+                <div class="s-label">Task</div>
+                <div class="s-value">任务</div>
+              </div>
+              <div class="signal">
+                <div class="s-label">File</div>
+                <div class="s-value">文件</div>
+              </div>
+              <div class="signal">
+                <div class="s-label">Page</div>
+                <div class="s-value">页面</div>
+              </div>
+              <div class="signal">
+                <div class="s-label">Agent</div>
+                <div class="s-value">智能体</div>
+              </div>
+              <div class="signal">
+                <div class="s-label">Action</div>
+                <div class="s-value">动作</div>
+              </div>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section" id="why-turn">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Why The Turn</div>
+          <h2>为什么必须从单一流程叙事转向 Workflow OS</h2>
+        </div>
+        <p class="lead">
+          旧叙事的问题不是“它错了”，而是“它已经太窄了”。现在的代码和已交付能力，已经证明这个产品不是只会替一种业务流程减负的专用工具，而是正在形成一个可以复用到多种任务类型的统一工作台底座。
+        </p>
+      </div>
+
+      <div class="grid-3">
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">问题</div>
+              <div class="metric-v">继续用单流程表述，会把真实能力说小</div>
+            </div>
+            <span class="pill amber">叙事偏窄</span>
+          </div>
+          <p>如果页面仍把 personal-workbench 描述成某一种工作流的专用助手，那么任务中心、常驻页面、终端、本地工具接入、文件总线这些已经完成的能力，看起来会像为当前任务临时缝出来的配件，而不是可迁移的底座。</p>
+        </article>
+
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">证据</div>
+              <div class="metric-v">现有实现已经覆盖任务、页面、文件与动作闭环</div>
+            </div>
+            <span class="pill green">已验证</span>
+          </div>
+          <p>V3 到 V3.4 的演进并不是功能堆砌，而是在持续把工作入口、产物流转、字段填写、状态写回和本地执行面统一到一个壳里。这说明产品价值来自“统一工作流承载”，而不是某一条业务线本身。</p>
+        </article>
+
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">转向后的收益</div>
+              <div class="metric-v">保留已完成能力，同时为更多 workflow 留出接口</div>
+            </div>
+            <span class="pill blue">可扩展</span>
+          </div>
+          <p>当页面叙事改成通用强辅助工作台 / Workflow OS，现有能力就能被重新组织成通用模块。以后新增一种工作，不需要重写工作台，只需要在既有能力块上定义新的任务模型与动作链。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="capability-blocks">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Capability Blocks</div>
+          <h2>未来页面要围绕五个能力块，而不是围绕单条流水线组织</h2>
+        </div>
+        <p class="lead">
+          这五个块不是凭空抽象出来的概念，而是对当前已完成能力的重新命名。它们把现有功能抬升成可复用的产品语言，同时保留“已经能工作”的现实基础。
+        </p>
+      </div>
+
+      <div class="grid-3">
+        <article class="panel module">
+          <span class="pill green">Task</span>
+          <h3>任务：承载任何 workflow 的主对象</h3>
+          <ul>
+            <li>保留现有任务中心、任务卡、任务舱与五步流水线。</li>
+            <li>保留 V3.2 的 txt 导入和 V3.3 的状态写回，把任务进出系统的链路收在一起。</li>
+            <li>后续把当前固定流程提升为可配置任务模板，而不是丢掉已有任务能力。</li>
+          </ul>
+        </article>
+
+        <article class="panel module">
+          <span class="pill green">File</span>
+          <h3>文件：下载、上传、裁切、归档、回写的产物总线</h3>
+          <ul>
+            <li>保留 V3.1 的下载捕获、文件托盘、上传注入与图片裁切。</li>
+            <li>保留任务文件夹上下文，把产物与任务绑定而不是散落到系统里。</li>
+            <li>后续把这些能力抽象成所有任务都能复用的文件与产物流转层。</li>
+          </ul>
+        </article>
+
+        <article class="panel module">
+          <span class="pill green">Page</span>
+          <h3>页面：常驻网页、本地视图、终端与扩展的统一承载层</h3>
+          <ul>
+            <li>保留常驻 webview、多标签、分屏、地址栏与扩展面板。</li>
+            <li>保留底部终端、CLI 常驻标签和本地桌面应用嵌入能力。</li>
+            <li>它们共同构成 Workflow OS 的表面层，不再只服务当前业务页面。</li>
+          </ul>
+        </article>
+
+        <article class="panel module">
+          <span class="pill blue">Agent</span>
+          <h3>智能体：计划、执行、验证、审查的强辅助协作者</h3>
+          <ul>
+            <li>当前已存在的人机协作现实，是用户在工作台里调度 Claude、Codex、Hermes 与 GitHub 协作协议。</li>
+            <li>卡片舱已经证明“把 AI 产出压缩进用户动作链”是有效的协作方式。</li>
+            <li>后续 Agent 层不是另起炉灶，而是把现有协作关系提升成一等能力块。</li>
+          </ul>
+        </article>
+
+        <article class="panel module">
+          <span class="pill purple">Action</span>
+          <h3>动作：复制、注入、拉起、检查、回写等可编排操作</h3>
+          <ul>
+            <li>保留卡片舱逐字段复制、平台字段试注入、文件注入、打开文件、定位文件、运行本地工具等现有动作。</li>
+            <li>这些动作已经存在于产品中，只是还没有被统一表达成动作层。</li>
+            <li>后续新增 workflow 时，优先复用动作而不是重写交互细节。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="four-directions">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Four Directions</div>
+          <h2>页面只展示四个未来方向，避免路线分叉失焦</h2>
+        </div>
+        <p class="lead">
+          未来方向必须严格收敛到四个，并且用现有能力当作起点。这样页面既能表达演进空间，也不会把读者带回“什么都要重做”的误解里。
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">方向 1</div>
+              <div class="metric-v">通用任务引擎</div>
+            </div>
+            <span class="pill green">最高优先级</span>
+          </div>
+          <p>把当前只服务一类任务的流程，提升成可配置的任务模板系统：不同任务类型可以拥有自己的阶段、输入、产物、完成条件与回写规则，而不是继续把所有变化写死在一条流水线上。</p>
+        </article>
+
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">方向 2</div>
+              <div class="metric-v">文件与产物总线</div>
+            </div>
+            <span class="pill blue">持续收紧</span>
+          </div>
+          <p>把下载捕获、上传注入、文件托盘、裁切与状态写回，从当前任务的有效实现，收紧成所有 workflow 都能接入的统一产物流转层，让文件逻辑不再跟单一业务绑死。</p>
+        </article>
+
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">方向 3</div>
+              <div class="metric-v">Agent 协作层</div>
+            </div>
+            <span class="pill purple">后置落位</span>
+          </div>
+          <p>未来可以让计划、执行、验证、审查与 handoff 的智能体共享任务、文件、页面与协作上下文，但这一层必须建立在稳定的任务模型与动作层之上，不能先扩面再补底座。</p>
+        </article>
+
+        <article class="panel metric-card">
+          <div class="metric-top">
+            <div>
+              <div class="metric-k">方向 4</div>
+              <div class="metric-v">自动化动作编排</div>
+            </div>
+            <span class="pill amber">关键桥梁</span>
+          </div>
+          <p>把打开页面、切换标签、复制字段、文件注入、运行命令、拉起本地应用、写回状态与触发检查这些能力显式化，编组成可复用 action chain，让工作台从强辅助更进一步走向 Workflow OS。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="sequencing">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Recommended Sequencing</div>
+          <h2>推荐推进顺序必须明确写成 1 → 2 → 4 → 3</h2>
+        </div>
+        <p class="lead">
+          路线顺序不是展示装饰，而是后续决策约束。页面必须公开表达：先稳住任务模型，再收紧产物总线，再把动作编排抽出来，最后才让 Agent 层自然落位。任何跳步，都会把复杂度提前引进系统。
+        </p>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <div class="timeline">
+            <div class="step-item done">
+              <h3>1 · 先做通用任务引擎</h3>
+              <p>先解决“系统如何承载不止一种任务”的问题，否则所有新增能力都只是在单流程上继续打补丁。</p>
+            </div>
+            <div class="step-item progress">
+              <h3>2 · 再继续收紧文件与产物总线</h3>
+              <p>文件上下文决定很多 workflow 能否闭环。没有稳定产物流转，任务模型再通用也会卡在落地执行面。</p>
+            </div>
+            <div class="step-item plan">
+              <h3>4 · 然后抽出自动化动作编排</h3>
+              <p>动作层负责把当前已经有效的复制、注入、运行、回写能力组合起来，为更多 workflow 复用，而不是在每个场景里重复造轮子。</p>
+            </div>
+            <div class="step-item plan">
+              <h3>3 · 最后让 Agent 协作层落位</h3>
+              <p>只有当任务、文件、动作三层稳定后，Agent 才能真正承担计划与执行，而不是放大底层的不稳定性。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="metric-k">为什么不是先上 Agent</div>
+          <div class="metric-v" style="margin: 6px 0 16px;">因为系统现在最需要的是稳定边界，不是更大的控制面。</div>
+          <div class="status-lane">
+            <div class="lane-item">
+              <div class="lane-name">先做 1</div>
+              <div class="lane-text">把“任务是什么”抽清楚，后续所有 workflow 才有一致宿主。</div>
+            </div>
+            <div class="lane-item">
+              <div class="lane-name">再做 2</div>
+              <div class="lane-text">把“产物怎么进出系统”收紧，才能支撑跨任务复用。</div>
+            </div>
+            <div class="lane-item">
+              <div class="lane-name">再做 4</div>
+              <div class="lane-text">把“系统如何做动作”编排出来，才谈得上自动化。</div>
+            </div>
+            <div class="lane-item">
+              <div class="lane-name">最后做 3</div>
+              <div class="lane-text">Agent 层吃的是底座成熟度，不应反过来要求底座临时适配它。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="preserve-tighten">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Preserve And Tighten</div>
+          <h2>已完成能力要被保留并升格，同时继续收紧现实薄弱点</h2>
+        </div>
+        <p class="lead">
+          新叙事的重点不是宣告“旧版本结束”，而是告诉读者：当前已有成果都进入下一阶段，只是从专用实现升格为通用底座。页面要明显写出哪些东西被保留，哪些地方要继续收紧。
+        </p>
+      </div>
+
+      <div class="panel">
+        <table class="reality-table">
+          <thead>
+            <tr>
+              <th>当前成果</th>
+              <th>在 Workflow OS 中的新角色</th>
+              <th>本轮页面要强调的处理方式</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>常驻页面、多标签、分屏、扩展、终端</td>
+              <td>统一页面层（Page Surface）</td>
+              <td>保留并抬升为通用承载层，不再只被叙述成当前流程的外壳。</td>
+            </tr>
+            <tr>
+              <td>任务中心、任务舱、五步流水线、txt 导入/写回</td>
+              <td>任务层（Task Engine）的现成基础</td>
+              <td>保留并逐步抽象，不暗示“旧任务系统要被重做”。</td>
+            </tr>
+            <tr>
+              <td>下载捕获、文件托盘、上传注入、图片裁切</td>
+              <td>文件与产物总线（File / Artifact Bus）</td>
+              <td>保留并继续收紧可靠性，让现有能力成为通用产物层。</td>
+            </tr>
+            <tr>
+              <td>卡片舱、字段复制、试注入映射</td>
+              <td>动作层与特定 workflow 插件的先行样板</td>
+              <td>保留其产品价值，同时明确它是可复用动作层的起点，而不是一次性功能。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2" style="margin-top: 18px;">
+        <div class="panel">
+          <div class="metric-k">要保留的判断</div>
+          <div class="evidence-list">
+            <div class="evidence">
+              <code>不是重写</code>
+              <p>页面必须反复传达：当前成果方向正确，只是表达层与抽象层需要升级。</p>
+            </div>
+            <div class="evidence">
+              <code>不是降级</code>
+              <p>从单流程叙事转向 Workflow OS，不是把现有深度优化变浅，而是把深度优化变成可复用模块。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="metric-k">要继续收紧的现实</div>
+          <div class="evidence-list">
+            <div class="evidence">
+              <code>可靠性</code>
+              <p>上传链路、文件分类、竞态与回归边角问题，仍然是产品可信度的一部分，不能因为叙事升级而被跳过。</p>
+            </div>
+            <div class="evidence">
+              <code>状态对齐</code>
+              <p>页面、roadmap 与真实代码状态必须同步，否则产品方向会被过时文档重新拉回旧叙事。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="review-impact">
+      <div class="section-head">
+        <div>
+          <div class="eyebrow">Review Impact</div>
+          <h2>对抗性审查如何改变路线纪律：先收紧风险面，再扩展能力面</h2>
+        </div>
+        <p class="lead">
+          adversarial-review 的价值，不只是列出风险点，而是给路线图加了一个顺序约束：在继续扩展 Action 与 Agent 之前，必须先把已经暴露出来的高风险面收紧到可控范围内。页面需要把这个原则直接写出来。
+        </p>
+      </div>
+
+      <div class="review-box">
+        <h3>路线规则：<span style="color: var(--blue);">tighten risky surfaces before expanding capability surfaces</span></h3>
+        <p>第一轮审查已经把高风险边界画出来，包括 Electron 主进程权限边界、loopback 本地 HTTP API、token 暴露链路、上传/下载自动化路径，以及文件系统与本地应用执行面。它们决定了后续功能扩展不能只看“能不能做”，还要先看“风险有没有收口”。</p>
+        <div class="review-grid">
+          <div class="review-card">
+            <div class="title">这意味着什么</div>
+            <p>方向 1 和方向 2 可以继续推进，因为它们主要在抽清任务模型、收紧产物流转；但方向 4 和方向 3 每向前一步，都会扩大自动化与协作控制面，所以必须建立在更严格的权限、边界与验证纪律上。</p>
+          </div>
+          <div class="review-card">
+            <div class="title">页面要给出的结论</div>
+            <p>产品未来可以更强，但不能更冒进。下一阶段的正确姿势不是盲目扩更多 agent 或动作，而是在保留现有价值的同时，把高风险表面先缩窄、标定并验证清楚。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell footer-inner">
+      <div>输出文件：<code>project-status-report.html</code></div>
+      <div>页面定位：<code>通用强辅助工作台 / Workflow OS 叙事页</code></div>
+      <div>当前主结论：<code>保留既有能力，按 1 → 2 → 4 → 3 推进</code></div>
+    </div>
+  </footer>
+</body>
+</html>
