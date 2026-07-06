@@ -830,11 +830,9 @@
     <section class="hero" id="hero">
       <div class="hero-grid">
         <div class="hero-main">
-          <div class="kicker"><span class="pulse"></span> strategic read · 2026-07-06</div>
-          <h1><span style="color:var(--green)">personal-workbench</span> 的下一句定义，<br/>应该是通用强辅助工作台 / Workflow OS。</h1>
-          <p class="summary">
-            这不是推翻 V3.4 之前成果的改写，而是对现状更准确的命名。当前产品已经把任务中心、文件总线、常驻页面、终端、本地工具与卡片舱收进同一个工作壳里。新的页面叙事要表达的是：<b>这些已完成能力不是某一条专用流程的临时拼装，而是在为一个可承接多种工作流的 Workflow OS 打基础。</b>
-          </p>
+          <div class="kicker"><span class="pulse"></span> workflow operating system</div>
+          <h1>把个人工作台，从单任务工具，升级成通用强辅助工作台。</h1>
+          <p class="summary">未来重点不再是继续给一种任务打补丁，而是把已经被验证有效的任务、文件、页面、Agent、动作能力沉淀为可复用底座。</p>
           <div class="hero-strip">
             <div class="hero-chip">
               <div class="label">当前事实</div>
@@ -1013,7 +1011,7 @@
           <div class="direction-number">01</div>
           <div class="metric-top">
             <div>
-              <div class="metric-k">方向 1</div>
+              <div class="metric-k">方向 1：通用任务引擎</div>
               <div class="metric-v">通用任务引擎</div>
             </div>
             <span class="pill green">最高优先级</span>
@@ -1025,7 +1023,7 @@
           <div class="direction-number">02</div>
           <div class="metric-top">
             <div>
-              <div class="metric-k">方向 2</div>
+              <div class="metric-k">方向 2：文件与产物总线</div>
               <div class="metric-v">文件与产物总线</div>
             </div>
             <span class="pill blue">持续收紧</span>
@@ -1037,7 +1035,7 @@
           <div class="direction-number">03</div>
           <div class="metric-top">
             <div>
-              <div class="metric-k">方向 3</div>
+              <div class="metric-k">方向 3：Agent 协作层</div>
               <div class="metric-v">Agent 协作层</div>
             </div>
             <span class="pill purple">后置落位</span>
@@ -1049,7 +1047,7 @@
           <div class="direction-number">04</div>
           <div class="metric-top">
             <div>
-              <div class="metric-k">方向 4</div>
+              <div class="metric-k">方向 4：自动化动作编排</div>
               <div class="metric-v">自动化动作编排</div>
             </div>
             <span class="pill amber">关键桥梁</span>
@@ -1077,28 +1075,28 @@
             <article class="sequence-step step-1">
               <div class="sequence-label">Step 1</div>
               <div class="sequence-copy">
-                <h3>1 · 先做通用任务引擎</h3>
+                <h3>先做通用任务引擎</h3>
                 <p>先解决“系统如何承载不止一种任务”的问题，否则所有新增能力都只是在单流程上继续打补丁。</p>
               </div>
             </article>
             <article class="sequence-step step-2">
               <div class="sequence-label">Step 2</div>
               <div class="sequence-copy">
-                <h3>2 · 再继续收紧文件与产物总线</h3>
+                <h3>继续收紧文件与产物总线</h3>
                 <p>文件上下文决定很多 workflow 能否闭环。没有稳定产物流转，任务模型再通用也会卡在落地执行面。</p>
               </div>
             </article>
             <article class="sequence-step step-4">
               <div class="sequence-label">Step 4</div>
               <div class="sequence-copy">
-                <h3>4 · 然后抽出自动化动作编排</h3>
+                <h3>再做自动化动作编排</h3>
                 <p>动作层负责把当前已经有效的复制、注入、运行、回写能力组合起来，为更多 workflow 复用，而不是在每个场景里重复造轮子。</p>
               </div>
             </article>
             <article class="sequence-step step-3">
               <div class="sequence-label">Step 3</div>
               <div class="sequence-copy">
-                <h3>3 · 最后让 Agent 协作层落位</h3>
+                <h3>最后让 Agent 协作层落位</h3>
                 <p>只有当任务、文件、动作三层稳定后，Agent 才能真正承担计划与执行，而不是放大底层的不稳定性。</p>
               </div>
             </article>
@@ -1218,8 +1216,8 @@
       </div>
 
       <div class="review-box review-warning">
-        <h3>路线规则：<span style="color: var(--blue);">tighten risky surfaces before expanding capability surfaces</span></h3>
-        <p>第一轮审查已经把高风险边界画出来，包括 Electron 主进程权限边界、loopback 本地 HTTP API、token 暴露链路、上传/下载自动化路径，以及文件系统与本地应用执行面。它们决定了后续功能扩展不能只看“能不能做”，还要先看“风险有没有收口”。</p>
+        <h3>先收紧风险面，再扩展能力面</h3>
+        <p>第二轮 ultracode 对抗性审查确认了高风险边界，因此路线图必须把权限、注入、自动化边界的收紧放在新增能力之前。</p>
         <div class="review-grid">
           <div class="review-card">
             <div class="title">这意味着什么</div>
