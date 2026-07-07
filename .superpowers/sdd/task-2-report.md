@@ -1,7 +1,7 @@
 # Task 2 Report
 
 ## Status
-Completed Task 2 in `C:/Users/24391/ai-collab-hub/.claude/worktrees/agent-adcad6bc44f765d03/project-status-report.html`.
+Completed Task 2 in `C:/Users/24391/Documents/ai-collab-hub/project-status-report.html`.
 
 ## What changed
 - Strengthened the visual system for the five capability blocks with a dedicated `cap-grid` and distinct `cap-card` treatments.
@@ -11,7 +11,7 @@ Completed Task 2 in `C:/Users/24391/ai-collab-hub/.claude/worktrees/agent-adcad6
 - Preserved the existing Workflow OS narrative and all roadmap/content constraints while adding only styling hooks and structural wrappers needed for presentation.
 
 ## Verification run
-Ran fresh checks in the worktree:
+Ran fresh checks against the branch deliverable:
 
 1. Constraint verification script against `project-status-report.html`
    - Confirmed `通用强辅助工作台 / Workflow OS`
@@ -37,5 +37,5 @@ Ran fresh checks in the worktree:
 - Result: `(none)`
 
 ## Files
-- Modified: `C:/Users/24391/ai-collab-hub/.claude/worktrees/agent-adcad6bc44f765d03/project-status-report.html`
-- Report: `C:/Users/24391/ai-collab-hub/.claude/worktrees/agent-adcad6bc44f765d03/.superpowers/sdd/task-2-report.md`
+- Modified: `C:/Users/24391/Documents/ai-collab-hub/project-status-report.html`
+- Report: `C:/Users/24391/Documents/ai-collab-hub/.superpowers/sdd/task-2-report.md`

@@ -42,23 +42,14 @@
 1. `handoff/claude-session-resume-2026-07-06.md`  
    先看本交接文档，获得接续上下文。
 
-2. `docs/superpowers/specs/2026-07-06-strong-assistant-workbench-design.md`  
-   这是已经确认过的方向 spec，定义了 Workflow OS 的定位、四个未来方向和推荐顺序。
+2. `.superpowers/sdd/task-2-report.md`  
+   Task 2 报告，记录视觉系统升级与验证结果。
 
-3. `docs/superpowers/plans/2026-07-06-strong-assistant-workbench-html.md`  
-   这是执行计划，Task 1~4 的标准都在这里。
+3. `.superpowers/sdd/task-3-report.md`  
+   Task 3 implementer 报告，记录正式方向内容写入与验证结果。
 
-4. `.superpowers/sdd/progress.md`  
-   当前只记录到 Task 2 完成；Task 3 还不能补记为 complete，因为 review 未 clean 结束。
-
-5. `project-status-report.html`  
-   当前 worktree 分支内的实际 deliverable。
-
-6. `.claude/worktrees/agent-adcad6bc44f765d03/.superpowers/sdd/task-3-report.md`  
-   Task 3 implementer 报告，说明已完成内容与验证结果。
-
-7. `.claude/worktrees/agent-adcad6bc44f765d03/.superpowers/sdd/review-73852c9..b7e59da.diff`  
-   已生成的 Task 3 review package，可直接给 reviewer 使用。
+4. `project-status-report.html`  
+   当前分支内的实际 deliverable，也是 review 与最终验证应对照的文件。
 
 ## What Is Already Done
 
@@ -114,24 +105,19 @@ Task 3 implementer verification already passed:
 ### 1. Task 3 review is still required
 Task 3 reviewer was started, then manually stopped because the session paused for the day.
 
-所以新会话第一步不是继续改代码，而是：
+当时的新会话第一步不是继续改代码，而是：
 - 重新发起一个 **Task 3 task-scoped review**
 - 输入材料直接使用：
-  - `.superpowers/sdd/task-3-brief.md`
-  - `.claude/worktrees/agent-adcad6bc44f765d03/.superpowers/sdd/task-3-report.md`
-  - `.claude/worktrees/agent-adcad6bc44f765d03/.superpowers/sdd/review-73852c9..b7e59da.diff`
+  - `project-status-report.html`
+  - `.superpowers/sdd/task-3-report.md`
+  - `handoff/claude-session-resume-2026-07-06.md`
 
-只有当 reviewer 给出：
-- Spec Compliance: ✅
-- 没有 Critical / Important finding
+现在这一步已经完成：
+- Task 3 review 已通过（Spec Compliance: ✅）
+- 未发现 Critical / Important finding
 
-才能：
-- 把 Task 3 标记完成
-- 在 `.superpowers/sdd/progress.md` 追加：
-  - `Task 3: complete (commits 73852c9..b7e59da, review clean)`
-
-### 2. Task 4 has not started
-Task 4 是最终本地验证，必须在 Task 3 review clean 之后执行。
+### 2. Task 4 final validation
+Task 4 是最终本地验证，已在本次续接中执行。
 
 Task 4 目标：
 - 启动本地预览
@@ -168,40 +154,33 @@ Task 4 目标：
 因此，新会话不要把这份 HTML 误改成纯愿景海报；它必须继续体现“扩能力之前先收权限面”的现实约束。
 
 ## Exact Next Action in a New Session
-新会话接手后，按这个顺序继续：
+若新会话继续收尾，按这个顺序继续：
 
 1. 进入仓库并确认当前分支是 `worktree-agent-adcad6bc44f765d03`
 2. 阅读本交接文档
-3. 阅读 spec 与 plan
-4. 恢复 **Task 3 reviewer**（或重新启动新的 task-scoped reviewer）
-5. 如果 Task 3 review clean：
-   - 标记 Task 3 completed
-   - 更新 `.superpowers/sdd/progress.md`
-6. 执行 Task 4 本地验证
-7. 如 Task 4 通过，再做最终 whole-branch review
-8. 最后再决定是否合并/整理到主仓库分支
+3. 阅读 `project-status-report.html`
+4. 阅读 `.superpowers/sdd/task-2-report.md` 与 `.superpowers/sdd/task-3-report.md`
+5. 如需再次确认，复跑针对 `project-status-report.html` 的 task-scoped review
+6. 视需要执行最终合并、整理或后续方向迭代
 
 ## Suggested Prompt for the Next Session
 如果想让下一次会话最快接上，可以直接这样说：
 
-> 请先阅读 `handoff/claude-session-resume-2026-07-06.md`，然后从 Task 3 的 review 继续，review 通过后再执行 Task 4，不要重做已经完成的 Task 1 和 Task 2。
+> 请先阅读 `handoff/claude-session-resume-2026-07-06.md`，然后基于 `project-status-report.html`、`.superpowers/sdd/task-2-report.md` 和 `.superpowers/sdd/task-3-report.md` 继续最后的合并或后续迭代，不要重做已经完成的 Task 1、Task 2、Task 3 review 和 Task 4 验证。
 
 ## Current Blockers
 无代码阻塞。
 
-当前唯一阻塞是流程性的：
-- Task 3 review 尚未完成
-- Task 4 尚未执行
+当前状态：
+- Task 3 review 已完成并通过
+- Task 4 最终验证已完成
+- 如需继续，重点已从验证切换为合并/整理或后续迭代
 
 ## Changed Files in This HTML Workstream
 - `project-status-report.html`
-- `docs/superpowers/specs/2026-07-06-strong-assistant-workbench-design.md`
-- `docs/superpowers/plans/2026-07-06-strong-assistant-workbench-html.md`
-- `.superpowers/sdd/progress.md`
-- `.superpowers/sdd/task-1-brief.md`
-- `.superpowers/sdd/task-2-brief.md`
-- `.superpowers/sdd/task-3-brief.md`
+- `.superpowers/sdd/task-2-report.md`
+- `.superpowers/sdd/task-3-report.md`
 - `handoff/claude-session-resume-2026-07-06.md`
 
 ## Final Note
-不要被主仓库根目录下另一个 `project-status-report.html` 的历史状态干扰。本次正在推进的有效 deliverable 是 **当前 worktree 分支内** 的 `project-status-report.html`。
+本次正在推进并已完成验证的 deliverable 是仓库根目录下的 `project-status-report.html`。
