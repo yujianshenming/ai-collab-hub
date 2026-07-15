@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>方案四 - 天空专注室</title>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <style>
+    :root { color-scheme:light; --ink:#2f3650; --muted:#8490aa; --sky:#eaf4ff; --paper:#fff; --line:#d9e4f1; --blue:#668ce8; --blue-soft:#dce8ff; --lilac:#a58ee4; --lilac-soft:#eee9fb; --coral:#ed8c83; --green:#66b99b; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-width:980px; min-height:100vh; overflow:hidden; font-family:"Microsoft YaHei UI","Segoe UI",sans-serif; color:var(--ink); background:#f4f8fd; }
+    button { font:inherit; color:inherit; }
+    button:focus-visible { outline:3px solid rgba(102,140,232,.27); outline-offset:2px; }
+    .app { display:grid; grid-template-columns:74px minmax(620px,1fr) 318px; height:100vh; }
+    .dock { display:flex; flex-direction:column; align-items:center; gap:12px; padding:16px 10px; border-right:1px solid var(--line); background:#fdfefe; }
+    .mark { display:grid; place-items:center; width:42px; height:42px; margin-bottom:18px; border-radius:14px; color:#fff; background:var(--blue); box-shadow:0 8px 18px rgba(102,140,232,.25); font-weight:900; }
+    .dock-btn { display:grid; place-items:center; width:42px; height:42px; border:0; border-radius:13px; color:#93a1bb; background:transparent; cursor:pointer; }
+    .dock-btn:hover,.dock-btn.active { color:var(--blue); background:var(--blue-soft); }
+    .dock-btn svg { width:18px; }
+    .dock-space { flex:1; }
+    .avatar { display:grid; place-items:center; width:34px; height:34px; border:2px solid #fff; border-radius:50%; color:#fff; background:var(--lilac); box-shadow:0 0 0 1px var(--line); font-size:11px; font-weight:800; }
+    .main { position:relative; min-width:0; min-height:0; overflow:auto; padding:0 32px 92px; background:linear-gradient(180deg,#edf6ff 0,#f7f9fd 270px,#f7f9fd 100%); }
+    .topbar { position:sticky; top:0; z-index:4; display:flex; align-items:center; min-height:66px; border-bottom:1px solid rgba(202,218,236,.72); background:rgba(237,246,255,.94); }
+    .topbar strong { font-size:13px; }
+    .date { margin-left:12px; color:var(--muted); font-size:10px; }
+    .top-actions { display:flex; gap:8px; margin-left:auto; }
+    .icon-btn,.soft-btn,.primary-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:36px; border-radius:12px; cursor:pointer; }
+    .icon-btn { width:36px; border:1px solid var(--line); background:rgba(255,255,255,.75); }
+    .soft-btn { padding:0 13px; border:1px solid var(--line); background:rgba(255,255,255,.78); font-size:11px; }
+    .primary-btn { padding:0 16px; border:0; color:#fff; background:var(--blue); box-shadow:0 8px 18px rgba(102,140,232,.23); font-size:11px; font-weight:800; }
+    .primary-btn.is-confirmed { background:var(--green); }
+    .greeting { display:grid; grid-template-columns:1fr auto; gap:20px; align-items:end; padding:28px 0 23px; }
+    .greeting small { color:var(--blue); font-size:10px; font-weight:800; letter-spacing:.13em; }
+    .greeting h1 { margin:7px 0 6px; font-size:clamp(27px,3.4vw,42px); letter-spacing:-.055em; }
+    .greeting p { margin:0; color:var(--muted); font-size:11px; }
+    .weather { display:flex; align-items:center; gap:11px; padding:11px 14px; border:1px solid #d2e2f3; border-radius:14px; background:rgba(255,255,255,.68); }
+    .weather svg { color:var(--coral); }
+    .weather strong { display:block; font-size:12px; }
+    .weather span { color:var(--muted); font-size:9px; }
+    .focus-card { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:17px; align-items:center; margin-bottom:25px; padding:18px 19px; border:1px solid #d5e0f0; border-radius:18px; background:var(--paper); box-shadow:0 12px 34px rgba(72,93,129,.08); }
+    .focus-icon { display:grid; place-items:center; width:48px; height:48px; border-radius:15px; color:var(--blue); background:var(--blue-soft); }
+    .focus-icon svg { width:21px; }
+    .focus-copy small { color:var(--coral); font-size:9px; font-weight:800; }
+    .focus-copy strong { display:block; margin:4px 0; font-size:15px; }
+    .focus-copy span { color:var(--muted); font-size:10px; }
+    .focus-progress { min-width:120px; text-align:right; }
+    .focus-progress b { display:block; color:var(--blue); font-size:20px; }
+    .focus-progress span { color:var(--muted); font-size:9px; }
+    .section-head { display:flex; align-items:end; margin-bottom:11px; }
+    .section-head h2 { margin:0; font-size:15px; }
+    .section-head p { margin:4px 0 0; color:var(--muted); font-size:9px; }
+    .filters { display:flex; gap:5px; margin-left:auto; }
+    .filter { padding:6px 10px; border:0; border-radius:9px; color:var(--muted); background:transparent; cursor:pointer; font-size:10px; }
+    .filter.is-active { color:var(--blue); background:var(--blue-soft); font-weight:800; }
+    .timeline { position:relative; padding-left:30px; }
+    .timeline::before { content:""; position:absolute; top:16px; bottom:15px; left:10px; width:1px; background:#cfdaea; }
+    .task-row { position:relative; display:grid; grid-template-columns:minmax(190px,1.4fr) minmax(120px,.8fr) 95px 30px; gap:14px; align-items:center; width:100%; min-height:66px; margin-bottom:8px; padding:11px 13px; border:1px solid transparent; border-radius:14px; background:rgba(255,255,255,.55); cursor:pointer; text-align:left; }
+    .task-row::before { content:""; position:absolute; left:-25px; width:11px; height:11px; border:3px solid #f7f9fd; border-radius:50%; background:#bdc8da; box-shadow:0 0 0 1px #bdc8da; }
+    .task-row:hover { border-color:var(--line); background:#fff; }
+    .task-row.is-selected { border-color:#cbdcff; background:#fff; box-shadow:0 9px 24px rgba(69,91,134,.08); }
+    .task-row.is-selected::before { background:var(--blue); box-shadow:0 0 0 1px var(--blue),0 0 0 5px var(--blue-soft); }
+    .task-copy strong { display:block; font-size:12px; }
+    .task-copy span,.task-meta { color:var(--muted); font-size:9px; }
+    .pill { justify-self:start; padding:5px 8px; border-radius:999px; color:#806fc0; background:var(--lilac-soft); font-size:9px; }
+    .pill.running { color:#c76159; background:#fbe4e1; }
+    .pill.done { color:#39886c; background:#dff1ea; }
+    .task-row > svg { width:16px; color:#a9b4c6; }
+    .detail { min-width:0; overflow:auto; border-left:1px solid var(--line); background:#fff; transition:.2s ease; }
+    .detail.is-collapsed { display:none; }
+    .detail-top { padding:23px 20px 19px; border-bottom:1px solid var(--line); background:#f9fbff; }
+    .detail-top small { color:var(--lilac); font-size:9px; font-weight:800; letter-spacing:.13em; }
+    .detail-top h3 { margin:8px 0 6px; font-size:19px; line-height:1.35; }
+    .detail-top p { margin:0; color:var(--muted); font-size:9px; }
+    .progress-panel { padding:18px 20px; border-bottom:1px solid var(--line); }
+    .progress-head { display:flex; align-items:center; }
+    .progress-head span { color:var(--muted); font-size:9px; }
+    .progress-head strong { margin-left:auto; color:var(--blue); font-size:17px; }
+    .bar { height:6px; margin-top:10px; border-radius:999px; background:#e8eef7; overflow:hidden; }
+    .bar i { display:block; width:40%; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--lilac),var(--blue)); }
+    .detail-section { padding:18px 20px 4px; }
+    .detail-section h4 { margin:0 0 11px; font-size:11px; }
+    .step { display:grid; grid-template-columns:27px minmax(0,1fr) auto; gap:9px; align-items:center; min-height:48px; }
+    .step-no { display:grid; place-items:center; width:25px; height:25px; border-radius:9px; color:#8d9ab1; background:#edf1f7; font-size:9px; }
+    .step.done .step-no { color:#fff; background:var(--green); }
+    .step.active .step-no { color:#fff; background:var(--blue); }
+    .step strong { display:block; font-size:10px; }
+    .step span { color:var(--muted); font-size:8px; }
+    .step em { color:var(--muted); font-size:8px; font-style:normal; }
+    .artifact { display:flex; align-items:center; gap:9px; margin-bottom:8px; padding:10px; border:1px solid var(--line); border-radius:11px; color:#5f6b83; font-size:9px; }
+    .artifact svg { width:15px; color:var(--lilac); }
+    .artifact em { margin-left:auto; color:var(--muted); font-size:8px; font-style:normal; }
+    .terminal { position:fixed; right:338px; bottom:16px; left:94px; z-index:7; height:44px; overflow:hidden; border:1px solid #d5e0ef; border-radius:14px; background:#fff; box-shadow:0 12px 30px rgba(65,86,121,.12); transition:.2s ease; }
+    .terminal.is-open { height:180px; }
+    .terminal-head { display:flex; align-items:center; width:100%; height:43px; padding:0 14px; border:0; border-bottom:1px solid var(--line); background:#fff; cursor:pointer; }
+    .terminal-head svg { width:15px; color:var(--blue); }
+    .terminal-head strong { margin-left:8px; font-size:10px; }
+    .terminal-head span { margin-left:auto; color:var(--green); font-size:8px; }
+    .terminal-body { padding:12px 14px; color:#7a879d; font:10px/1.7 Consolas,monospace; }
+    @media (max-width:1120px) { .app { grid-template-columns:68px minmax(650px,1fr); } .detail { display:none; } .terminal { right:18px; left:86px; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="dock">
+      <div class="mark">W</div>
+      <button class="dock-btn active" title="任务中心"><i data-lucide="circle-check-big"></i></button>
+      <button class="dock-btn" title="网页工作区"><i data-lucide="panels-top-left"></i></button>
+      <button class="dock-btn" title="文件"><i data-lucide="folder-open"></i></button>
+      <button class="dock-btn" title="插件"><i data-lucide="blocks"></i></button>
+      <button class="dock-btn" data-toggle-terminal title="终端"><i data-lucide="terminal"></i></button>
+      <div class="dock-space"></div>
+      <button class="dock-btn" title="设置"><i data-lucide="settings-2"></i></button>
+      <div class="avatar">遇</div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><strong>我的工作日</strong><span class="date">7 月 15 日 · 星期三</span><div class="top-actions"><button class="icon-btn" data-toggle-detail title="切换详情"><i data-lucide="panel-right"></i></button><button class="soft-btn"><i data-lucide="plus"></i>新任务</button><button class="primary-btn" data-demo-action><i data-lucide="play"></i>进入工作区</button></div></header>
+      <section class="greeting"><div><small>GOOD AFTERNOON</small><h1>今天，先完成最重要的一件事。</h1><p>任务、网页和插件都在手边，但不会同时抢走你的注意力。</p></div><div class="weather"><i data-lucide="cloud-sun"></i><span><strong>工作台状态晴朗</strong><span>终端与插件桥接已就绪</span></span></div></section>
+      <section class="focus-card"><div class="focus-icon"><i data-lucide="sparkles"></i></div><div class="focus-copy"><small>当前专注</small><strong data-detail-title>白城师范学院 · 辽金历史</strong><span data-detail-meta>本地测试 · 负责人 陈诗怡</span></div><div class="focus-progress"><b data-detail-progress>2/5</b><span>任务进度</span></div></section>
+      <div class="section-head"><div><h2>今日时间线</h2><p>按当前状态排列，点击任务查看右侧详情。</p></div><div class="filters"><button class="filter is-active" data-filter="all">全部</button><button class="filter" data-filter="running">进行中</button><button class="filter" data-filter="pending">待处理</button><button class="filter" data-filter="done">完成</button></div></div>
+      <div class="timeline">
+        <button class="task-row is-selected" data-task data-status="running" data-title="白城师范学院 · 辽金历史" data-meta="本地测试 · 负责人 陈诗怡" data-progress="2/5"><span class="task-copy"><strong>白城师范学院 · 辽金历史</strong><span>生成 dialogue.json 并确认训练步骤</span></span><span class="task-meta">13:30 · 训练平台</span><span class="pill running">进行中</span><i data-lucide="chevron-right"></i></button>
+        <button class="task-row" data-task data-status="pending" data-title="哈利波特的考试" data-meta="图算法实训 · 待启动" data-progress="1/5"><span class="task-copy"><strong>哈利波特的考试</strong><span>检查训练脚本与评价标准</span></span><span class="task-meta">15:00 · 课程任务</span><span class="pill">待处理</span><i data-lucide="chevron-right"></i></button>
+        <button class="task-row" data-task data-status="running" data-title="河北师范大学 · 数据结构" data-meta="评估上传 · 负责人 马双" data-progress="3/5"><span class="task-copy"><strong>河北师范大学 · 数据结构</strong><span>上传评估并等待报告回传</span></span><span class="task-meta">16:20 · 训练平台</span><span class="pill running">进行中</span><i data-lucide="chevron-right"></i></button>
+        <button class="task-row" data-task data-status="done" data-title="能力训练插件回归" data-meta="浏览器与工作台双端" data-progress="5/5"><span class="task-copy"><strong>能力训练插件回归</strong><span>注入和平台配置功能已验证</span></span><span class="task-meta">上午 · 系统维护</span><span class="pill done">已完成</span><i data-lucide="chevron-right"></i></button>
+      </div>
+    </main>
+    <aside class="detail" data-detail-panel>
+      <div class="detail-top"><small>SELECTED TASK</small><h3 data-detail-title>白城师范学院 · 辽金历史</h3><p data-detail-meta>本地测试 · 负责人 陈诗怡</p></div>
+      <div class="progress-panel"><div class="progress-head"><span>整体进度</span><strong data-detail-progress>2/5</strong></div><div class="bar"><i></i></div></div>
+      <div class="detail-section"><h4>执行流程</h4><div class="step done"><span class="step-no">1</span><span><strong>准备</strong><span>任务目录已建立</span></span><em>完成</em></div><div class="step active"><span class="step-no">2</span><span><strong>本地测试</strong><span>生成 dialogue.json</span></span><em>进行中</em></div><div class="step"><span class="step-no">3</span><span><strong>评估上传</strong><span>等待平台注入</span></span><em>等待</em></div><div class="step"><span class="step-no">4</span><span><strong>捕获报告</strong><span>下载并归档</span></span><em>等待</em></div></div>
+      <div class="detail-section"><h4>任务产物</h4><div class="artifact"><i data-lucide="file-text"></i><span>任务文档</span><em>已检测</em></div><div class="artifact"><i data-lucide="braces"></i><span>dialogue.json</span><em>生成中</em></div><div class="artifact"><i data-lucide="file-chart-column"></i><span>eval_report.pdf</span><em>等待</em></div></div>
+    </aside>
+    <section class="terminal" data-terminal><button class="terminal-head" data-toggle-terminal><i data-lucide="terminal"></i><strong>终端</strong><span>● 已连接</span></button><div class="terminal-body">PS C:\personal-workbench&gt; task status<br>任务目录已挂载<br>插件桥接正常<br>&gt; 等待下一条命令_</div></section>
+  </div>
+  <script src="./prototype.js"></script>
+</body>
+</html>
