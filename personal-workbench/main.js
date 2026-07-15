@@ -911,7 +911,8 @@ function normalizeWorkbenchPrefs(prefs = {}) {
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
   const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
   const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
-  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap };
+  const theme = ["sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "sky";
+  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap, theme };
 }
 
 function saveWorkbenchPrefs(prefs) {
@@ -928,7 +929,7 @@ function loadWorkbenchPrefs() {
   try {
     return normalizeWorkbenchPrefs(JSON.parse(fs.readFileSync(workbenchPrefsPath(), "utf8")));
   } catch {
-    return { cropSide: "bottom", cropPixels: 100 };
+    return normalizeWorkbenchPrefs();
   }
 }
 

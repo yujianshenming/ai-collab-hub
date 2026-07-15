@@ -26,12 +26,76 @@ const TASK_CENTER_ID = "__taskcenter__";
 
 const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
+const themeStorageKey = "personal_workbench_theme";
 let tabs = readTabs();
 let activeTabId = TASK_CENTER_ID;
 let rightSplitTabId = null;
 let bottomSplitTabId = null;
 let terminal;
 let fitAddon;
+
+const TERMINAL_THEMES = {
+  sky: {
+    background: "#ffffff",
+    foreground: "#2f3650",
+    cursor: "#668ce8",
+    selectionBackground: "#dce8ff",
+    black: "#3f4963",
+    blue: "#668ce8",
+    cyan: "#419fba",
+    green: "#459b7d",
+    magenta: "#8d79cf",
+    red: "#d96868",
+    white: "#eef4fb",
+    yellow: "#c7973c"
+  },
+  morning: {
+    background: "#fffdf7",
+    foreground: "#24312e",
+    cursor: "#2f887a",
+    selectionBackground: "#dcece5",
+    black: "#394943",
+    blue: "#3b6f91",
+    cyan: "#2f887a",
+    green: "#39845d",
+    magenta: "#80658d",
+    red: "#c25f42",
+    white: "#f4f1e9",
+    yellow: "#b98a31"
+  },
+  night: {
+    background: "#090f18",
+    foreground: "#e9f2ff",
+    cursor: "#54d8e8",
+    selectionBackground: "#24384c",
+    black: "#111927",
+    blue: "#66a5ff",
+    cyan: "#54d8e8",
+    green: "#63d5a1",
+    magenta: "#9f8cff",
+    red: "#ff7d7d",
+    white: "#e9f2ff",
+    yellow: "#f2c96d"
+  }
+};
+
+function normalizeWorkbenchTheme(theme) {
+  return Object.hasOwn(TERMINAL_THEMES, theme) ? theme : "sky";
+}
+
+function terminalThemeFor(theme) {
+  return TERMINAL_THEMES[normalizeWorkbenchTheme(theme)];
+}
+
+function applyWorkbenchTheme(theme) {
+  const normalized = normalizeWorkbenchTheme(theme);
+  document.body.dataset.theme = normalized;
+  localStorage.setItem(themeStorageKey, normalized);
+  if (terminal) terminal.options.theme = terminalThemeFor(normalized);
+  return normalized;
+}
+
+applyWorkbenchTheme(localStorage.getItem(themeStorageKey) || "sky");
 let pointerDrag = null;
 let weeklyTasks = [];
 let taskRailCollapsed = false;
@@ -185,6 +249,7 @@ const elements = {
   menuPrefsButton: document.querySelector("#menu-prefs-button"),
   prefsDialog: document.querySelector("#prefs-dialog"),
   prefsForm: document.querySelector("#prefs-form"),
+  prefTheme: document.querySelector("#pref-theme"),
   prefCropSide: document.querySelector("#pref-crop-side"),
   prefCropPixels: document.querySelector("#pref-crop-pixels"),
   prefTodoPath: document.querySelector("#pref-todo-path"),
@@ -416,14 +481,20 @@ function swapTabs(id1, id2) {
   return true;
 }
 
-function createTabViewport(tab) {
+function createTabViewport(tab, { deferWeb = true } = {}) {
   const viewport = document.createElement("div");
   viewport.className = "tab-viewport";
   viewport.dataset.id = tab.id;
 
   const type = tab.type || "web";
 
-  if (type === "web" || type === "local-web") {
+  if ((type === "web" || type === "local-web") && deferWeb) {
+    viewport.dataset.webDeferred = "true";
+    const placeholder = document.createElement("div");
+    placeholder.className = "webview-placeholder";
+    placeholder.textContent = "正在启动网页工作区…";
+    viewport.append(placeholder);
+  } else if (type === "web" || type === "local-web") {
     if (type === "local-web" && tab.localPath) {
       window.workbench.registerLocalApp(tab.id, tab.localPath);
     }
@@ -473,8 +544,7 @@ function createTabViewport(tab) {
     extPanel.querySelector(".tab-extension-close").addEventListener("click", () => {
       extPanel.classList.remove("open");
       extPanel.style.removeProperty("--tab-ext-width");
-      const extWebview = extPanel.querySelector("webview");
-      if (extWebview) extWebview.src = "about:blank";
+      extPanel.querySelector(".tab-extension-body")?.replaceChildren();
     });
 
     const resizer = document.createElement("div");
@@ -974,6 +1044,18 @@ function createTabViewport(tab) {
   }
 
   elements.webviewStack.append(viewport);
+  return viewport;
+}
+
+function ensureTabViewportLoaded(tabId) {
+  const viewport = document.querySelector(`.tab-viewport[data-id="${tabId}"]`);
+  if (!viewport?.dataset.webDeferred) return viewport;
+  const tab = tabs.find((candidate) => candidate.id === tabId);
+  if (!tab) return viewport;
+
+  const loadedViewport = createTabViewport(tab, { deferWeb: false });
+  viewport.remove();
+  return loadedViewport;
 }
 
 function activeWebview() {
@@ -1012,6 +1094,11 @@ function activateTab(id, { autoExpand = true } = {}) {
         localStorage.setItem("workbench_collapsed_categories", JSON.stringify(collapsedCategories));
         renderTabs();
       }
+    }
+
+    // 网页标签首次进入主视图或分屏时才创建 webview，避免启动时加载所有后台页面。
+    for (const visibleTabId of [activeTabId, rightSplitTabId, bottomSplitTabId]) {
+      if (visibleTabId && visibleTabId !== TASK_CENTER_ID) ensureTabViewportLoaded(visibleTabId);
     }
 
     elements.workspace.classList.toggle("task-center-active", isTaskCenter);
@@ -1211,20 +1298,7 @@ function initTerminal() {
     fontFamily: '"Cascadia Code", Consolas, monospace',
     fontSize: 13,
     lineHeight: 1.35,
-    theme: {
-      background: "#ffffff",
-      foreground: "#17324d",
-      cursor: "#3b82f6",
-      selectionBackground: "#dbeafe",
-      black: "#334155",
-      blue: "#2563eb",
-      cyan: "#0891b2",
-      green: "#059669",
-      magenta: "#7c3aed",
-      red: "#dc2626",
-      white: "#e2e8f0",
-      yellow: "#d97706"
-    }
+    theme: terminalThemeFor(document.body.dataset.theme)
   });
   fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
@@ -3465,7 +3539,7 @@ function toggleTabExtension(tabId, name, url) {
     // Close it
     extPanel.classList.remove("open");
     extPanel.style.removeProperty("--tab-ext-width");
-    if (existingWebview) existingWebview.src = "about:blank";
+    extBody.replaceChildren();
   } else {
     // Open it
     extTitle.textContent = name;
@@ -3600,6 +3674,7 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
   elements.menuMorePop.classList.remove("open");
   try {
     const prefs = await window.workbench.getWorkbenchPrefs();
+    elements.prefTheme.value = normalizeWorkbenchTheme(prefs?.theme);
     elements.prefCropSide.value = prefs?.cropSide || "bottom";
     elements.prefCropPixels.value = prefs?.cropPixels || 100;
     setTodoPathDisplay(prefs?.todoFilePath || "");
@@ -3608,6 +3683,7 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
       elements.prefPlatformMap.value = Object.keys(map).length ? JSON.stringify(map, null, 2) : "";
     }
   } catch {
+    elements.prefTheme.value = normalizeWorkbenchTheme(document.body.dataset.theme);
     elements.prefCropSide.value = "bottom";
     elements.prefCropPixels.value = 100;
     setTodoPathDisplay("");
@@ -3634,6 +3710,7 @@ elements.prefsForm?.addEventListener("submit", async (event) => {
     }
   }
   await window.workbench.setWorkbenchPrefs({
+    theme: applyWorkbenchTheme(elements.prefTheme.value),
     cropSide: elements.prefCropSide.value,
     cropPixels: Number(elements.prefCropPixels.value),
     platformFieldMap
@@ -4500,6 +4577,9 @@ renderTabs();
 activateTab(TASK_CENTER_ID);
 window.workbench.updateTabsList(tabs);
 setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
+window.workbench.getWorkbenchPrefs().then((prefs) => {
+  applyWorkbenchTheme(prefs?.theme);
+}).catch(() => {});
 loadWeeklyTasks();
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
 window.workbench.onUploadChooseFiles(handleUploadChooseFiles);

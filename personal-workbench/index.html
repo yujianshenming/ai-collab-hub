@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="./style.css" />
   </head>
-  <body>
+  <body data-theme="sky">
     <div class="app-shell">
       <aside class="sidebar">
         <header class="brand">
@@ -387,6 +387,15 @@
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
+        <label>
+          工作台主题
+          <select id="pref-theme">
+            <option value="sky">天空专注室（默认）</option>
+            <option value="morning">晨光事务所</option>
+            <option value="night">夜航指挥舱</option>
+          </select>
+          <small class="helper-text">主题会同步应用到任务中心、网页工作区、任务舱、分屏与终端。</small>
+        </label>
         <p class="helper-text">图片「裁切去水印」的默认参数：从所选方向裁掉固定像素，生成 _cropped 新文件，原图保留。</p>
         <label>
           裁切方向

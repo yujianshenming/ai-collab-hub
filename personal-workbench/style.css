@@ -1539,3 +1539,314 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 .rail-btn-warn:hover { background: var(--warn-bg); }
 .rail-btn-danger { border: 1px solid #fecaca; color: var(--danger); }
 .rail-btn-danger:hover { background: var(--danger-bg); }
+
+/* Production themes: 04 Sky Focus (default), 01 Morning Studio, 02 Night Command. */
+body[data-theme="sky"] {
+  color-scheme: light;
+  --bg-app: #f4f8fd;
+  --bg-surface: #ffffff;
+  --bg-sunken: #eaf4ff;
+  --border: #d9e4f1;
+  --border-strong: #c3d2e5;
+  --text-1: #2f3650;
+  --text-2: #5f6b83;
+  --text-3: #8490aa;
+  --primary: #668ce8;
+  --primary-strong: #4f72c8;
+  --primary-light: #edf3ff;
+  --primary-border: #cbdcff;
+  --cta: #ed8c83;
+  --cta-strong: #c76159;
+  --cta-light: #fbe4e1;
+  --warn: #a56b20;
+  --warn-bg: #fff8e9;
+  --warn-border: #f0d398;
+  --ok: #39886c;
+  --ok-bg: #dff1ea;
+  --danger: #cf5d63;
+  --danger-bg: #fff0f0;
+  --info: #597ed4;
+  --info-bg: #edf3ff;
+  --accent-gradient: linear-gradient(135deg, #7b9bec, #668ce8);
+  --shadow-sm: 0 1px 2px rgba(72, 93, 129, 0.06);
+  --shadow-md: 0 12px 34px rgba(72, 93, 129, 0.09);
+  --shadow-lg: 0 22px 54px rgba(72, 93, 129, 0.16);
+  --sidebar-width: 216px;
+  --right-sidebar-width: 318px;
+  --task-rail-width: 318px;
+  --terminal-height: 250px;
+}
+
+body[data-theme="morning"] {
+  color-scheme: light;
+  --bg-app: #f4f1e9;
+  --bg-surface: #fffdf7;
+  --bg-sunken: #ebe7dc;
+  --border: #d8ddd6;
+  --border-strong: #bcc7c1;
+  --text-1: #24312e;
+  --text-2: #52635d;
+  --text-3: #71807b;
+  --primary: #2f887a;
+  --primary-strong: #246c61;
+  --primary-light: #dcece5;
+  --primary-border: #a8cfc1;
+  --cta: #e87545;
+  --cta-strong: #ba5833;
+  --cta-light: #f9e4d8;
+  --warn: #9a6d16;
+  --warn-bg: #fff4cf;
+  --warn-border: #e6c76d;
+  --ok: #39845d;
+  --ok-bg: #e1f0e6;
+  --danger: #bd5548;
+  --danger-bg: #fbe7e2;
+  --info: #3b6f91;
+  --info-bg: #e5eff4;
+  --accent-gradient: linear-gradient(135deg, #3d9a8a, #2f887a);
+  --shadow-sm: 0 1px 2px rgba(36, 49, 46, 0.08);
+  --shadow-md: 4px 4px 0 rgba(36, 49, 46, 0.12);
+  --shadow-lg: 8px 8px 0 rgba(36, 49, 46, 0.16);
+  --sidebar-width: 214px;
+  --right-sidebar-width: 304px;
+  --task-rail-width: 304px;
+  --terminal-height: 250px;
+}
+
+body[data-theme="night"] {
+  color-scheme: dark;
+  --bg-app: #0b1019;
+  --bg-surface: #111927;
+  --bg-sunken: #172234;
+  --border: #2a3850;
+  --border-strong: #40536e;
+  --text-1: #e9f2ff;
+  --text-2: #bac8dc;
+  --text-3: #8292aa;
+  --primary: #54d8e8;
+  --primary-strong: #79e5f1;
+  --primary-light: #142533;
+  --primary-border: #2c5f71;
+  --cta: #ff9b62;
+  --cta-strong: #ffb589;
+  --cta-light: #39261f;
+  --warn: #f2c96d;
+  --warn-bg: #332b1e;
+  --warn-border: #66572c;
+  --ok: #63d5a1;
+  --ok-bg: #17352c;
+  --danger: #ff7d7d;
+  --danger-bg: #3b2028;
+  --info: #9f8cff;
+  --info-bg: #292440;
+  --accent-gradient: linear-gradient(135deg, #54d8e8, #739de9);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.34);
+  --shadow-lg: 0 24px 58px rgba(0, 0, 0, 0.48);
+  --sidebar-width: 230px;
+  --right-sidebar-width: 318px;
+  --task-rail-width: 318px;
+  --terminal-height: 260px;
+}
+
+body[data-theme] {
+  --bg-sidebar: var(--bg-surface);
+  --bg-panel: var(--bg-surface);
+  --border-color: var(--border);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --accent-color: var(--primary);
+  --accent-strong: var(--primary-strong);
+  --accent-light: var(--primary-light);
+  color: var(--text-primary);
+  background: var(--bg-app);
+}
+
+body[data-theme] .sidebar,
+body[data-theme] .right-sidebar,
+body[data-theme] .task-rail {
+  background: color-mix(in srgb, var(--bg-surface) 96%, transparent);
+}
+
+body[data-theme] .topbar,
+body[data-theme] .right-sidebar-header,
+body[data-theme] .bottom-sidebar-header {
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+}
+
+body[data-theme] .task-center-view {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--primary-light) 72%, var(--bg-app)) 0, var(--bg-app) 280px);
+}
+
+body[data-theme] .brand-mark {
+  background: var(--accent-gradient);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+body[data-theme] .tab-item:hover,
+body[data-theme] .quiet-button:hover,
+body[data-theme] .menu-pop button:hover {
+  background: color-mix(in srgb, var(--primary-light) 66%, var(--bg-surface));
+}
+
+body[data-theme] .tab-icon,
+body[data-theme] .extension-trigger-button,
+body[data-theme] .toast-message,
+body[data-theme] .right-sidebar-body,
+body[data-theme] .bottom-sidebar-body,
+body[data-theme] .terminal-panel,
+body[data-theme] .tab-extension-panel,
+body[data-theme] .tab-extension-header,
+body[data-theme] dialog,
+body[data-theme] input,
+body[data-theme] select,
+body[data-theme] textarea,
+body[data-theme] .import-row,
+body[data-theme] .extension-status-card {
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border-color: var(--border-color);
+}
+
+body[data-theme] .webview-placeholder {
+  display: grid;
+  flex: 1 1 auto;
+  place-items: center;
+  min-width: 0;
+  height: 100%;
+  color: var(--text-muted);
+  background: var(--bg-app);
+  font-size: 12px;
+}
+
+body[data-theme="sky"] .home-head h1::before {
+  content: "SKYLINE FOCUS";
+  display: block;
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+body[data-theme="sky"] .focus-card {
+  background: linear-gradient(155deg, #ffffff 32%, #edf3ff 100%);
+}
+
+body[data-theme="sky"] .task-card,
+body[data-theme="sky"] .stat-card {
+  border-radius: 16px;
+}
+
+body[data-theme="morning"] .sidebar {
+  background: #ebe7dc;
+}
+
+body[data-theme="morning"] .brand-mark {
+  border: 2px solid var(--text-1);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--text-1);
+}
+
+body[data-theme="morning"] .home-head h1::before {
+  content: "WEEKLY DESK";
+  display: block;
+  margin-bottom: 8px;
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+body[data-theme="morning"] .focus-card {
+  border: 2px solid var(--text-1);
+  background: #f9edbf;
+  box-shadow: 4px 4px 0 rgba(36, 49, 46, 0.88);
+}
+
+body[data-theme="morning"] .btn-cta,
+body[data-theme="morning"] .primary-button {
+  border: 2px solid var(--text-1);
+  background: var(--cta);
+  box-shadow: 3px 3px 0 var(--text-1);
+}
+
+body[data-theme="night"] .sidebar {
+  background: #080d15;
+}
+
+body[data-theme="night"] .workspace,
+body[data-theme="night"] .task-center-view {
+  background: linear-gradient(145deg, #0c131f, #101828 58%, #0b1220);
+}
+
+body[data-theme="night"] .topbar {
+  background: rgba(11, 18, 30, 0.94);
+}
+
+body[data-theme="night"] .home-head h1::before {
+  content: "NIGHT SHIFT / COMMAND";
+  display: block;
+  margin-bottom: 8px;
+  color: var(--primary);
+  font: 800 10px Consolas, monospace;
+  letter-spacing: 0.16em;
+}
+
+body[data-theme="night"] .tab-item.active,
+body[data-theme="night"] .task-card:hover {
+  border-color: #47778c;
+  background: #162635;
+}
+
+body[data-theme="night"] .focus-card {
+  border-color: var(--border-strong);
+  background: rgba(17, 25, 39, 0.9);
+}
+
+body[data-theme="night"] .stat-card,
+body[data-theme="night"] .task-card,
+body[data-theme="night"] .menu-pop,
+body[data-theme="night"] .subtask-popover,
+body[data-theme="night"] .tc-menu-pop {
+  background: #111927;
+}
+
+body[data-theme="night"] .btn-cta {
+  color: #071219;
+  background: var(--primary);
+  box-shadow: 0 0 18px rgba(84, 216, 232, 0.18);
+}
+
+body[data-theme="night"] .statusbar,
+body[data-theme="night"] .terminal-panel {
+  background: #090f18;
+}
+
+body[data-theme="night"] .terminal-head,
+body[data-theme="night"] .terminal-toolbar {
+  background: #111927;
+}
+
+@media (max-width: 1260px) {
+  body[data-theme] {
+    --sidebar-width: 196px;
+    --right-sidebar-width: 286px;
+    --task-rail-width: 286px;
+  }
+  .task-center-view { padding-inline: 22px; }
+  .task-grid { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
+}
+
+@media (max-width: 1050px) {
+  body[data-theme] {
+    --sidebar-width: 178px;
+    --right-sidebar-width: 260px;
+    --task-rail-width: 270px;
+  }
+  .crumb span { display: none; }
+  .task-center-view { padding-inline: 18px; }
+  .home-head { align-items: flex-start; gap: 14px; }
+  .home-head-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
