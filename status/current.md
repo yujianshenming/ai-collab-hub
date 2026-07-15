@@ -1,7 +1,7 @@
 # Current Status
 
 ## Active Goal
-个人工作台 V3.4「平台填写助手」已开发完成、回归验收通过，进入收尾阶段：合入 master 并准备 V3.5 规划。
+个人工作台 V3.4「平台填写助手」已开发完成、回归验收通过，进入收尾阶段：补真机上传验证、合入 master，并准备 V3.5 规划。
 
 ## Current Owner
 产品经理（V3.4 回归已通过验收，推进合入 master 与 V3.5 规划）
@@ -21,9 +21,9 @@
 4. **文档对齐**：已将 status/current.md、roadmap、personal-workbench/README.md、tasks/active.md 对齐至 V3.4 真实状态（此前最多落后 5 个版本，是「感觉乱」的根因）；并新增 `personal-workbench-overview.html` 项目全景介绍页。
 
 ## Next Step
-1. 将 `codex/personal-workbench` 合入 `master`（V3.4 体验修复提交 3c95d55 + 回归测试套件 + 文档对齐）。
-2. 人工补一击：真机点一次网页上传，确认 CDP 注入路径，闭环 P1 #2（机制已健全，仅缺真机验证）。
-3. 启动 V3.5 规划（候选：平台全自动填卡、提示词自动归位、任务文档快速归档）。
+1. 人工补一击：真机点一次网页上传，确认 CDP 注入路径，闭环 P1 #2（机制已健全，仅缺真机验证）。
+2. 将 `codex/personal-workbench` 合入 `master`（V3.4 体验修复提交 3c95d55 + 回归测试套件 + 文档对齐）。
+3. 启动 V3.5 规划（优先方向：增强任务、文件、页面、报告之间的协作，建设强辅助工作台；后续增强项再按该方向拆解）。
 
 ## Known Risks
 - 回归清单登记 16 个已知缺陷（P1×2 已修 / P2×8 / P3×6），P2 含本地端口占用静默失败、debugger 重复注册导致浮层弹两次、上传请求 Map 泄漏等，需按版本排期清理。

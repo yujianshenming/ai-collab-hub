@@ -1128,6 +1128,7 @@ function fitWebviewZoom() {
     if (!webview) return;
     try {
       webview.setZoomFactor?.(1.0);
+      webview.executeJavaScript?.("window.dispatchEvent(new Event('resize'));").catch(() => {});
     } catch (error) {
       console.warn("设置 Zoom 失败（Webview 实例尚未就绪）：", error);
     }
@@ -3455,11 +3456,11 @@ function toggleTabExtension(tabId, name, url) {
     showToast("当前标签页不支持扩展面板", "error");
     return;
   }
-  
+
   // Check if this extension is already open
   const existingWebview = extBody.querySelector("webview");
   const isOpen = extPanel.classList.contains("open") && existingWebview && existingWebview.src === url;
-  
+
   if (isOpen) {
     // Close it
     extPanel.classList.remove("open");
@@ -3469,7 +3470,7 @@ function toggleTabExtension(tabId, name, url) {
     // Open it
     extTitle.textContent = name;
     extPanel.classList.add("open");
-    
+
     // Clear and create/re-use webview
     extBody.replaceChildren();
     const extWebview = document.createElement("webview");
@@ -3478,9 +3479,25 @@ function toggleTabExtension(tabId, name, url) {
     extWebview.partition = "persist:personal-workbench";
     extWebview.preload = "./preload-popup.js";
     extWebview.setAttribute("webpreferences", "contextIsolation=no");
+    extWebview.addEventListener("dom-ready", () => {
+      console.info(`[扩展面板] ${name} 已就绪: ${url}`);
+    });
+    extWebview.addEventListener("console-message", (event) => {
+      const message = `[扩展面板:${name}] ${event.message}`;
+      if (event.level >= 2) {
+        console.error(message);
+      } else {
+        console.info(message);
+      }
+    });
+    extWebview.addEventListener("did-fail-load", (event) => {
+      const detail = `${event.errorCode || ""} ${event.errorDescription || "扩展页面加载失败"}`.trim();
+      console.error(`[扩展面板:${name}] 加载失败: ${detail}`);
+      showToast(`扩展面板加载失败：${name}`, "error");
+    });
     extBody.append(extWebview);
   }
-  
+
   setTimeout(() => {
     fitWebviewZoom();
   }, 230);

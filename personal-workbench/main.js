@@ -213,11 +213,26 @@ function handleCommandLineArgs(args) {
 }
 const workbenchPartition = "persist:personal-workbench";
 const localServerPort = 38924;
+const extensionApiBaseUrl = "https://cloudapi.polymas.com";
+const extensionAuthCookieUrl = "https://hike-teaching-center.polymas.com/";
+const extensionAuthCookieName = "ai-poly";
 const downloadRoot = path.join(__dirname, "temp");
 const weeklyTasksPath = path.join(__dirname, "..", "tasks", "weekly_tasks.json");
 
 function workbenchSession() {
   return session.fromPartition(workbenchPartition);
+}
+
+function extensionDebugLog(event, details = {}) {
+  try {
+    const logPath = path.join(app.getPath("userData"), "extension-debug.log");
+    const line = JSON.stringify({
+      time: new Date().toISOString(),
+      event,
+      ...details
+    });
+    fs.appendFileSync(logPath, `${line}\n`, "utf8");
+  } catch {}
 }
 
 function createWindow() {
@@ -441,6 +456,78 @@ async function getWorkbenchCookies(details = {}) {
   }
 }
 
+async function getExtensionAuth() {
+  const cookies = await getWorkbenchCookies({ url: extensionAuthCookieUrl });
+  const authorization = cookies.find((cookie) => cookie.name === extensionAuthCookieName)?.value || "";
+  return {
+    authorization,
+    cookieHeader: cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ")
+  };
+}
+
+function resolveExtensionApiUrl(endpoint = "") {
+  const resolved = new URL(String(endpoint || "/"), extensionApiBaseUrl);
+  if (resolved.origin !== extensionApiBaseUrl) {
+    throw new Error("Unsupported extension API origin");
+  }
+  return resolved.toString();
+}
+
+async function requestExtensionApi(payload = {}) {
+  const { authorization, cookieHeader } = await getExtensionAuth();
+  const endpoint = String(payload.endpoint || "");
+  extensionDebugLog("api-request:start", {
+    endpoint,
+    method: payload.method || "GET",
+    hasAuthorization: Boolean(authorization),
+    cookieNames: cookieHeader
+      ? cookieHeader.split(";").map((item) => item.trim().split("=")[0]).filter(Boolean)
+      : [],
+    bodyKeys: payload.body && typeof payload.body === "object" ? Object.keys(payload.body) : []
+  });
+  if (!authorization && !cookieHeader) {
+    extensionDebugLog("api-request:no-auth", { endpoint });
+    return { success: false, error: "Failed to get auth info" };
+  }
+
+  const headers = {
+    "Content-Type": "application/json",
+    ...(payload.headers && typeof payload.headers === "object" ? payload.headers : {})
+  };
+  if (authorization) headers.Authorization = authorization;
+  if (cookieHeader) headers.Cookie = cookieHeader;
+
+  try {
+    const requestUrl = resolveExtensionApiUrl(endpoint);
+    const response = await fetch(requestUrl, {
+      method: payload.method || "GET",
+      headers,
+      body: payload.body ? JSON.stringify(payload.body) : undefined
+    });
+    const rawText = await response.text();
+    let data = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {}
+    extensionDebugLog("api-request:response", {
+      endpoint,
+      status: response.status,
+      ok: response.ok,
+      responseKeys: data && typeof data === "object" ? Object.keys(data) : [],
+      dataType: Array.isArray(data?.data) ? "data-array" : typeof data?.data,
+      dataLength: Array.isArray(data?.data) ? data.data.length : null,
+      code: data?.code ?? data?.status ?? null,
+      message: data?.message ?? data?.msg ?? data?.error ?? null,
+      textPreview: rawText.slice(0, 300)
+    });
+    if (!response.ok) return { success: false, error: `HTTP error: ${response.status}` };
+    return { success: true, data };
+  } catch (error) {
+    extensionDebugLog("api-request:error", { endpoint, error: error?.message || String(error) });
+    return { success: false, error: error?.message || String(error) };
+  }
+}
+
 function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, { "Content-Type": "application/json" });
   res.end(JSON.stringify(payload));
@@ -535,7 +622,7 @@ function startLocalServer() {
     const parsedUrl = new URL(req.url, `http://127.0.0.1:${localServerPort}`);
     const token = parsedUrl.searchParams.get("token") || req.headers["authorization"]?.split(" ")[1];
 
-    const secureRoutes = ["/cookies", "/events", "/broadcast", "/state", "/tabs", "/active-tab", "/active-task"];
+    const secureRoutes = ["/cookies", "/events", "/broadcast", "/state", "/tabs", "/active-tab", "/active-task", "/extension-debug-log"];
     if (secureRoutes.includes(parsedUrl.pathname)) {
       if (token !== sessionToken) {
         res.writeHead(401, { "Content-Type": "application/json" });
@@ -573,6 +660,11 @@ function startLocalServer() {
     }
 
     if (parsedUrl.pathname === "/active-tab") {
+      extensionDebugLog("local-server:active-tab", {
+        hasUrl: Boolean(activeTabInfo.url),
+        url: activeTabInfo.url || "",
+        title: activeTabInfo.title || ""
+      });
       sendJson(res, 200, activeTabInfo);
       return;
     }
@@ -583,7 +675,28 @@ function startLocalServer() {
       const name = parsedUrl.searchParams.get("name");
       if (url) filter.url = url;
       if (name) filter.name = name;
-      sendJson(res, 200, await getWorkbenchCookies(filter));
+      const cookies = await getWorkbenchCookies(filter);
+      extensionDebugLog("local-server:cookies", {
+        url: filter.url || "",
+        name: filter.name || "",
+        count: cookies.length,
+        cookieNames: cookies.map((cookie) => cookie.name)
+      });
+      sendJson(res, 200, cookies);
+      return;
+    }
+
+    if (parsedUrl.pathname === "/extension-debug-log" && req.method === "POST") {
+      try {
+        const body = await getRequestBody(req);
+        extensionDebugLog(
+          String(body.event || "extension-background"),
+          body.details && typeof body.details === "object" ? body.details : {}
+        );
+        sendJson(res, 200, { success: true });
+      } catch (err) {
+        sendJson(res, 400, { error: err.message });
+      }
       return;
     }
 
@@ -664,10 +777,13 @@ function startLocalServer() {
     sendJson(res, 404, { error: "Not found" });
   });
 
-  localServer.on("error", () => {
+  localServer.on("error", (error) => {
+    extensionDebugLog("local-server:error", { port: localServerPort, error: error?.message || String(error) });
     localServer = null;
   });
-  localServer.listen(localServerPort, "127.0.0.1");
+  localServer.listen(localServerPort, "127.0.0.1", () => {
+    extensionDebugLog("local-server:listening", { port: localServerPort });
+  });
 
   heartbeatInterval = setInterval(() => {
     sseClients.forEach((res) => {
@@ -990,6 +1106,155 @@ function readExtensionIcon(extensionPath, iconPath) {
   return mimeType ? `data:${mimeType};base64,${fs.readFileSync(fullPath).toString("base64")}` : "";
 }
 
+function extensionStoragePolyfillSource(token) {
+  return `;(() => {
+  const chromeApi = globalThis.chrome = globalThis.chrome || {};
+  const workbenchApiBase = "http://127.0.0.1:${localServerPort}";
+  const workbenchToken = ${JSON.stringify(token)};
+  const workbenchFetchJson = async (path) => {
+    const response = await fetch(\`\${workbenchApiBase}\${path}\`, {
+      headers: { Authorization: \`Bearer \${workbenchToken}\` }
+    });
+    if (!response.ok) throw new Error(\`Workbench API \${path} failed: \${response.status}\`);
+    return response.json();
+  };
+  const workbenchDebugLog = (event, details = {}) => {
+    fetch(\`\${workbenchApiBase}/extension-debug-log\`, {
+      method: "POST",
+      headers: {
+        Authorization: \`Bearer \${workbenchToken}\`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ event, details })
+    }).catch(() => {});
+  };
+  const asChromeAsync = (executor) => (...args) => {
+    const callback = typeof args[args.length - 1] === "function" ? args.pop() : null;
+    const promise = Promise.resolve().then(() => executor(...args));
+    if (callback) {
+      promise.then(
+        (value) => callback(value),
+        (error) => {
+          chromeApi.runtime = chromeApi.runtime || {};
+          chromeApi.runtime.lastError = { message: error?.message || String(error) };
+          try { callback(); } finally { delete chromeApi.runtime.lastError; }
+        }
+      );
+      return undefined;
+    }
+    return promise;
+  };
+  const listeners = new Set();
+  const notify = (changes, areaName) => {
+    for (const listener of listeners) {
+      try { listener(changes, areaName); } catch {}
+    }
+  };
+  const createArea = (areaName) => {
+    const store = Object.create(null);
+    return {
+      get: asChromeAsync(async (keys) => {
+        if (keys == null) return { ...store };
+        if (typeof keys === "string") return { [keys]: store[keys] };
+        if (Array.isArray(keys)) return keys.reduce((acc, key) => {
+          acc[key] = store[key];
+          return acc;
+        }, {});
+        if (typeof keys === "object") return Object.keys(keys).reduce((acc, key) => {
+          acc[key] = Object.prototype.hasOwnProperty.call(store, key) ? store[key] : keys[key];
+          return acc;
+        }, {});
+        return {};
+      }),
+      set: asChromeAsync(async (items = {}) => {
+        const changes = {};
+        for (const [key, value] of Object.entries(items)) {
+          changes[key] = { oldValue: store[key], newValue: value };
+          store[key] = value;
+        }
+        notify(changes, areaName);
+      }),
+      remove: asChromeAsync(async (keys) => {
+        for (const key of Array.isArray(keys) ? keys : [keys]) delete store[key];
+      }),
+      clear: asChromeAsync(async () => {
+        for (const key of Object.keys(store)) delete store[key];
+      }),
+      setAccessLevel: asChromeAsync(async () => {})
+    };
+  };
+  chromeApi.storage = chromeApi.storage || {};
+  chromeApi.storage.local = chromeApi.storage.local || createArea("local");
+  chromeApi.storage.sync = chromeApi.storage.sync || createArea("sync");
+  chromeApi.storage.session = chromeApi.storage.session || createArea("session");
+  chromeApi.storage.onChanged = chromeApi.storage.onChanged || {
+    addListener(listener) { if (typeof listener === "function") listeners.add(listener); },
+    removeListener(listener) { listeners.delete(listener); },
+    hasListener(listener) { return listeners.has(listener); }
+  };
+  chromeApi.tabs = chromeApi.tabs || {};
+  chromeApi.tabs.query = asChromeAsync(async () => {
+    const tab = await workbenchFetchJson("/active-tab");
+    const result = tab && tab.url
+      ? [{ id: 9999, url: tab.url, title: tab.title || "", active: true, currentWindow: true }]
+      : [];
+    workbenchDebugLog("background-polyfill:tabs-query", { hasUrl: Boolean(tab && tab.url), count: result.length });
+    return result;
+  });
+  chromeApi.tabs.onUpdated = chromeApi.tabs.onUpdated || {
+    addListener() {},
+    removeListener() {},
+    hasListener() { return false; }
+  };
+  chromeApi.cookies = chromeApi.cookies || {};
+  chromeApi.cookies.getAll = asChromeAsync(async (details = {}) => {
+    const params = new URLSearchParams();
+    if (details.url) params.set("url", details.url);
+    if (details.name) params.set("name", details.name);
+    const cookies = await workbenchFetchJson(\`/cookies?\${params.toString()}\`);
+    workbenchDebugLog("background-polyfill:cookies-get-all", {
+      url: details.url || "",
+      name: details.name || "",
+      count: Array.isArray(cookies) ? cookies.length : 0,
+      cookieNames: Array.isArray(cookies) ? cookies.map((cookie) => cookie.name) : []
+    });
+    return cookies;
+  });
+  chromeApi.cookies.get = asChromeAsync(async (details = {}) => {
+    const cookies = await chromeApi.cookies.getAll(details);
+    return cookies[0] || null;
+  });
+})();`;
+}
+
+function prepareExtensionForElectron(extensionPath, manifest = {}) {
+  const backgroundScript = manifest.background?.service_worker || manifest.background?.scripts?.[0];
+  if (!backgroundScript) return extensionPath;
+  const sourceBackgroundPath = path.join(extensionPath, backgroundScript);
+  if (!fs.existsSync(sourceBackgroundPath)) return extensionPath;
+
+  const hash = crypto
+    .createHash("sha1")
+    .update(`${extensionPath}\0${fs.statSync(sourceBackgroundPath).mtimeMs}`)
+    .digest("hex")
+    .slice(0, 12);
+  const targetRoot = path.join(app.getPath("userData"), "extension-compat", hash);
+  fs.rmSync(targetRoot, { recursive: true, force: true });
+  fs.cpSync(extensionPath, targetRoot, { recursive: true });
+
+  const targetBackgroundPath = path.join(targetRoot, backgroundScript);
+  const backgroundSource = fs.readFileSync(targetBackgroundPath, "utf8");
+  if (!backgroundSource.includes("workbench-electron-storage-polyfill")) {
+    fs.writeFileSync(
+      targetBackgroundPath,
+      `/* workbench-electron-storage-polyfill */\n${extensionStoragePolyfillSource(sessionToken)}\n${backgroundSource}`,
+      "utf8"
+    );
+  }
+  extensionDebugLog("extension:compat-prepared", { source: extensionPath, target: targetRoot, backgroundScript });
+  return targetRoot;
+}
+
 async function loadConfiguredExtensions(entries = readExtensionConfig()) {
   const results = [];
   for (const entry of entries.filter((item) => item && item.enabled !== false)) {
@@ -1007,8 +1272,9 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
       const defaultIcon = typeof action.default_icon === "string"
         ? action.default_icon
         : action.default_icon?.["16"] || action.default_icon?.["32"] || manifest.icons?.["16"] || manifest.icons?.["32"] || "";
+      const loadPath = prepareExtensionForElectron(extensionPath, manifest);
 
-      const extension = await workbenchSession().extensions.loadExtension(extensionPath, {
+      const extension = await workbenchSession().extensions.loadExtension(loadPath, {
         allowFileAccess: true
       });
       results.push({
@@ -1018,6 +1284,7 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
         name: extension.name,
         version: extension.version,
         path: extensionPath,
+        loadPath,
         popupPage: action.default_popup || manifest.side_panel?.default_path || manifest.options_page || manifest.options_ui?.page || "",
         defaultIcon,
         iconDataUrl: readExtensionIcon(extensionPath, defaultIcon),
@@ -1343,6 +1610,13 @@ function registerIpc() {
   ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
   ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
     return getWorkbenchCookies(details);
+  });
+  ipcMain.on("workbench:extension-debug-log", (_event, payload = {}) => {
+    const { event = "preload", details = {} } = payload && typeof payload === "object" ? payload : {};
+    extensionDebugLog(String(event), details && typeof details === "object" ? details : {});
+  });
+  ipcMain.handle("workbench:extension-api-request", async (_event, payload = {}) => {
+    return requestExtensionApi(payload);
   });
   ipcMain.handle("tasks:read-weekly", () => readWeeklyTasks());
   ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
