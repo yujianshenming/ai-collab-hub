@@ -107,6 +107,73 @@ async function launch() {
       JSON.stringify({ textLength: clipboard.text.length, htmlLength: clipboard.html.length })
     );
 
+    if (await page.locator("#report-copy-table").count()) {
+      await page.locator("#report-copy-table").click();
+      await page.waitForTimeout(250);
+      const tableClipboard = await app.evaluate(({ clipboard }) => ({
+        text: clipboard.readText(),
+        html: clipboard.readHTML()
+      }));
+      record(
+        "table copy writes HTML table and TSV for existing table paste",
+        tableClipboard.text.includes("\t")
+          && tableClipboard.text.includes("广东药科大学")
+          && tableClipboard.html.includes('data-workbench-weekly-report-table="true"')
+          && tableClipboard.html.includes("<th")
+          && tableClipboard.html.includes("<td"),
+        JSON.stringify({ textLength: tableClipboard.text.length, htmlLength: tableClipboard.html.length })
+      );
+    }
+
+    const currentPeriod = await page.locator("#report-period").inputValue();
+    await page.locator("#report-save-default-author").click();
+    await page.waitForTimeout(200);
+    const savedDefaults = await page.evaluate(async () => {
+      const prefs = await window.workbench.getWorkbenchPrefs();
+      return prefs?.weeklyReportDefaults || null;
+    });
+    record(
+      "save-default-author stores weeklyReportDefaults.author in prefs",
+      savedDefaults?.author === "刘毅",
+      JSON.stringify(savedDefaults)
+    );
+
+    await page.locator("#report-period-prev").click();
+    await page.waitForTimeout(350);
+    const previousPeriod = await page.locator("#report-period").inputValue();
+    const prevAuthor = await page.locator("#report-author").inputValue();
+    record(
+      "previous-week control opens an adjacent period draft with default author",
+      Boolean(previousPeriod) && previousPeriod !== currentPeriod && prevAuthor === "刘毅",
+      JSON.stringify({ currentPeriod, previousPeriod, prevAuthor })
+    );
+
+    await page.locator("#report-title").fill("历史周次草稿");
+    await page.locator("#report-save").click();
+    await page.waitForFunction(() => document.querySelector("#report-save-state")?.textContent === "已保存");
+    await page.waitForFunction(() => document.querySelectorAll("#report-history-list .report-history-item").length >= 2);
+    const historyCount = await page.locator("#report-history-list .report-history-item").count();
+    record("history list shows at least two saved periods", historyCount >= 2, `count=${historyCount}`);
+
+    await page.locator(`#report-history-list .report-history-item[data-report-period="${currentPeriod}"]`).click();
+    await page.waitForTimeout(300);
+    const restoredTitle = await page.locator("#report-title").inputValue();
+    const restoredAuthor = await page.locator("#report-author").inputValue();
+    record(
+      "history item switches back to the original saved weekly report",
+      restoredTitle === "M7W2周报测试" && restoredAuthor === "刘毅",
+      JSON.stringify({ restoredTitle, restoredAuthor })
+    );
+
+    await page.locator("#report-generate").click();
+    await page.waitForTimeout(200);
+    const noteAfterGenerate = await page.locator('#report-rows-body tr').nth(1).locator('textarea[data-report-field="note"]').inputValue();
+    record(
+      "regenerate from tasks keeps manual row notes",
+      noteAfterGenerate === "下周继续跟进第二个子任务",
+      noteAfterGenerate
+    );
+
     await app.close();
     app = null;
     ({ app, page } = await launch());

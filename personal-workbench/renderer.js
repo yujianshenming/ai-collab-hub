@@ -210,6 +210,7 @@ const elements = {
   weeklyReportView: document.querySelector("#weekly-report-view"),
   reportGenerate: document.querySelector("#report-generate"),
   reportSave: document.querySelector("#report-save"),
+  reportCopyTable: document.querySelector("#report-copy-table"),
   reportCopy: document.querySelector("#report-copy"),
   reportPeriod: document.querySelector("#report-period"),
   reportTitle: document.querySelector("#report-title"),
@@ -226,6 +227,14 @@ const elements = {
   reportPreview: document.querySelector("#report-preview"),
   reportExportHtml: document.querySelector("#report-export-html"),
   reportExportMarkdown: document.querySelector("#report-export-markdown"),
+  reportExportDocx: document.querySelector("#report-export-docx"),
+  reportPeriodPrev: document.querySelector("#report-period-prev"),
+  reportPeriodNext: document.querySelector("#report-period-next"),
+  reportSaveDefaultAuthor: document.querySelector("#report-save-default-author"),
+  reportHistoryList: document.querySelector("#report-history-list"),
+  reportHistoryCount: document.querySelector("#report-history-count"),
+  prefReportAuthor: document.querySelector("#pref-report-author"),
+  prefReportTitlePattern: document.querySelector("#pref-report-title-pattern"),
   homeWeekSub: document.querySelector("#home-week-sub"),
   statTotal: document.querySelector("#stat-total"),
   statRunning: document.querySelector("#stat-running"),
@@ -2713,6 +2722,57 @@ function reportItemId(prefix = "item") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+let weeklyReportDefaults = { author: "", titlePattern: "" };
+
+function normalizeWeeklyReportDefaults(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    author: String(source.author || "").trim().slice(0, 80),
+    titlePattern: String(source.titlePattern || "").trim().slice(0, 120)
+  };
+}
+
+function applyReportTitlePattern(periodKey, pattern = "") {
+  const key = String(periodKey || currentReportPeriod());
+  const monday = dateFromReportPeriod(key);
+  const weekOfMonth = Math.floor((monday.getUTCDate() - 1) / 7) + 1;
+  const year = monday.getUTCFullYear();
+  const month = monday.getUTCMonth() + 1;
+  const isoWeek = String(getIsoWeekNumber(monday)).padStart(2, "0");
+  const trimmed = String(pattern || "").trim();
+  if (!trimmed) return `M${month}W${weekOfMonth}周报`;
+  return trimmed
+    .replaceAll("{period}", key)
+    .replaceAll("{year}", String(year))
+    .replaceAll("{isoWeek}", isoWeek)
+    .replaceAll("{month}", String(month))
+    .replaceAll("{weekOfMonth}", String(weekOfMonth));
+}
+
+function shiftReportPeriod(periodKey, deltaWeeks = 0) {
+  const monday = dateFromReportPeriod(periodKey);
+  monday.setUTCDate(monday.getUTCDate() + Number(deltaWeeks || 0) * 7);
+  return currentReportPeriod(new Date(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate()));
+}
+
+async function loadWeeklyReportDefaults() {
+  try {
+    const prefs = await window.workbench.getWorkbenchPrefs();
+    weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs?.weeklyReportDefaults);
+  } catch (error) {
+    weeklyReportDefaults = { author: "", titlePattern: "" };
+    console.error("读取周报默认偏好失败:", error);
+  }
+  return weeklyReportDefaults;
+}
+
+async function saveWeeklyReportDefaults(partial = {}) {
+  const next = normalizeWeeklyReportDefaults({ ...weeklyReportDefaults, ...partial });
+  const prefs = await window.workbench.setWorkbenchPrefs({ weeklyReportDefaults: next });
+  weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs?.weeklyReportDefaults || next);
+  return weeklyReportDefaults;
+}
+
 function currentReportPeriod(date = new Date()) {
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   const dayNumber = target.getUTCDay() || 7;
@@ -2733,9 +2793,7 @@ function dateFromReportPeriod(periodKey) {
 }
 
 function reportTitleForPeriod(periodKey) {
-  const monday = dateFromReportPeriod(periodKey);
-  const weekOfMonth = Math.floor((monday.getUTCDate() - 1) / 7) + 1;
-  return `M${monday.getUTCMonth() + 1}W${weekOfMonth}周报`;
+  return applyReportTitlePattern(periodKey, weeklyReportDefaults.titlePattern);
 }
 
 function reportDateRangeForPeriod(periodKey) {
@@ -2787,9 +2845,14 @@ function newWeeklyReport(periodKey = currentReportPeriod()) {
     id: `report-${periodKey}`,
     periodKey,
     title: reportTitleForPeriod(periodKey),
+    author: weeklyReportDefaults.author || "",
     dateRange: reportDateRangeForPeriod(periodKey)
   });
 }
+
+window.applyReportTitlePattern = applyReportTitlePattern;
+window.shiftReportPeriod = shiftReportPeriod;
+window.normalizeWeeklyReportDefaults = normalizeWeeklyReportDefaults;
 
 function taskReportProgress(task) {
   const subtasks = taskSubtasks(task);
@@ -2827,6 +2890,35 @@ function markWeeklyReportDirty() {
 
 function reportCellStyle() {
   return "border:1px solid #d7dee6;padding:7px 8px;vertical-align:top;";
+}
+
+const WEEKLY_REPORT_TABLE_HEADINGS = [
+  "课程名称",
+  "学校名称",
+  "任务名称",
+  "任务进度",
+  "任务数量",
+  "任务状态",
+  "本周建议情况描述"
+];
+
+function weeklyReportTableHtml(report) {
+  const safeReport = normalizeWeeklyReport(report);
+  const rows = safeReport.rows.length
+    ? safeReport.rows.map((row) => [row.course, row.school, row.taskName, row.progress, row.quantity, row.status, row.note])
+    : [["暂无量化任务", "", "", "", "", "", ""]];
+  return `<table data-workbench-weekly-report-table="true" style="width:100%;border-collapse:collapse;table-layout:fixed;">
+    <thead><tr>${WEEKLY_REPORT_TABLE_HEADINGS.map((heading) => `<th style="${reportCellStyle()}background:#f3f6f8;text-align:left;font-weight:700;">${heading}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((row) => `<tr>${row.map((value) => `<td style="${reportCellStyle()}">${escapeHtml(value)}</td>`).join("")}</tr>`).join("")}</tbody>
+  </table>`;
+}
+
+function weeklyReportTablePlainText(report) {
+  const safeReport = normalizeWeeklyReport(report);
+  const rows = safeReport.rows.length
+    ? safeReport.rows.map((row) => [row.course, row.school, row.taskName, row.progress, row.quantity, row.status, row.note])
+    : [["暂无量化任务", "", "", "", "", "", ""]];
+  return [WEEKLY_REPORT_TABLE_HEADINGS, ...rows].map((row) => row.join("\t")).join("\n");
 }
 
 function weeklyReportHtmlBody(report) {
@@ -2923,6 +3015,27 @@ function renderReportTextList(container, items, listName, emptyText) {
     </div>`).join("");
 }
 
+function renderReportHistoryList() {
+  if (!elements.reportHistoryList) return;
+  const saved = [...weeklyReports]
+    .map((report) => normalizeWeeklyReport(report))
+    .sort((a, b) => String(b.periodKey).localeCompare(String(a.periodKey)));
+  if (elements.reportHistoryCount) {
+    elements.reportHistoryCount.textContent = `${saved.length} 周`;
+  }
+  if (!saved.length) {
+    elements.reportHistoryList.innerHTML = '<div class="report-history-empty">还没有已保存的周报。编辑后点「保存草稿」会出现在这里。</div>';
+    return;
+  }
+  const activeKey = activeWeeklyReport?.periodKey || "";
+  elements.reportHistoryList.innerHTML = saved.map((report) => `
+    <button class="report-history-item${report.periodKey === activeKey ? " active" : ""}" type="button" data-report-period="${escapeHtml(report.periodKey)}" title="${escapeHtml(report.title)}">
+      <strong>${escapeHtml(report.periodKey)}</strong>
+      <span>${escapeHtml(report.title || "未命名周报")}</span>
+      <em>${escapeHtml(report.author || "未填姓名")} · ${report.rows.length} 项</em>
+    </button>`).join("");
+}
+
 function renderWeeklyReportCenter() {
   if (!elements.weeklyReportView || !activeWeeklyReport) return;
   const report = normalizeWeeklyReport(activeWeeklyReport);
@@ -2933,6 +3046,7 @@ function renderWeeklyReportCenter() {
   elements.reportRange.value = report.dateRange;
   elements.reportSaveState.textContent = weeklyReportDirty ? "未保存" : "已保存";
   elements.reportRowCount.textContent = `${report.rows.length} 项`;
+  renderReportHistoryList();
   elements.reportRowsBody.innerHTML = report.rows.map((row, index) => `
     <tr data-report-row-index="${index}">
       <td><input data-report-field="course" type="text" value="${escapeHtml(row.course)}" placeholder="课程名称"></td>
@@ -2966,6 +3080,7 @@ async function persistWeeklyReport() {
 
 async function loadWeeklyReports() {
   try {
+    await loadWeeklyReportDefaults();
     const rawReports = await window.workbench.readWeeklyReports();
     const reportsByPeriod = new Map();
     (Array.isArray(rawReports) ? rawReports : []).forEach((report) => {
@@ -3016,15 +3131,28 @@ async function copyWeeklyReportToClipboard() {
   showToast("周报已复制，可直接粘贴到企业微信文档", "success");
 }
 
+async function copyWeeklyReportTableToClipboard() {
+  if (!activeWeeklyReport) return;
+  const result = await window.workbench.copyWeeklyReport({
+    text: weeklyReportTablePlainText(activeWeeklyReport),
+    html: weeklyReportTableHtml(activeWeeklyReport)
+  });
+  if (!result?.success) throw new Error(result?.error || "复制周报表格失败");
+  showToast("表格已复制，可粘贴到目标表格的首个单元格", "success");
+}
+
 async function exportWeeklyReport(format) {
   if (!activeWeeklyReport) return;
   const isMarkdown = format === "markdown";
   const result = await window.workbench.exportWeeklyReport({
     format,
-    content: isMarkdown ? weeklyReportMarkdown(activeWeeklyReport) : weeklyReportHtmlDocument(activeWeeklyReport),
+    content: format === "docx"
+      ? ""
+      : isMarkdown ? weeklyReportMarkdown(activeWeeklyReport) : weeklyReportHtmlDocument(activeWeeklyReport),
+    report: activeWeeklyReport,
     filename: `${activeWeeklyReport.periodKey}-${activeWeeklyReport.title}`
   });
-  if (result?.success) showToast(`已导出 ${isMarkdown ? "Markdown" : "HTML"}`, "success");
+  if (result?.success) showToast(`已导出 ${format === "docx" ? "Word 文档" : isMarkdown ? "Markdown" : "HTML"}`, "success");
   else if (!result?.canceled) throw new Error(result?.error || "导出周报失败");
 }
 
@@ -3032,10 +3160,16 @@ function setupWeeklyReportEvents() {
   elements.navWeeklyReport?.addEventListener("click", () => activateTab(WEEKLY_REPORT_ID));
   elements.reportGenerate?.addEventListener("click", () => {
     if (!activeWeeklyReport) return;
+    const hadRows = Array.isArray(activeWeeklyReport.rows) && activeWeeklyReport.rows.length > 0;
     activeWeeklyReport.rows = generateReportRowsFromTasks(activeWeeklyReport);
     markWeeklyReportDirty();
     renderWeeklyReportCenter();
-    showToast(`已从 ${weeklyTasks.length} 项任务生成周报初稿`, "success");
+    showToast(
+      hadRows
+        ? `已从 ${weeklyTasks.length} 项任务刷新，手动备注已保留`
+        : `已从 ${weeklyTasks.length} 项任务生成周报初稿`,
+      "success"
+    );
   });
   elements.reportSave?.addEventListener("click", async () => {
     try {
@@ -3054,6 +3188,14 @@ function setupWeeklyReportEvents() {
       showToast("复制周报失败", "error");
     }
   });
+  elements.reportCopyTable?.addEventListener("click", async () => {
+    try {
+      await copyWeeklyReportTableToClipboard();
+    } catch (error) {
+      console.error("复制周报表格失败:", error);
+      showToast("复制周报表格失败", "error");
+    }
+  });
   elements.reportExportHtml?.addEventListener("click", async () => {
     try {
       await exportWeeklyReport("html");
@@ -3070,6 +3212,14 @@ function setupWeeklyReportEvents() {
       showToast("导出 Markdown 失败", "error");
     }
   });
+  elements.reportExportDocx?.addEventListener("click", async () => {
+    try {
+      await exportWeeklyReport("docx");
+    } catch (error) {
+      console.error("导出 Word 文档失败:", error);
+      showToast("导出 Word 文档失败", "error");
+    }
+  });
   elements.reportPeriod?.addEventListener("change", async () => {
     const nextPeriod = elements.reportPeriod.value;
     try {
@@ -3077,6 +3227,38 @@ function setupWeeklyReportEvents() {
     } catch (error) {
       elements.reportPeriod.value = activeWeeklyReport?.periodKey || currentReportPeriod();
       showToast("切换周报周期前保存失败", "error");
+    }
+  });
+  async function jumpWeeklyReportByWeeks(delta) {
+    const base = activeWeeklyReport?.periodKey || currentReportPeriod();
+    try {
+      await switchWeeklyReportPeriod(shiftReportPeriod(base, delta));
+    } catch (error) {
+      console.error("切换周报周期失败:", error);
+      showToast("切换周报周期前保存失败", "error");
+    }
+  }
+  elements.reportPeriodPrev?.addEventListener("click", () => jumpWeeklyReportByWeeks(-1));
+  elements.reportPeriodNext?.addEventListener("click", () => jumpWeeklyReportByWeeks(1));
+  elements.reportHistoryList?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-report-period]");
+    if (!button) return;
+    try {
+      await switchWeeklyReportPeriod(button.dataset.reportPeriod);
+    } catch (error) {
+      console.error("切换历史周报失败:", error);
+      showToast("切换历史周报前保存失败", "error");
+    }
+  });
+  elements.reportSaveDefaultAuthor?.addEventListener("click", async () => {
+    const author = String(elements.reportAuthor?.value || activeWeeklyReport?.author || "").trim();
+    try {
+      await saveWeeklyReportDefaults({ author });
+      if (elements.prefReportAuthor) elements.prefReportAuthor.value = weeklyReportDefaults.author;
+      showToast(author ? `已将「${author}」设为新建周报默认姓名` : "已清空周报默认姓名", "success");
+    } catch (error) {
+      console.error("保存周报默认姓名失败:", error);
+      showToast("保存周报默认姓名失败", "error");
     }
   });
   [
@@ -4566,6 +4748,9 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
     elements.prefCropSide.value = prefs?.cropSide || "bottom";
     elements.prefCropPixels.value = prefs?.cropPixels || 100;
     setTodoPathDisplay(prefs?.todoFilePath || "");
+    weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs?.weeklyReportDefaults);
+    if (elements.prefReportAuthor) elements.prefReportAuthor.value = weeklyReportDefaults.author;
+    if (elements.prefReportTitlePattern) elements.prefReportTitlePattern.value = weeklyReportDefaults.titlePattern;
     if (elements.prefPlatformMap) {
       const map = prefs?.platformFieldMap || {};
       elements.prefPlatformMap.value = Object.keys(map).length ? JSON.stringify(map, null, 2) : "";
@@ -4575,6 +4760,9 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
     elements.prefCropSide.value = "bottom";
     elements.prefCropPixels.value = 100;
     setTodoPathDisplay("");
+    weeklyReportDefaults = { author: "", titlePattern: "" };
+    if (elements.prefReportAuthor) elements.prefReportAuthor.value = "";
+    if (elements.prefReportTitlePattern) elements.prefReportTitlePattern.value = "";
     if (elements.prefPlatformMap) elements.prefPlatformMap.value = "";
   }
   elements.prefsDialog.showModal();
@@ -4597,12 +4785,18 @@ elements.prefsForm?.addEventListener("submit", async (event) => {
       return;
     }
   }
-  await window.workbench.setWorkbenchPrefs({
+  const weeklyReportDefaultsNext = normalizeWeeklyReportDefaults({
+    author: elements.prefReportAuthor?.value || "",
+    titlePattern: elements.prefReportTitlePattern?.value || ""
+  });
+  const savedPrefs = await window.workbench.setWorkbenchPrefs({
     theme: applyWorkbenchTheme(elements.prefTheme.value),
     cropSide: elements.prefCropSide.value,
     cropPixels: Number(elements.prefCropPixels.value),
-    platformFieldMap
+    platformFieldMap,
+    weeklyReportDefaults: weeklyReportDefaultsNext
   });
+  weeklyReportDefaults = normalizeWeeklyReportDefaults(savedPrefs?.weeklyReportDefaults || weeklyReportDefaultsNext);
   elements.prefsDialog.close();
   showToast("工作台偏好已保存", "success");
 });

@@ -179,6 +179,7 @@
             <div class="report-page-actions">
               <button id="report-generate" class="btn btn-ghost" type="button">从任务生成</button>
               <button id="report-save" class="btn btn-ghost" type="button">保存草稿</button>
+              <button id="report-copy-table" class="btn btn-ghost" type="button" title="复制表格，可粘贴到目标表格首个单元格">复制表格</button>
               <button id="report-copy" class="btn btn-teal" type="button">复制周报</button>
             </div>
           </div>
@@ -194,10 +195,28 @@
                   <span id="report-save-state" class="report-save-state">未保存</span>
                 </div>
                 <div class="report-meta-grid">
-                  <label>周次<input id="report-period" type="week" /></label>
+                  <label class="report-period-field">周次
+                    <span class="report-period-row">
+                      <button id="report-period-prev" class="icon-button" type="button" title="上一周" aria-label="上一周">‹</button>
+                      <input id="report-period" type="week" />
+                      <button id="report-period-next" class="icon-button" type="button" title="下一周" aria-label="下一周">›</button>
+                    </span>
+                  </label>
                   <label>标题<input id="report-title" type="text" placeholder="M7W2周报" /></label>
-                  <label>姓名<input id="report-author" type="text" placeholder="你的名字" /></label>
+                  <label class="report-author-field">姓名
+                    <span class="report-author-row">
+                      <input id="report-author" type="text" placeholder="你的名字" />
+                      <button id="report-save-default-author" class="btn btn-ghost btn-sm" type="button" title="把当前姓名存为新建周报默认值">存为默认</button>
+                    </span>
+                  </label>
                   <label>日期范围<input id="report-range" type="text" placeholder="例如：7月6日 - 7月12日" /></label>
+                </div>
+                <div class="report-history-block">
+                  <div class="report-subsection-heading">
+                    <h3>已保存周次</h3>
+                    <span id="report-history-count" class="report-count">0 周</span>
+                  </div>
+                  <div id="report-history-list" class="report-history-list" aria-label="历史周报列表"></div>
                 </div>
               </div>
 
@@ -258,6 +277,7 @@
                 <div class="report-export-actions">
                   <button id="report-export-html" class="icon-button" type="button" title="导出 HTML" aria-label="导出 HTML">HTML</button>
                   <button id="report-export-markdown" class="icon-button" type="button" title="导出 Markdown" aria-label="导出 Markdown">MD</button>
+                  <button id="report-export-docx" class="icon-button" type="button" title="导出 Word 文档" aria-label="导出 Word 文档">DOCX</button>
                 </div>
               </div>
               <article id="report-preview" class="weekly-report-document"></article>
@@ -527,6 +547,16 @@
             <code id="pref-todo-path" class="pref-path">未设置</code>
             <button id="pref-todo-change" class="secondary-button" type="button">更改</button>
           </span>
+        </label>
+        <label>
+          周报默认姓名
+          <input id="pref-report-author" type="text" maxlength="80" placeholder="新建周报时自动填入" />
+          <small class="helper-text">只影响新建周次草稿，不会覆盖已保存周报的姓名。</small>
+        </label>
+        <label>
+          周报标题模板
+          <input id="pref-report-title-pattern" type="text" maxlength="120" placeholder="留空则使用 M{month}W{weekOfMonth}周报" />
+          <small class="helper-text">可选占位符：{period} {year} {isoWeek} {month} {weekOfMonth}</small>
         </label>
         <label>
           平台字段映射 platformFieldMap（V3.4 预研）

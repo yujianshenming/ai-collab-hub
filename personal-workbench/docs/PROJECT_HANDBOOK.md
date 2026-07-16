@@ -67,8 +67,8 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | Chrome 扩展兼容层 | 已实现，依赖真实扩展与登录态 | `preload-popup.js`、扩展兼容 IPC |
 | 平台字段试注入 | 预研 / 辅助能力 | `platformFieldMap`、`platform:test-inject` |
 | 主题 | 已实现 | `sky`、`morning`、`night` |
-| 周报中心首版 | 已实现 | `__weeklyreport__`、周报编辑器和预览 |
-| 直接上传企业微信/腾讯文档 | 未实现 | 当前使用 HTML + 纯文本剪贴板 |
+| 周报中心首版 | 已实现 | `__weeklyreport__`、历史周次、模板姓名/标题、编辑器、预览、HTML/Markdown/DOCX 导出和表格复制 |
+| 直接上传企业微信/腾讯文档 | 未实现 | 当前使用 HTML/纯文本剪贴板或 DOCX 文件导出 |
 
 ### 周报中心首版行为
 
@@ -76,9 +76,13 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 - 表格字段为：课程名称、学校名称、任务名称、任务进度、任务数量、任务状态、本周建议情况描述。
 - 支持手动添加/删除表格行、非量化事项和产品需求 / Bug / 卡点 / 疑问。
 - 周报按 `YYYY-Www` 保存；标题、姓名和日期范围可编辑。
-- 复制操作同时写入纯文本和 HTML，适合粘贴到企业微信文档。
-- 支持导出 HTML 和 Markdown；导出时由主进程打开系统保存对话框。
+- 支持历史周次列表（已保存草稿）、上一周 / 下一周切换，以及 `type=week` 输入任意跳转；切换前若有未保存修改会先落盘。
+- 新建周次草稿可使用偏好模板：默认姓名 `weeklyReportDefaults.author`、可选标题模式 `weeklyReportDefaults.titlePattern`（占位符 `{period}` `{year}` `{isoWeek}` `{month}` `{weekOfMonth}`）；周报信息区提供「存为默认」姓名按钮。模板只影响新建草稿，不覆盖已保存周报。
+- 「从任务生成」按 `sourceTaskId` 合并刷新进度/学校/课程等字段，保留手动备注与无来源任务的手动行；已有草稿时 toast 提示“手动备注已保留”。
+- 完整周报复制操作同时写入纯文本和 HTML，适合粘贴到企业微信文档；“复制表格”只写入表格 HTML 和 TSV，适合粘贴到目标表格首个单元格。
+- 支持导出 HTML、Markdown 和 DOCX；导出时由主进程打开系统保存对话框，DOCX 由 `weekly-report-docx.js` 生成 OOXML 文档并保留表格。
 - 周报数据保存到 Electron `userData/weekly-reports.json`，与 `tasks/weekly_tasks.json` 分离，并有备份与临时文件原子替换。
+- 周报默认值保存在 `userData/workbench-prefs.json` 的 `weeklyReportDefaults` 字段。
 
 ## 4. 系统架构
 
@@ -150,7 +154,7 @@ flowchart LR
 
 - `weekly-reports.json`：周报快照。
 - `backups/weekly_tasks.json`、`backups/weekly-reports.json`：写入前备份。
-- `workbench-prefs.json`：主题、裁切、待办路径、平台字段映射等偏好。
+- `workbench-prefs.json`：主题、裁切、待办路径、平台字段映射、周报默认姓名/标题模板等偏好。
 - `extensions.json`：扩展配置；可能包含本机路径，只能留在本机。
 - `extension-debug.log`：扩展兼容调试日志。
 - Electron session、缓存和其他运行时文件。
@@ -255,7 +259,7 @@ npm run dist
 
 - 真实浏览器中的扩展注入和重新打开扩展后的行为。
 - 已登录的能力训练平台上传、评估和报告下载。
-- 企业微信文档对 HTML 剪贴板的实际粘贴效果。
+- 企业微信文档对完整周报 HTML、表格 HTML/TSV 剪贴板的实际粘贴效果；目标编辑器可能选择新建表格或按 TSV 填充已有表格，这是第三方粘贴策略，应用无法强制改变。
 - Windows 桌面启动脚本、`node-pty` 和不同代理/登录态下的启动。
 
 任何测试失败都应先保存错误日志和复现步骤，再修改代码；不要为了让测试变绿而删除测试或放宽安全边界。
@@ -302,11 +306,12 @@ git diff --stat
 - 扩展兼容层依赖第三方扩展版本、登录态和平台页面结构，自动化测试不能覆盖所有真实页面变化。
 - 平台字段注入是辅助能力，selector 映射失效时应提供明确反馈，而不是静默写入。
 - 周报目前没有企业微信/腾讯文档 API 直连，也没有多人协作冲突合并；它是本地快照 + 剪贴板工作流。
+- DOCX 导出保留周报表格结构；企业微信/腾讯文档的实际粘贴行为仍由目标编辑器决定，表格专用复制通过 HTML + TSV 提高兼容性但不承诺填充每一种已有表格。
 - 完整 E2E 会启动多个 Electron 实例，开发时应使用测试隔离环境，不能让夹具污染真实用户数据。
 
 ### 推荐顺序
 
-1. 继续完善周报：历史周次选择、模板字段配置、人工验收粘贴效果。
+1. 周报历史周次与模板字段已落地；继续人工验收企业微信粘贴效果，并视需要增强标题模板 UI 提示。
 2. 处理 `regression-checklist.md` 中仍未关闭的真实浏览器和上传边界风险。
 3. 在不改变 IPC 的前提下拆分任务状态、文件总线、扩展兼容和报告生成模块。
 4. 只有在真实需求明确后，才评估企业微信/腾讯文档的官方接口或导出格式。
@@ -315,6 +320,8 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-16 | feat | 周报历史周次列表、上一周/下一周、默认姓名与标题模板（prefs.weeklyReportDefaults）；从任务再生成保留手动备注 | `main.js`、`renderer.js`、`index.html`、`style.css`、`tests/weekly-report-helpers.test.js`、`tests/weekly-report.e2e.js`、`docs/FEATURE_PLAN_THREE.md` | `npm test`；`node tests/weekly-report.e2e.js` |
+| 2026-07-16 | feat | 增加 DOCX 周报导出、完整周报 HTML/纯文本复制和表格专用 HTML/TSV 复制，明确已有表格粘贴受目标编辑器控制 | `weekly-report-docx.js`、`main.js`、`renderer.js`、`index.html`、`tests/weekly-report-docx.test.js`、`tests/weekly-report.e2e.js` | `npm run test:all` |
 | 2026-07-16 | feat | 新增周报中心：从任务生成、独立快照、手动编辑、预览、企业微信富文本复制、HTML/Markdown 导出 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm run test:all` |
 | 2026-07-16 | docs | 建立本项目主手册、维护规则和代码入口 | `docs/PROJECT_HANDBOOK.md`、`README.md`、`AGENTS.md` | 文档入口与状态核对 |
 

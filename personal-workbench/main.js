@@ -1045,13 +1045,22 @@ function normalizePlatformFieldMap(value) {
   return map;
 }
 
+function normalizeWeeklyReportDefaults(value = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    author: String(source.author || "").trim().slice(0, 80),
+    titlePattern: String(source.titlePattern || "").trim().slice(0, 120)
+  };
+}
+
 function normalizeWorkbenchPrefs(prefs = {}) {
   const side = ["bottom", "top", "right"].includes(prefs.cropSide) ? prefs.cropSide : "bottom";
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
   const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
   const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
   const theme = ["sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "sky";
-  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap, theme };
+  const weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs.weeklyReportDefaults);
+  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap, theme, weeklyReportDefaults };
 }
 
 function saveWorkbenchPrefs(prefs) {
@@ -1889,10 +1898,29 @@ function registerIpc() {
     return { success: true };
   });
   ipcMain.handle("reports:export-weekly", async (_event, payload = {}) => {
-    const format = payload.format === "markdown" ? "markdown" : "html";
+    const format = payload.format === "docx"
+      ? "docx"
+      : payload.format === "markdown"
+        ? "markdown"
+        : "html";
+    const suggestedName = safePathPart(payload.filename || "weekly-report") || "weekly-report";
+    if (format === "docx") {
+      try {
+        const { buildWeeklyReportDocx } = require("./weekly-report-docx");
+        const buffer = await buildWeeklyReportDocx(payload.report || {});
+        const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+          defaultPath: path.join(app.getPath("documents"), `${suggestedName}.docx`),
+          filters: [{ name: "Word Document", extensions: ["docx"] }]
+        });
+        if (result.canceled || !result.filePath) return { success: false, canceled: true };
+        fs.writeFileSync(result.filePath, buffer);
+        return { success: true, path: result.filePath };
+      } catch (error) {
+        return { success: false, error: error?.message || String(error) };
+      }
+    }
     const content = typeof payload.content === "string" ? payload.content : "";
     if (!content) return { success: false, error: "Weekly report content is empty" };
-    const suggestedName = safePathPart(payload.filename || "weekly-report") || "weekly-report";
     const extension = format === "markdown" ? "md" : "html";
     const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
       defaultPath: path.join(app.getPath("documents"), `${suggestedName}.${extension}`),
