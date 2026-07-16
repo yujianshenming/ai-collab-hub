@@ -1346,6 +1346,41 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
   font-family: Consolas, monospace;
 }
 .file-chip.empty { color: var(--text-muted); }
+button.file-chip {
+  cursor: pointer;
+  font: inherit;
+  font-family: Consolas, monospace;
+  line-height: 1.2;
+}
+button.file-chip:disabled {
+  cursor: default;
+}
+.file-chip.ready {
+  color: #0f766e;
+  background: color-mix(in srgb, var(--ok-bg, #ecfdf5) 85%, #fff);
+  border-color: color-mix(in srgb, #14b8a6 35%, var(--border-color));
+  font-weight: 700;
+}
+.file-chip.ready:hover {
+  color: #fff;
+  background: linear-gradient(135deg, #0d9488, #0f766e);
+  border-color: transparent;
+}
+.file-chip.missing {
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  border-style: dashed;
+  opacity: 0.86;
+}
+.file-chip[data-artifact="cards"].ready {
+  color: #1d4ed8;
+  background: color-mix(in srgb, #dbeafe 80%, #fff);
+  border-color: color-mix(in srgb, #3b82f6 30%, var(--border-color));
+}
+.file-chip[data-artifact="cards"].ready:hover {
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+}
 .tc-foot { display: flex; align-items: center; gap: 8px; padding-top: 4px; border-top: 1px dashed var(--border-color); }
 .tc-foot .spacer { flex: 1; }
 .tc-menu-wrap { position: relative; }

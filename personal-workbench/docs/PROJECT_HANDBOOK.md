@@ -64,6 +64,8 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 任务暂停、继续、子任务 | 已实现并有 E2E | `startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
 | 任务筛选 / 搜索 / 归档 | 已实现 | `matchesTaskQuery`、`filterTasks`、任务中心 filter bar、卡片归档菜单 |
 | 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘、图片裁切 |
+| 任务产物徽章 | 已实现 | 任务卡对话/报告/卡片徽章；文件夹回扫；`taskArtifactsFromPathsAndFiles` |
+| 报告到达系统通知 | 已实现 | 主进程 `Notification`（窗口未聚焦 + 活动任务 report 完成） |
 | `cards.md` 卡片舱 | 已实现并有 E2E | `renderRailCards`、卡片字段复制和持久化 |
 | Chrome 扩展兼容层 | 已实现，依赖真实扩展与登录态 | `preload-popup.js`、扩展兼容 IPC |
 | 平台字段试注入 | 预研 / 辅助能力 | `platformFieldMap`、`platform:test-inject` |
@@ -229,9 +231,11 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 2. 开始任务后，主进程在下载根目录下建立任务文件夹，并通过 `task:active-update` 注册当前任务。
 3. 符合来源域名和流水线步骤的下载进入任务文件夹；没有活动任务时回到系统 Downloads 行为。
 4. `fs.watch` 观察活动任务文件夹，任务舱读取 `dialogue.json`、`eval_report.pdf`、`cards.md` 等产物。
-5. 上传通过 CDP 文件选择器拦截，把已选文件注入网页；系统文件选择器作为降级路径。
-6. 任务结束后按用户选择清理临时任务目录；任务记录保留必要的状态和产物路径。
-7. 周报中心只读取当前任务，生成可编辑快照；保存周报不会改变第 1 至 6 步的数据。
+5. 任务中心异步 `listTaskFiles` 回扫未归档任务的产物徽章（对话/报告/卡片）；路径为空且发现标准文件名时可写回 `chatLogPath`/`reportPath`，已有路径不覆盖。
+6. 评估报告下载完成：renderer 前台 toast；若主窗口未聚焦，主进程发系统 `Notification`（仅活动任务 `type=report`）。
+7. 上传通过 CDP 文件选择器拦截，把已选文件注入网页；系统文件选择器作为降级路径。
+8. 任务结束后按用户选择清理临时任务目录；任务记录保留必要的状态和产物路径。
+9. 周报中心只读取当前任务，生成可编辑快照；保存周报不会改变第 1 至 8 步的数据。
 
 ## 7. 安全边界
 
@@ -263,6 +267,7 @@ npm run dist
 
 - 真实浏览器中的扩展注入和重新打开扩展后的行为。
 - 已登录的能力训练平台上传、评估和报告下载。
+- 报告下载完成后：前台 toast；窗口在后台时 Windows 系统通知（依赖通知权限与专注助手设置）。
 - 企业微信文档对完整周报 HTML、表格 HTML/TSV 剪贴板的实际粘贴效果；目标编辑器可能选择新建表格或按 TSV 填充已有表格，这是第三方粘贴策略，应用无法强制改变。
 - Windows 桌面启动脚本、`node-pty` 和不同代理/登录态下的启动。
 
@@ -311,11 +316,13 @@ git diff --stat
 - 平台字段注入是辅助能力，selector 映射失效时应提供明确反馈，而不是静默写入。
 - 周报目前没有企业微信/腾讯文档 API 直连，也没有多人协作冲突合并；它是本地快照 + 剪贴板工作流。
 - DOCX 导出保留周报表格结构；企业微信/腾讯文档的实际粘贴行为仍由目标编辑器决定，表格专用复制通过 HTML + TSV 提高兼容性但不承诺填充每一种已有表格。
+- 系统通知依赖 Windows 通知权限与专注助手；失败时静默，不阻塞下载归档与前台 toast。
+- 任务卡产物回扫依赖 `listTaskFiles` 与内存 cache；任务很多时靠 debounce + 仅未归档任务回扫控制 IPC 频率。
 - 完整 E2E 会启动多个 Electron 实例，开发时应使用测试隔离环境，不能让夹具污染真实用户数据。
 
 ### 推荐顺序
 
-1. 周报历史周次与模板字段已落地；继续人工验收企业微信粘贴效果，并视需要增强标题模板 UI 提示。
+1. A/B/C 三项计划功能已落地；继续人工验收企业微信粘贴与 Windows 后台报告通知。
 2. 处理 `regression-checklist.md` 中仍未关闭的真实浏览器和上传边界风险。
 3. 在不改变 IPC 的前提下拆分任务状态、文件总线、扩展兼容和报告生成模块。
 4. 只有在真实需求明确后，才评估企业微信/腾讯文档的官方接口或导出格式。
@@ -324,6 +331,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-16 | feat | 任务卡产物徽章（对话/报告/卡片）、文件夹回扫缓存、报告完成后台系统通知；归档任务不回扫 | `renderer.js`、`main.js`、`style.css`、`tests/task-artifact-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
 | 2026-07-16 | feat | 任务中心搜索/状态 chips/学校筛选与归档：默认隐藏 archived，写回待做任务排除归档；统计卡仍用全局计数 | `renderer.js`、`index.html`、`style.css`、`tests/task-filter-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
 | 2026-07-16 | feat | 周报历史周次列表、上一周/下一周、默认姓名与标题模板（prefs.weeklyReportDefaults）；从任务再生成保留手动备注 | `main.js`、`renderer.js`、`index.html`、`style.css`、`tests/weekly-report-helpers.test.js`、`tests/weekly-report.e2e.js`、`docs/FEATURE_PLAN_THREE.md` | `npm test`；`node tests/weekly-report.e2e.js` |
 | 2026-07-16 | feat | 增加 DOCX 周报导出、完整周报 HTML/纯文本复制和表格专用 HTML/TSV 复制，明确已有表格粘贴受目标编辑器控制 | `weekly-report-docx.js`、`main.js`、`renderer.js`、`index.html`、`tests/weekly-report-docx.test.js`、`tests/weekly-report.e2e.js` | `npm run test:all` |

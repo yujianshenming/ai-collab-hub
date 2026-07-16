@@ -1481,6 +1481,73 @@ window.matchesTaskQuery = matchesTaskQuery;
 window.filterTasks = filterTasks;
 window.taskTypeLabel = taskTypeLabel;
 
+// ============ 任务产物徽章（纯函数，无副作用，供测试注入） ============
+
+function basenameFromPath(filePath) {
+  const raw = String(filePath || "").replace(/\\/g, "/");
+  const parts = raw.split("/");
+  return parts[parts.length - 1] || "";
+}
+
+function isChatArtifactName(name) {
+  const lower = String(name || "");
+  return /^(dialogue|dialog|chat(?:[_ -]?log)?)(?:[_ -]?\d+)?\.(json|txt|md)$/i.test(lower)
+    || /^dialogue/i.test(lower);
+}
+
+function isReportArtifactName(name) {
+  const lower = String(name || "");
+  return /^(eval(?:uation)?[_ -]?report|report)(?:[_ -]?\d+)?\.(pdf|html?)$/i.test(lower)
+    || /^eval_report/i.test(lower);
+}
+
+function isCardsArtifactName(name) {
+  return /^cards\.md$/i.test(String(name || ""));
+}
+
+// 根据已有路径 + 文件夹文件列表推导三类产物徽章（chat / report / cards）
+function taskArtifactsFromPathsAndFiles(paths = {}, files = []) {
+  const list = Array.isArray(files) ? files : [];
+  const normalized = list.map((entry) => {
+    if (typeof entry === "string") {
+      return { name: basenameFromPath(entry), path: entry };
+    }
+    const name = String(entry?.name || basenameFromPath(entry?.path) || "");
+    return { name, path: String(entry?.path || ""), mtime: entry?.mtime, size: entry?.size };
+  });
+
+  const chatFile = normalized.find((entry) => isChatArtifactName(entry.name));
+  const reportFile = normalized.find((entry) => isReportArtifactName(entry.name));
+  const cardsFile = normalized.find((entry) => isCardsArtifactName(entry.name));
+
+  const chatPath = String(paths.chatLogPath || "") || chatFile?.path || "";
+  const reportPath = String(paths.reportPath || "") || reportFile?.path || "";
+  const cardsPath = cardsFile?.path || "";
+
+  return {
+    chat: {
+      ready: Boolean(chatPath),
+      path: chatPath,
+      name: basenameFromPath(chatPath) || chatFile?.name || "dialogue.json"
+    },
+    report: {
+      ready: Boolean(reportPath),
+      path: reportPath,
+      name: basenameFromPath(reportPath) || reportFile?.name || "eval_report.pdf"
+    },
+    cards: {
+      ready: Boolean(cardsPath),
+      path: cardsPath,
+      name: cardsFile?.name || "cards.md"
+    }
+  };
+}
+
+window.taskArtifactsFromPathsAndFiles = taskArtifactsFromPathsAndFiles;
+window.isChatArtifactName = isChatArtifactName;
+window.isReportArtifactName = isReportArtifactName;
+window.isCardsArtifactName = isCardsArtifactName;
+
 // ============ 待做任务.txt 解析（纯函数，无副作用，供测试注入） ============
 
 // 任务类型关键词 → 内部枚举（含 V3.2 新增的 grading-edit）
@@ -3520,6 +3587,164 @@ async function setTaskArchived(taskId, archived) {
   showToast(archived ? "任务已归档" : "已取消归档", "success");
 }
 
+// 任务产物徽章缓存：只存展示结果，不新增持久化字段
+const taskArtifactCache = new Map();
+const taskArtifactRefreshTimers = new Map();
+
+function emptyTaskArtifacts(task = {}) {
+  return taskArtifactsFromPathsAndFiles({
+    chatLogPath: task.chatLogPath || "",
+    reportPath: task.reportPath || ""
+  }, []);
+}
+
+function getTaskArtifacts(task) {
+  const cached = taskArtifactCache.get(task?.id);
+  if (cached?.badges) return cached.badges;
+  return emptyTaskArtifacts(task);
+}
+
+function artifactSigFromFiles(files = []) {
+  return (Array.isArray(files) ? files : [])
+    .map((file) => `${file.name || ""}:${file.mtime || 0}:${file.size || 0}`)
+    .sort()
+    .join("|");
+}
+
+function renderArtifactChipsHtml(artifacts) {
+  const items = [
+    { key: "chat", label: "对话", badge: artifacts.chat },
+    { key: "report", label: "报告", badge: artifacts.report },
+    { key: "cards", label: "卡片", badge: artifacts.cards }
+  ];
+  return items.map((item) => {
+    const ready = Boolean(item.badge?.ready);
+    const title = ready
+      ? `打开${item.label}：${item.badge.name || item.label}`
+      : `${item.label}尚未就绪`;
+    return `<button type="button" class="file-chip ${ready ? "ready" : "missing"}" data-artifact="${item.key}" ${ready ? "" : "disabled"} title="${escapeHtml(title)}">${escapeHtml(item.label)}</button>`;
+  }).join("");
+}
+
+function bindArtifactChipClicks(card, task) {
+  card.querySelectorAll(".file-chip.ready[data-artifact]").forEach((chip) => {
+    chip.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const artifacts = getTaskArtifacts(task);
+      const key = chip.dataset.artifact;
+      const badge = artifacts[key];
+      if (!badge?.ready) return;
+      if (badge.path) {
+        const ok = await window.workbench.taskFileAction("open", badge.path);
+        if (!ok) showToast(`无法打开${chip.textContent}`, "error");
+        return;
+      }
+      if (task.taskFolder) {
+        window.workbench.openTaskFolder(task.taskFolder);
+        return;
+      }
+      showToast("产物路径不可用", "error");
+    });
+  });
+}
+
+function patchTaskCardArtifacts(taskId, artifacts) {
+  const card = elements.taskCenterView?.querySelector(`.task-card[data-id="${CSS.escape(taskId)}"]`);
+  if (!card) return;
+  const host = card.querySelector(".tc-files");
+  if (!host) return;
+  host.innerHTML = renderArtifactChipsHtml(artifacts);
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (task) bindArtifactChipClicks(card, task);
+}
+
+function scheduleArtifactRefresh(taskId, { force = false } = {}) {
+  if (!taskId) return;
+  const existing = taskArtifactRefreshTimers.get(taskId);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    taskArtifactRefreshTimers.delete(taskId);
+    refreshTaskArtifacts(taskId, { force }).catch((error) => {
+      console.warn("刷新任务产物徽章失败:", error);
+    });
+  }, 180);
+  taskArtifactRefreshTimers.set(taskId, timer);
+}
+
+function scheduleVisibleArtifactRefresh() {
+  for (const task of weeklyTasks) {
+    if (!task?.taskFolder || task.archived) continue;
+    scheduleArtifactRefresh(task.id);
+  }
+}
+
+async function refreshTaskArtifacts(taskId, { force = false } = {}) {
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (!task || task.archived || !task.taskFolder) return null;
+  let files = [];
+  try {
+    files = (await window.workbench.listTaskFiles(task.taskFolder)) || [];
+  } catch (error) {
+    console.warn("listTaskFiles 失败:", error);
+    return null;
+  }
+  // 任务可能在等待期间被删除/归档
+  const current = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (!current || current.archived || !current.taskFolder) return null;
+
+  const sig = artifactSigFromFiles(files);
+  const cached = taskArtifactCache.get(taskId);
+  if (!force && cached && cached.sig === sig && cached.folder === current.taskFolder) {
+    return cached.badges;
+  }
+
+  const badges = taskArtifactsFromPathsAndFiles({
+    chatLogPath: current.chatLogPath || "",
+    reportPath: current.reportPath || ""
+  }, files);
+  taskArtifactCache.set(taskId, {
+    sig,
+    folder: current.taskFolder,
+    badges
+  });
+  patchTaskCardArtifacts(taskId, badges);
+
+  // 路径为空且发现标准文件时写回；已有路径不覆盖
+  const pathPatch = {};
+  if (!current.chatLogPath && badges.chat.ready && badges.chat.path) {
+    pathPatch.chatLogPath = badges.chat.path;
+  }
+  if (!current.reportPath && badges.report.ready && badges.report.path) {
+    pathPatch.reportPath = badges.report.path;
+  }
+  if (Object.keys(pathPatch).length) {
+    await updateTaskFields(taskId, pathPatch);
+  }
+  return badges;
+}
+
+function handleTaskFolderChanged(payload = {}) {
+  refreshRailTray();
+  const folderPath = String(payload?.folderPath || pipelineState.taskFolder || "");
+  if (!folderPath) return;
+  const related = weeklyTasks.filter((task) =>
+    !task.archived
+    && task.taskFolder
+    && pathLikeEqual(task.taskFolder, folderPath)
+  );
+  // 若 payload 仅给活动夹，也刷新当前活动任务
+  if (!related.length && pipelineState.taskId) {
+    scheduleArtifactRefresh(pipelineState.taskId, { force: true });
+    return;
+  }
+  related.forEach((task) => scheduleArtifactRefresh(task.id, { force: true }));
+}
+
+function pathLikeEqual(a, b) {
+  const normalize = (value) => String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return normalize(a) === normalize(b);
+}
+
 function taskCardElement(task) {
   const card = document.createElement("div");
   card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}${task.archived ? " archived" : ""}`;
@@ -3545,10 +3770,8 @@ function taskCardElement(task) {
       </span>
     </div>`;
   }).join("");
-  const chips = [];
-  if (task.chatLogPath) chips.push('<span class="file-chip">dialogue.json</span>');
-  if (task.reportPath) chips.push('<span class="file-chip">eval_report.pdf</span>');
-  const chipsHtml = chips.length ? chips.join("") : '<span class="file-chip empty">尚无产物</span>';
+  const artifacts = getTaskArtifacts(task);
+  const chipsHtml = renderArtifactChipsHtml(artifacts);
   const weekdayHtml = task.weekday ? `<span>交付 <b>${escapeHtml(task.weekday)}</b></span>` : "";
   const noteHtml = task.note ? `<div class="tc-note">备注：${escapeHtml(task.note)}</div>` : "";
   const archiveMenuLabel = task.archived ? "取消归档" : "归档";
@@ -3612,6 +3835,7 @@ function taskCardElement(task) {
       showToast("该任务没有记录产物文件夹", "error");
     }
   });
+  bindArtifactChipClicks(card, task);
   const menuPop = card.querySelector(".tc-menu-pop");
   card.querySelector(".tc-menu-toggle").addEventListener("click", () => {
     const willOpen = !menuPop.classList.contains("open");
@@ -3787,6 +4011,9 @@ function renderTaskCenter() {
     if (popover) popover.classList.add("open");
     else openSubtaskPopoverTaskId = null;
   }
+
+  // 异步回扫可见任务产物徽章（不阻塞渲染；归档任务跳过）
+  scheduleVisibleArtifactRefresh();
 }
 
 function taskFromForm() {
@@ -4566,6 +4793,7 @@ async function handleDownloadCompleted(download) {
         chatLogPath: download.path,
         step: "evaluating"
       });
+      scheduleArtifactRefresh(download.taskId, { force: true });
     } else if (targetTask && download.type === "report") {
       if (targetTask.step !== "evaluating") {
         showToast(`已忽略原任务的过期报告下载: ${download.filename}`, "error");
@@ -4576,6 +4804,7 @@ async function handleDownloadCompleted(download) {
         reportPath: download.path,
         step: "report"
       });
+      scheduleArtifactRefresh(download.taskId, { force: true });
     }
     showToast(`下载已归档到原任务文件夹: ${download.filename}`, "success");
     return;
@@ -4587,7 +4816,10 @@ async function handleDownloadCompleted(download) {
   }
 
   if (download.type === "generic") {
-    if (download.captured) showToast(`已捕获到任务文件夹: ${download.filename}`, "success");
+    if (download.captured) {
+      showToast(`已捕获到任务文件夹: ${download.filename}`, "success");
+      scheduleArtifactRefresh(pipelineState.taskId, { force: true });
+    }
     return;
   }
 
@@ -4600,6 +4832,7 @@ async function handleDownloadCompleted(download) {
     pipelineState.step = "evaluating";
     const task = await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path, step: "evaluating" });
     updateTaskRail(task);
+    scheduleArtifactRefresh(pipelineState.taskId, { force: true });
     activateOrCreateTab("evaluation", "评估", "https://www.wl363eval.top/");
     setTimeout(() => runEvaluationUpload(), 1200);
     return;
@@ -4614,6 +4847,8 @@ async function handleDownloadCompleted(download) {
     pipelineState.step = "report";
     const task = await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path, step: "report" });
     updateTaskRail(task);
+    scheduleArtifactRefresh(pipelineState.taskId, { force: true });
+    // 前台始终 toast；后台系统通知由 main 在窗口未聚焦时发出
     showToast("评估报告已保存，可在任务舱「加载至 Hermes」后确认发送。", "success");
   }
 }
@@ -5873,5 +6108,5 @@ window.workbench.getWorkbenchPrefs().then((prefs) => {
 loadWeeklyTasks().then(() => loadWeeklyReports());
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
 window.workbench.onUploadChooseFiles(handleUploadChooseFiles);
-window.workbench.onTaskFolderChanged(() => refreshRailTray());
+window.workbench.onTaskFolderChanged(handleTaskFolderChanged);
 window.workbench.getExtensions().then(({ results }) => renderExtensionsInTopbar(results));

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage, clipboard } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage, clipboard, Notification } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -9,6 +9,11 @@ const { spawn, exec } = require("node:child_process");
 
 if (process.env.PERSONAL_WORKBENCH_USER_DATA) {
   app.setPath("userData", path.resolve(process.env.PERSONAL_WORKBENCH_USER_DATA));
+}
+
+// Windows 系统通知需要固定 AppUserModelId（与 package.json build.appId 对齐）
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.personal.workbench");
 }
 
 // Enforce single instance lock
@@ -26,6 +31,8 @@ let localServer;
 let activeTaskFolder = "";
 let activeTaskId = "";
 let activeTaskStep = "idle";
+let activeTaskSchool = "";
+let activeTaskCourse = "";
 const localAppsMap = new Map();
 const runningDesktopApps = new Map();
 const tabPtyProcesses = new Map();
@@ -1096,6 +1103,8 @@ function cleanupTaskFolder(folderPath) {
     activeTaskFolder = "";
     activeTaskId = "";
     activeTaskStep = "idle";
+    activeTaskSchool = "";
+    activeTaskCourse = "";
     watchActiveTaskFolder();
     refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: "" });
@@ -1139,6 +1148,8 @@ function watchActiveTaskFolder() {
         activeTaskFolder = "";
         activeTaskId = "";
         activeTaskStep = "idle";
+        activeTaskSchool = "";
+        activeTaskCourse = "";
         refreshUploadInterception();
         broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
       }
@@ -1198,6 +1209,8 @@ function installDownloadHandler() {
     item.setSavePath(savePath);
 
     const captured = hasActiveTask;
+    const notifySchool = activeTaskSchool;
+    const notifyCourse = activeTaskCourse;
     item.once("done", (_doneEvent, state) => {
       inFlightDownloadPaths.delete(path.resolve(savePath));
       sendToRenderer("download-completed", {
@@ -1210,6 +1223,27 @@ function installDownloadHandler() {
         taskId: downloadTaskId,
         taskStep: downloadTaskStep
       });
+      // 仅活动任务的评估报告：窗口未聚焦时发系统通知；权限失败静默
+      if (
+        state === "completed"
+        && classification.type === "report"
+        && captured
+        && mainWindow
+        && !mainWindow.isFocused()
+      ) {
+        try {
+          if (Notification.isSupported()) {
+            const body = [notifySchool, notifyCourse].filter(Boolean).join(" ").trim()
+              || path.basename(savePath);
+            new Notification({
+              title: "评估报告已就绪",
+              body
+            }).show();
+          }
+        } catch {
+          // 通知失败不阻塞下载归档与 renderer toast
+        }
+      }
     });
   });
 }
@@ -1580,6 +1614,8 @@ function registerIpc() {
     activeTaskFolder = isValidDirectory ? validated : "";
     activeTaskId = activeTaskFolder ? String(info.taskId || "") : "";
     activeTaskStep = activeTaskFolder ? String(info.step || "testing") : "idle";
+    activeTaskSchool = activeTaskFolder ? String(info.school || "") : "";
+    activeTaskCourse = activeTaskFolder ? String(info.course || "") : "";
     watchActiveTaskFolder();
     refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
@@ -1630,6 +1666,8 @@ function registerIpc() {
     activeTaskFolder = folderPath;
     activeTaskId = String(task.id || "");
     activeTaskStep = "prepare";
+    activeTaskSchool = String(task.school || "");
+    activeTaskCourse = String(task.course || "");
     watchActiveTaskFolder();
     refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
