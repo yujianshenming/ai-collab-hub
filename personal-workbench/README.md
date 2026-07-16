@@ -3,7 +3,7 @@
 一个面向 Windows 的 Electron 桌面工作台。把全部工作入口集合进一个应用——常驻浏览器页面、企业微信、Codex / Cursor、终端、文件夹与文档，并用「任务驱动 + 文件总线 + 卡片舱」打通能力训练搭建的端到端流程。
 
 > **定位**：打开工作台 = 完成全部工作，不再开额外的应用。
-> 当前版本：V3.4（回归验收已通过，待补真机上传验证与合入 master；详见仓库根目录 `personal-workbench-roadmap.md`）。
+> 当前状态：V3.4 稳定能力 + 周报中心首版；当前实现、架构、数据边界和维护规则以 [`docs/PROJECT_HANDBOOK.md`](docs/PROJECT_HANDBOOK.md) 为准。
 
 ## 启动
 
@@ -55,6 +55,12 @@ npm start
 - 开场白超 200 字符标红徽章；提示词复制为代码块内原文（不含围栏）。
 - 平台表单注入预研铺垫（`platformFieldMap` 选择器映射 + 单字段试注入）；V3.5 将重点增强任务、文件、页面、报告之间的协作，建设强辅助工作台，自动化只作为辅助能力，不追求全自动填卡。
 
+### 周报中心（首版）
+- 从当前任务生成独立周报快照，不反向修改任务数据。
+- 支持周报表格、非量化事项、产品需求 / Bug / 卡点 / 疑问的手动编辑。
+- 支持复制纯文本 + HTML 到企业微信文档，以及 HTML / Markdown 导出。
+- 周报保存于 Electron `userData/weekly-reports.json`，不写入版本库中的任务数据。
+
 ## 安全说明
 
 - 使用 `contextIsolation` 与受限的 preload IPC，不向网页暴露 Node.js；网页弹出的新窗口交给系统默认浏览器打开。
@@ -64,6 +70,7 @@ npm start
 
 ## 相关文档
 
+- **项目主手册（新成员 / 新模型首先阅读）**：`./docs/PROJECT_HANDBOOK.md`
 - 版本路线图：`../personal-workbench-roadmap.md`
 - 回归测试清单（含 16 个已知缺陷登记）：`./regression-checklist.md`
 - 各版本规格书：`../personal-workbench-*-spec.md`

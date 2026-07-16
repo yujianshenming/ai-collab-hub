@@ -67,6 +67,7 @@ This repository also contains an active implementation track for a desktop perso
 - prompt and evaluation workflow support.
 
 See [personal-workbench-roadmap.md](personal-workbench-roadmap.md) for the current roadmap and version plan.
+For the implementation-level feature map, architecture, data contracts, security boundaries, test commands, and maintenance rules, read the [Personal Workbench project handbook](personal-workbench/docs/PROJECT_HANDBOOK.md) first.
 
 ## Quick Start
 
