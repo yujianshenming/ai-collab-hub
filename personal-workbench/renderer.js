@@ -23,6 +23,11 @@ function pipelineStepIndex(step) {
 
 // 任务中心作为特殊内置视图的伪标签 id
 const TASK_CENTER_ID = "__taskcenter__";
+const WEEKLY_REPORT_ID = "__weeklyreport__";
+
+function isBuiltinViewId(id) {
+  return id === TASK_CENTER_ID || id === WEEKLY_REPORT_ID;
+}
 
 const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
@@ -98,10 +103,16 @@ function applyWorkbenchTheme(theme) {
 applyWorkbenchTheme(localStorage.getItem(themeStorageKey) || "sky");
 let pointerDrag = null;
 let weeklyTasks = [];
+let weeklyTasksLoadedSuccessfully = false;
+let weeklyReports = [];
+let weeklyReportsLoadedSuccessfully = false;
+let activeWeeklyReport = null;
+let taskTransitionGeneration = 0;
 let taskRailCollapsed = false;
 let pipelineState = {
   active: false,
   taskId: null,
+  activeSubtaskIndex: null,
   step: "idle",
   chatPath: "",
   reportPath: "",
@@ -193,8 +204,28 @@ const elements = {
   menuSettingsButton: document.querySelector("#menu-settings-button"),
   menuReloadButton: document.querySelector("#menu-reload-button"),
   navTaskCenter: document.querySelector("#nav-task-center"),
+  navWeeklyReport: document.querySelector("#nav-weekly-report"),
   taskCenterBadge: document.querySelector("#task-center-badge"),
   taskCenterView: document.querySelector("#task-center-view"),
+  weeklyReportView: document.querySelector("#weekly-report-view"),
+  reportGenerate: document.querySelector("#report-generate"),
+  reportSave: document.querySelector("#report-save"),
+  reportCopy: document.querySelector("#report-copy"),
+  reportPeriod: document.querySelector("#report-period"),
+  reportTitle: document.querySelector("#report-title"),
+  reportAuthor: document.querySelector("#report-author"),
+  reportRange: document.querySelector("#report-range"),
+  reportSaveState: document.querySelector("#report-save-state"),
+  reportRowCount: document.querySelector("#report-row-count"),
+  reportRowsBody: document.querySelector("#report-rows-body"),
+  reportAddRow: document.querySelector("#report-add-row"),
+  reportAddNonquantified: document.querySelector("#report-add-nonquantified"),
+  reportNonquantifiedList: document.querySelector("#report-nonquantified-list"),
+  reportAddIssue: document.querySelector("#report-add-issue"),
+  reportIssuesList: document.querySelector("#report-issues-list"),
+  reportPreview: document.querySelector("#report-preview"),
+  reportExportHtml: document.querySelector("#report-export-html"),
+  reportExportMarkdown: document.querySelector("#report-export-markdown"),
   homeWeekSub: document.querySelector("#home-week-sub"),
   statTotal: document.querySelector("#stat-total"),
   statRunning: document.querySelector("#stat-running"),
@@ -210,6 +241,7 @@ const elements = {
   taskDialog: document.querySelector("#task-dialog"),
   taskFormTitle: document.querySelector("#task-form-title"),
   taskForm: document.querySelector("#task-form"),
+  taskStatus: document.querySelector("#task-status"),
   finishTaskDialog: document.querySelector("#finish-task-dialog"),
   finishTaskSubmitted: document.querySelector("#finish-task-submitted"),
   finishTaskUnsubmitted: document.querySelector("#finish-task-unsubmitted"),
@@ -249,6 +281,7 @@ const elements = {
   menuPrefsButton: document.querySelector("#menu-prefs-button"),
   prefsDialog: document.querySelector("#prefs-dialog"),
   prefsForm: document.querySelector("#prefs-form"),
+  prefsFeedback: document.querySelector("#prefs-feedback"),
   prefTheme: document.querySelector("#pref-theme"),
   prefCropSide: document.querySelector("#pref-crop-side"),
   prefCropPixels: document.querySelector("#pref-crop-pixels"),
@@ -407,7 +440,7 @@ function renderTabs() {
   // Activate active tab（任务中心是合法的特殊视图）
   // 缺陷①修复：尾部重激活属于布局同步，不代表用户意图，禁止 auto-expand——
   // 否则折叠活动标签所在分类时会被这里立刻展开回去（折叠点击"失效"）。
-  const validActiveTabId = activeTabId === TASK_CENTER_ID || tabs.some((tab) => tab.id === activeTabId)
+  const validActiveTabId = isBuiltinViewId(activeTabId) || tabs.some((tab) => tab.id === activeTabId)
     ? activeTabId
     : tabs[0]?.id;
   if (validActiveTabId) {
@@ -520,7 +553,7 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     webview.addEventListener("dom-ready", () => {
       fitWebviewZoom();
       const currentUrl = webview.getURL() || tab.url || "";
-      if (type === "local-web" || isLocalLoopbackUrl(currentUrl)) {
+      if (isRegisteredLocalAppUrl(tab, currentUrl)) {
         window.workbench.getSessionToken().then((token) => {
           webview.executeJavaScript(`window.__workbenchSessionToken = ${JSON.stringify(token)};`).catch(() => {});
         });
@@ -762,7 +795,8 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     if (tab.autoLaunch) {
       let rect = null;
       if (embedMode) {
-        setTimeout(() => {
+        const autoLaunchTimer = setTimeout(() => {
+          if (!viewport.isConnected || !tabs.some((candidate) => candidate.id === tab.id)) return;
           const container = viewport.querySelector(".desktop-embed-container");
           const r = container?.getBoundingClientRect();
           if (r) {
@@ -772,6 +806,7 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
             if (res.success) updateStatusUI({ running: true, pid: res.pid });
           });
         }, 500);
+        registerTabCleanup(tab.id, () => clearTimeout(autoLaunchTimer));
       } else {
         window.workbench.launchDesktopApp(tab.id, tab.exePath, tab.exeCwd, embedMode, rect).then((res) => {
           if (res.success) updateStatusUI({ running: true, pid: res.pid });
@@ -812,7 +847,8 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     const cliFitAddon = new FitAddon.FitAddon();
     cliTerm.loadAddon(cliFitAddon);
 
-    setTimeout(() => {
+    const cliStartTimer = setTimeout(() => {
+      if (!viewport.isConnected || !tabs.some((candidate) => candidate.id === tab.id)) return;
       cliTerm.open(termContainer);
       cliFitAddon.fit();
       
@@ -833,8 +869,10 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     tabTerminals.set(tab.id, { terminal: cliTerm, fitAddon: cliFitAddon });
 
     registerTabCleanup(tab.id, () => {
+      clearTimeout(cliStartTimer);
       unsubData();
       tabTerminals.delete(tab.id);
+      cliTerm.dispose();
     });
 
   } else if (type === "builtin") {
@@ -1047,6 +1085,17 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
   return viewport;
 }
 
+function isRegisteredLocalAppUrl(tab, rawUrl) {
+  if (tab?.type !== "local-web") return false;
+  try {
+    const parsed = new URL(String(rawUrl || ""));
+    if (!["localhost", "127.0.0.1"].includes(parsed.hostname) || parsed.port !== "38924") return false;
+    return parsed.pathname.startsWith(`/local-apps/${encodeURIComponent(tab.id)}/`);
+  } catch {
+    return false;
+  }
+}
+
 function ensureTabViewportLoaded(tabId) {
   const viewport = document.querySelector(`.tab-viewport[data-id="${tabId}"]`);
   if (!viewport?.dataset.webDeferred) return viewport;
@@ -1068,11 +1117,16 @@ function activateTab(id, { autoExpand = true } = {}) {
   isActivatingTab = true;
   try {
     const isTaskCenter = id === TASK_CENTER_ID;
-    if (!isTaskCenter) {
+    const isWeeklyReport = id === WEEKLY_REPORT_ID;
+    const isBuiltinView = isTaskCenter || isWeeklyReport;
+    if (isBuiltinView) {
+      rightSplitTabId = null;
+      bottomSplitTabId = null;
+    } else {
       if (rightSplitTabId === id) {
-        rightSplitTabId = activeTabId === TASK_CENTER_ID ? null : activeTabId;
+        rightSplitTabId = isBuiltinViewId(activeTabId) ? null : activeTabId;
       } else if (bottomSplitTabId === id) {
-        bottomSplitTabId = activeTabId === TASK_CENTER_ID ? null : activeTabId;
+        bottomSplitTabId = isBuiltinViewId(activeTabId) ? null : activeTabId;
       }
 
       // Prevent duplicate references
@@ -1083,8 +1137,8 @@ function activateTab(id, { autoExpand = true } = {}) {
 
     activeTabId = id;
     localStorage.setItem("personal_workbench_active", id);
-    const tab = isTaskCenter ? null : tabs.find((candidate) => candidate.id === id);
-    if (!isTaskCenter && !tab) return;
+    const tab = isBuiltinView ? null : tabs.find((candidate) => candidate.id === id);
+    if (!isBuiltinView && !tab) return;
 
     // Auto-expand category if collapsed（仅限用户主动切换标签的调用路径）
     if (tab && autoExpand) {
@@ -1098,13 +1152,15 @@ function activateTab(id, { autoExpand = true } = {}) {
 
     // 网页标签首次进入主视图或分屏时才创建 webview，避免启动时加载所有后台页面。
     for (const visibleTabId of [activeTabId, rightSplitTabId, bottomSplitTabId]) {
-      if (visibleTabId && visibleTabId !== TASK_CENTER_ID) ensureTabViewportLoaded(visibleTabId);
+      if (visibleTabId && !isBuiltinViewId(visibleTabId)) ensureTabViewportLoaded(visibleTabId);
     }
 
     elements.workspace.classList.toggle("task-center-active", isTaskCenter);
+    elements.workspace.classList.toggle("weekly-report-active", isWeeklyReport);
     elements.navTaskCenter?.classList.toggle("active", isTaskCenter);
+    elements.navWeeklyReport?.classList.toggle("active", isWeeklyReport);
     document.querySelectorAll(".tab-item").forEach((item) => {
-      item.classList.toggle("active", !isTaskCenter && item.dataset.id === id);
+      item.classList.toggle("active", !isBuiltinView && item.dataset.id === id);
       item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
     });
 
@@ -1137,6 +1193,9 @@ function activateTab(id, { autoExpand = true } = {}) {
     updateTopbarForActive(tab);
     if (isTaskCenter) {
       renderTaskCenter();
+    }
+    if (isWeeklyReport) {
+      renderWeeklyReportCenter();
     }
     updateActiveTabInfo();
     fitWebviewZoom();
@@ -1187,11 +1246,17 @@ function activateTab(id, { autoExpand = true } = {}) {
 // 顶栏面包屑与地址栏显隐：任务中心隐藏地址栏，webview 标签显示地址栏
 function updateTopbarForActive(tab = null) {
   if (!tab) {
+    if (activeTabId === WEEKLY_REPORT_ID) {
+      elements.activeTitle.textContent = "周报中心";
+      elements.crumbSub.textContent = activeWeeklyReport?.title || "工作内容归档";
+      elements.addressBar.style.display = "none";
+      return;
+    }
     const total = weeklyTasks.length;
     const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
     elements.activeTitle.textContent = "任务中心";
     elements.crumbSub.textContent = `本周 ${total} 项 · 进行中 ${running} 项`;
-    elements.addressBar.style.display = "";
+    elements.addressBar.style.display = "none";
     return;
   }
   elements.activeTitle.textContent = tab.name;
@@ -1235,8 +1300,11 @@ function updateAddressFromWebview(webview) {
 }
 
 function updateActiveTabInfo() {
-  if (activeTabId === TASK_CENTER_ID) {
-    window.workbench.updateActiveTabInfo({ url: "", title: "任务中心" });
+  if (isBuiltinViewId(activeTabId)) {
+    window.workbench.updateActiveTabInfo({
+      url: "",
+      title: activeTabId === WEEKLY_REPORT_ID ? "周报中心" : "任务中心"
+    });
     return;
   }
   const tab = tabs.find((candidate) => candidate.id === activeTabId);
@@ -1856,21 +1924,29 @@ function importPreviewTaskTitle(task) {
 
 // 任务舱状态接线总入口：横幅已删除，统一驱动 任务舱 + 状态栏芯片 + 侧边栏脉冲点 + 任务中心
 function updateTaskRail(task = null) {
+  let activeUpdate;
   if (!task) {
-    window.workbench.updateActiveTaskInfo({});
+    activeUpdate = window.workbench.updateActiveTaskInfo({});
   } else {
-    window.workbench.updateActiveTaskInfo({
+    activeUpdate = window.workbench.updateActiveTaskInfo({
       school: task.school || "",
       course: task.course || "",
       taskType: task.taskType || "",
       taskTypeLabel: taskTypeLabel(task.taskType),
+      taskId: task.id || "",
+      step: pipelineState.step || task.step || "testing",
       folderPath: pipelineState.taskFolder || task.taskFolder || ""
     });
   }
+  activeUpdate = Promise.resolve(activeUpdate).catch((error) => {
+    console.warn("同步活动任务状态失败:", error);
+    return { success: false };
+  });
   renderTaskRail(task);
   updateStatusbarChip(task);
   updateSidebarPulse();
   renderTaskCenter();
+  return activeUpdate;
 }
 
 const RAIL_RING_CIRCUMFERENCE = 50.27;
@@ -2310,6 +2386,9 @@ function renderTaskRail(task = null) {
 
 function expandTaskRail() {
   if (!pipelineState.active) return;
+  if (window.innerWidth <= 1050 && elements.appShell.classList.contains("right-sidebar-open")) {
+    toggleRightSidebar(false);
+  }
   taskRailCollapsed = false;
   renderTaskRail(weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId) || null);
 }
@@ -2341,26 +2420,78 @@ function updateStatusbarChip(task = null) {
 // 结束询问改为居中 dialog 三出口：已提交（completed）/ 未提交（unsubmitted）/ 取消（任务继续运行）
 function finishActiveTask() {
   if (!pipelineState.active || !pipelineState.taskId) return;
+  const task = weeklyTasks.find((candidate) => candidate.id === pipelineState.taskId);
+  const activeIndex = pipelineState.activeSubtaskIndex;
+  if (task && activeIndex) {
+    const label = `子任务 ${activeIndex}/${Math.max(1, Number(task.quantity) || 1)}`;
+    const description = elements.finishTaskDialog?.querySelector(".helper-text");
+    if (description) description.textContent = `${label} 已完成测试，是否已提交平台？仅结束当前子任务，其他子任务保持原状态。`;
+  }
   elements.finishTaskDialog?.showModal();
 }
 
 async function completeActiveTask(submitted) {
   const taskId = pipelineState.taskId;
-  const folderPath = pipelineState.taskFolder;
   const task = weeklyTasks.find((candidate) => candidate.id === taskId);
-  pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-  updateTaskRail(null);
-  if (taskId) {
-    await updateTaskFields(taskId, {
-      status: submitted ? "completed" : "unsubmitted",
+  if (!task) return;
+  const folderPath = pipelineState.taskFolder || task.taskFolder || "";
+  const activeSubtaskIndex = pipelineState.activeSubtaskIndex || nextRunnableSubtaskIndex(task);
+  const subtasks = taskSubtasks(task);
+  if (!activeSubtaskIndex || !subtasks.some((subtask) => subtask.index === activeSubtaskIndex)) return;
+  taskTransitionGeneration += 1;
+  const previousTask = JSON.parse(JSON.stringify(task));
+  const nextSubtasks = updateSubtaskStatus(task, activeSubtaskIndex, submitted ? "done" : "unconfirmed");
+  const allSubtasksDone = nextSubtasks.every((subtask) => subtask.status === "done");
+  // 单个任务沿用原有“未提交”终态；多个子任务只有全部完成才清理总任务。
+  const terminal = allSubtasksDone || (!submitted && nextSubtasks.length === 1);
+  Object.assign(task, {
+    status: allSubtasksDone ? "completed" : (terminal ? "unsubmitted" : "paused"),
+    cleanupPending: Boolean(folderPath && terminal),
+    cardCopied: terminal ? {} : task.cardCopied,
+    subtasks: nextSubtasks
+  });
+  if (!folderPath && terminal) {
+    task.chatLogPath = "";
+    task.reportPath = "";
+    task.taskFolder = "";
+  }
+  try {
+    await persistWeeklyTasks();
+  } catch (error) {
+    Object.assign(task, previousTask);
+    console.error("保存任务结束状态失败:", error);
+    showToast("无法保存任务结束状态，临时文件未清理", "error");
+    return;
+  }
+  pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+  await updateTaskRail(null);
+
+  if (!terminal) {
+    showToast(`子任务 ${activeSubtaskIndex} 已${submitted ? "完成" : "标记为待确认"}，其他子任务仍可单独执行`, "success");
+    return;
+  }
+
+  const cleaned = !folderPath || await window.workbench.cleanupTaskFolder(folderPath).catch(() => false);
+  if (!cleaned) {
+    showToast("任务已结束；临时文件清理失败，应用下次启动会重试", "error");
+    return;
+  }
+  const savedTask = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (savedTask) {
+    Object.assign(savedTask, {
+      cleanupPending: false,
       chatLogPath: "",
       reportPath: "",
-      taskFolder: "",
-      cardCopied: {},
-      subtasks: markAllSubtasksDone(task?.subtasks, task?.quantity)
+      taskFolder: ""
     });
+    try {
+      await persistWeeklyTasks();
+    } catch (error) {
+      console.error("确认临时文件清理状态失败:", error);
+      showToast("临时文件已清理；状态将在下次启动时自动核对", "error");
+      return;
+    }
   }
-  if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
   showToast(submitted ? "任务已完成，临时文件已清理" : "任务已标记为未提交，临时文件已清理", "success");
 }
 
@@ -2383,6 +2514,9 @@ function openTaskForm(task = null) {
     document.querySelector("#task-school").value = task.school || "";
     document.querySelector("#task-course").value = task.course || "";
     document.querySelector("#task-type").value = task.taskType || "capability-setup";
+    elements.taskStatus.value = ["pending", "paused", "unsubmitted", "completed"].includes(task.status)
+      ? task.status
+      : "pending";
     document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
     document.querySelector("#task-owner").value = task.owner || "";
     elements.taskFormTitle.textContent = "编辑任务";
@@ -2399,6 +2533,7 @@ function closeTaskForm() {
 function resetTaskForm() {
   elements.taskForm?.reset();
   document.querySelector("#task-id").value = "";
+  elements.taskStatus.value = "pending";
   document.querySelector("#task-quantity").value = "1";
   document.querySelector("#task-type").value = "capability-setup";
   if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
@@ -2411,7 +2546,7 @@ function normalizeSubtasks(subtasks, quantity) {
   const list = [];
   for (let index = 1; index <= count; index += 1) {
     const status = source[index - 1]?.status;
-    list.push({ index, status: ["pending", "done", "unconfirmed"].includes(status) ? status : "pending" });
+    list.push({ index, status: ["pending", "running", "done", "unconfirmed"].includes(status) ? status : "pending" });
   }
   return list;
 }
@@ -2434,6 +2569,8 @@ function normalizeWeeklyTask(task = {}) {
     reportPath: task.reportPath || "",
     taskFolder: task.taskFolder || "",
     step: normalizePipelineStep(task.step),
+    cleanupPending: Boolean(task.cleanupPending),
+    deletePending: Boolean(task.deletePending),
     // 卡片舱「已复制」状态（V3.4）：fieldKey → true，任务结束时清空
     cardCopied: task.cardCopied && typeof task.cardCopied === "object" ? task.cardCopied : {}
   };
@@ -2456,18 +2593,55 @@ function sortTasksByWeekday(tasks) {
 }
 
 function nextSubtaskStatus(status) {
-  return status === "pending" ? "done" : status === "done" ? "unconfirmed" : "pending";
+  return status === "pending" ? "done" : status === "done" ? "unconfirmed" : status === "unconfirmed" ? "pending" : "running";
 }
 
 function subtaskStatusLabel(status) {
   return {
     pending: "待做",
+    running: "进行中",
     done: "已完成",
     unconfirmed: "待确认"
   }[status] || "待做";
 }
 
+function taskSubtasks(task) {
+  return normalizeSubtasks(task?.subtasks, task?.quantity);
+}
+
+function runningSubtaskIndex(task) {
+  return taskSubtasks(task).find((subtask) => subtask.status === "running")?.index || null;
+}
+
+function nextRunnableSubtaskIndex(task) {
+  const subtasks = taskSubtasks(task);
+  return runningSubtaskIndex(task)
+    || subtasks.find((subtask) => ["pending", "unconfirmed"].includes(subtask.status))?.index
+    || null;
+}
+
+function updateSubtaskStatus(task, index, status) {
+  return taskSubtasks(task).map((subtask) =>
+    subtask.index === index ? { ...subtask, status } : subtask
+  );
+}
+
+function subtasksForTaskStatus(subtasks, previousStatus, nextStatus) {
+  const normalized = normalizeSubtasks(subtasks, subtasks?.length);
+  if (nextStatus === "completed") return normalized.map((subtask) => ({ ...subtask, status: "done" }));
+  if (nextStatus === "pending" && ["completed", "unsubmitted"].includes(previousStatus)) {
+    return normalized.map((subtask) => ({ ...subtask, status: "pending" }));
+  }
+  if (!["paused", "running", "evaluating"].includes(nextStatus)) {
+    return normalized.map((subtask) => subtask.status === "running" ? { ...subtask, status: "pending" } : subtask);
+  }
+  return normalized;
+}
+
 async function persistWeeklyTasks() {
+  if (!weeklyTasksLoadedSuccessfully) {
+    throw new Error("Task data was not loaded successfully; refusing to overwrite it");
+  }
   weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks.map(normalizeWeeklyTask));
   renderTaskCenter();
 }
@@ -2475,7 +2649,39 @@ async function persistWeeklyTasks() {
 async function loadWeeklyTasks() {
   try {
     weeklyTasks = (await window.workbench.readWeeklyTasks()).map(normalizeWeeklyTask);
+    weeklyTasksLoadedSuccessfully = true;
+    let reconciled = false;
+    const retainedTasks = [];
+    for (const task of weeklyTasks) {
+      if (task.deletePending) {
+        const cleaned = !task.taskFolder
+          || await window.workbench.cleanupTaskFolder(task.taskFolder).catch(() => false);
+        if (cleaned) {
+          reconciled = true;
+          continue;
+        }
+      }
+      if (task.cleanupPending) {
+        const cleaned = !task.taskFolder
+          || await window.workbench.cleanupTaskFolder(task.taskFolder).catch(() => false);
+        if (cleaned) {
+          task.cleanupPending = false;
+          task.chatLogPath = "";
+          task.reportPath = "";
+          task.taskFolder = "";
+          reconciled = true;
+        }
+      }
+      if (["running", "evaluating"].includes(task.status)) {
+        task.status = "paused";
+        reconciled = true;
+      }
+      retainedTasks.push(task);
+    }
+    weeklyTasks = retainedTasks;
+    if (reconciled) await persistWeeklyTasks();
   } catch (error) {
+    weeklyTasksLoadedSuccessfully = false;
     console.error("读取任务列表失败:", error);
     weeklyTasks = [];
     showToast("读取任务列表失败", "error");
@@ -2492,6 +2698,446 @@ function getIsoWeekNumber(date = new Date()) {
 }
 
 // 任务当前进度：返回 { index, label, ratio, barClass }
+const REPORT_STATUS_LABELS = {
+  pending: "未开始",
+  running: "进行中",
+  evaluating: "进行中",
+  paused: "已暂停",
+  unsubmitted: "已完成，未提交",
+  completed: "已完成"
+};
+
+let weeklyReportDirty = false;
+
+function reportItemId(prefix = "item") {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function currentReportPeriod(date = new Date()) {
+  const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const dayNumber = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNumber);
+  return `${target.getUTCFullYear()}-W${String(getIsoWeekNumber(date)).padStart(2, "0")}`;
+}
+
+function dateFromReportPeriod(periodKey) {
+  const match = /^(\d{4})-W(\d{2})$/.exec(String(periodKey || ""));
+  if (!match) return new Date();
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (week - 1) * 7);
+  return monday;
+}
+
+function reportTitleForPeriod(periodKey) {
+  const monday = dateFromReportPeriod(periodKey);
+  const weekOfMonth = Math.floor((monday.getUTCDate() - 1) / 7) + 1;
+  return `M${monday.getUTCMonth() + 1}W${weekOfMonth}周报`;
+}
+
+function reportDateRangeForPeriod(periodKey) {
+  const monday = dateFromReportPeriod(periodKey);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(sunday.getUTCDate() + 6);
+  const format = (date) => `${date.getUTCMonth() + 1}月${date.getUTCDate()}日`;
+  return `${format(monday)} - ${format(sunday)}`;
+}
+
+function normalizeReportRow(row = {}) {
+  return {
+    id: row.id || reportItemId("row"),
+    sourceTaskId: row.sourceTaskId || "",
+    course: String(row.course || ""),
+    school: String(row.school || ""),
+    taskName: String(row.taskName || ""),
+    progress: String(row.progress || "0%"),
+    quantity: String(row.quantity || "1"),
+    status: String(row.status || "未开始"),
+    note: String(row.note || "")
+  };
+}
+
+function normalizeWeeklyReport(report = {}) {
+  const periodKey = /^\d{4}-W\d{2}$/.test(String(report.periodKey || ""))
+    ? String(report.periodKey)
+    : currentReportPeriod();
+  return {
+    id: report.id || `report-${periodKey}`,
+    periodKey,
+    title: String(report.title || reportTitleForPeriod(periodKey)),
+    author: String(report.author || ""),
+    dateRange: String(report.dateRange || reportDateRangeForPeriod(periodKey)),
+    rows: Array.isArray(report.rows) ? report.rows.map(normalizeReportRow) : [],
+    nonQuantified: Array.isArray(report.nonQuantified)
+      ? report.nonQuantified.map((item) => ({ id: item.id || reportItemId("note"), text: String(item.text || "") }))
+      : [],
+    issues: Array.isArray(report.issues)
+      ? report.issues.map((item) => ({ id: item.id || reportItemId("issue"), text: String(item.text || "") }))
+      : [],
+    createdAt: report.createdAt || new Date().toISOString(),
+    updatedAt: report.updatedAt || new Date().toISOString()
+  };
+}
+
+function newWeeklyReport(periodKey = currentReportPeriod()) {
+  return normalizeWeeklyReport({
+    id: `report-${periodKey}`,
+    periodKey,
+    title: reportTitleForPeriod(periodKey),
+    dateRange: reportDateRangeForPeriod(periodKey)
+  });
+}
+
+function taskReportProgress(task) {
+  const subtasks = taskSubtasks(task);
+  const done = subtasks.filter((subtask) => subtask.status === "done").length;
+  return `${Math.round((done / Math.max(1, subtasks.length)) * 100)}%`;
+}
+
+function reportRowFromTask(task, existingRow = null) {
+  return normalizeReportRow({
+    id: existingRow?.id || reportItemId("row"),
+    sourceTaskId: task.id,
+    course: task.course,
+    school: task.school,
+    taskName: taskTypeLabel(task.taskType),
+    progress: taskReportProgress(task),
+    quantity: task.quantity,
+    status: existingRow?.status || REPORT_STATUS_LABELS[task.status] || "未开始",
+    note: existingRow?.note || task.note || ""
+  });
+}
+
+function generateReportRowsFromTasks(report) {
+  const existingByTaskId = new Map(
+    report.rows.filter((row) => row.sourceTaskId).map((row) => [row.sourceTaskId, row])
+  );
+  const generated = weeklyTasks.map((task) => reportRowFromTask(task, existingByTaskId.get(task.id)));
+  const manualRows = report.rows.filter((row) => !row.sourceTaskId);
+  return [...generated, ...manualRows];
+}
+
+function markWeeklyReportDirty() {
+  weeklyReportDirty = true;
+  if (elements.reportSaveState) elements.reportSaveState.textContent = "未保存";
+}
+
+function reportCellStyle() {
+  return "border:1px solid #d7dee6;padding:7px 8px;vertical-align:top;";
+}
+
+function weeklyReportHtmlBody(report) {
+  const safeReport = normalizeWeeklyReport(report);
+  const rows = safeReport.rows.length
+    ? safeReport.rows.map((row) => `
+      <tr>
+        <td style="${reportCellStyle()}">${escapeHtml(row.course)}</td>
+        <td style="${reportCellStyle()}">${escapeHtml(row.school)}</td>
+        <td style="${reportCellStyle()}">${escapeHtml(row.taskName)}</td>
+        <td style="${reportCellStyle()}">${escapeHtml(row.progress)}</td>
+        <td style="${reportCellStyle()}">${escapeHtml(row.quantity)}</td>
+        <td style="${reportCellStyle()}">${escapeHtml(row.status)}</td>
+        <td style="${reportCellStyle()}">${escapeHtml(row.note)}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="7" style="${reportCellStyle()}color:#7a8795;">暂无量化任务</td></tr>`;
+  const listHtml = (items, emptyText) => items.length
+    ? `<ol style="margin:8px 0 0 22px;padding:0;">${items.map((item) => `<li style="margin:5px 0;">${escapeHtml(item.text)}</li>`).join("")}</ol>`
+    : `<p style="margin:8px 0;color:#7a8795;">${emptyText}</p>`;
+
+  return `<div style="font-family:Arial,'Microsoft YaHei',sans-serif;color:#24313b;line-height:1.65;font-size:14px;">
+    <h1 style="margin:0 0 4px;font-size:26px;line-height:1.3;">${escapeHtml(safeReport.title)}</h1>
+    <p style="margin:0 0 8px;color:#7a8795;">${escapeHtml(safeReport.dateRange)}</p>
+    <p style="margin:0 0 5px;font-size:18px;font-weight:700;">${escapeHtml(safeReport.author || "未填写姓名")}</p>
+    <h2 style="margin:18px 0 7px;font-size:18px;">一、本周工作内容</h2>
+    <p style="margin:0 0 8px;color:#5e6b77;">更新至下周一前的状态，包含本周涉及的历史遗留和新增任务。</p>
+    <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+      <thead><tr>
+        ${["课程名称", "学校名称", "任务名称", "任务进度", "任务数量", "任务状态", "本周建议情况描述"].map((heading) => `<th style="${reportCellStyle()}background:#f3f6f8;text-align:left;font-weight:700;">${heading}</th>`).join("")}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <h3 style="margin:18px 0 0;font-size:16px;">其他无法量化的部分</h3>
+    ${listHtml(safeReport.nonQuantified, "暂无补充事项")}
+    <h2 style="margin:20px 0 7px;font-size:18px;">二、产品需求 / Bug / 卡点 / 疑问</h2>
+    <p style="margin:0;color:#5e6b77;">记录用户反馈、交付卡点、平台问题和具有价值的后续想法。</p>
+    ${listHtml(safeReport.issues, "暂无需求、Bug 或疑问")}
+  </div>`;
+}
+
+function weeklyReportHtmlDocument(report) {
+  const safeReport = normalizeWeeklyReport(report);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(safeReport.title)}</title></head><body style="margin:24px;background:#fff;">${weeklyReportHtmlBody(safeReport)}</body></html>`;
+}
+
+function weeklyReportPlainText(report) {
+  const safeReport = normalizeWeeklyReport(report);
+  const lines = [safeReport.title, safeReport.author || "未填写姓名", "", "一、本周工作内容", "课程名称\t学校名称\t任务名称\t任务进度\t任务数量\t任务状态\t本周建议情况描述"];
+  safeReport.rows.forEach((row) => lines.push([row.course, row.school, row.taskName, row.progress, row.quantity, row.status, row.note].join("\t")));
+  lines.push("", "其他无法量化的部分");
+  safeReport.nonQuantified.forEach((item, index) => lines.push(`${index + 1}. ${item.text}`));
+  lines.push("", "二、产品需求 / Bug / 卡点 / 疑问");
+  safeReport.issues.forEach((item, index) => lines.push(`${index + 1}. ${item.text}`));
+  return lines.join("\n");
+}
+
+function markdownReportCell(value) {
+  return String(value || "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function weeklyReportMarkdown(report) {
+  const safeReport = normalizeWeeklyReport(report);
+  const lines = [`# ${safeReport.title}`, `作者：${safeReport.author || "未填写姓名"}`, `周期：${safeReport.dateRange}`, "", "## 一、本周工作内容", "", "| 课程名称 | 学校名称 | 任务名称 | 任务进度 | 任务数量 | 任务状态 | 本周建议情况描述 |", "| --- | --- | --- | --- | --- | --- | --- |"];
+  if (safeReport.rows.length) {
+    safeReport.rows.forEach((row) => lines.push(`| ${[row.course, row.school, row.taskName, row.progress, row.quantity, row.status, row.note].map(markdownReportCell).join(" | ")} |`));
+  } else {
+    lines.push("| 暂无量化任务 |  |  |  |  |  |  |");
+  }
+  lines.push("", "### 其他无法量化的部分");
+  safeReport.nonQuantified.forEach((item, index) => lines.push(`${index + 1}. ${item.text}`));
+  if (!safeReport.nonQuantified.length) lines.push("暂无补充事项");
+  lines.push("", "## 二、产品需求 / Bug / 卡点 / 疑问");
+  safeReport.issues.forEach((item, index) => lines.push(`${index + 1}. ${item.text}`));
+  if (!safeReport.issues.length) lines.push("暂无需求、Bug 或疑问");
+  return lines.join("\n");
+}
+
+function renderWeeklyReportPreview() {
+  if (!elements.reportPreview || !activeWeeklyReport) return;
+  elements.reportPreview.innerHTML = weeklyReportHtmlBody(activeWeeklyReport);
+}
+
+function renderReportTextList(container, items, listName, emptyText) {
+  if (!container) return;
+  if (!items.length) {
+    container.innerHTML = `<div class="report-empty-line">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+  container.innerHTML = items.map((item, index) => `
+    <div class="report-text-row" data-report-list="${listName}" data-report-index="${index}">
+      <span class="report-list-index">${index + 1}.</span>
+      <textarea data-report-field="text" rows="2" placeholder="填写内容">${escapeHtml(item.text)}</textarea>
+      <button class="report-remove-button" data-report-action="remove-${listName}" type="button" aria-label="删除第 ${index + 1} 项">×</button>
+    </div>`).join("");
+}
+
+function renderWeeklyReportCenter() {
+  if (!elements.weeklyReportView || !activeWeeklyReport) return;
+  const report = normalizeWeeklyReport(activeWeeklyReport);
+  activeWeeklyReport = report;
+  elements.reportPeriod.value = report.periodKey;
+  elements.reportTitle.value = report.title;
+  elements.reportAuthor.value = report.author;
+  elements.reportRange.value = report.dateRange;
+  elements.reportSaveState.textContent = weeklyReportDirty ? "未保存" : "已保存";
+  elements.reportRowCount.textContent = `${report.rows.length} 项`;
+  elements.reportRowsBody.innerHTML = report.rows.map((row, index) => `
+    <tr data-report-row-index="${index}">
+      <td><input data-report-field="course" type="text" value="${escapeHtml(row.course)}" placeholder="课程名称"></td>
+      <td><input data-report-field="school" type="text" value="${escapeHtml(row.school)}" placeholder="学校名称"></td>
+      <td><input data-report-field="taskName" type="text" value="${escapeHtml(row.taskName)}" placeholder="任务名称"></td>
+      <td><input data-report-field="progress" type="text" value="${escapeHtml(row.progress)}" placeholder="100%"></td>
+      <td><input data-report-field="quantity" type="number" min="0" step="1" value="${escapeHtml(row.quantity)}" placeholder="1"></td>
+      <td><input data-report-field="status" type="text" value="${escapeHtml(row.status)}" placeholder="任务状态"></td>
+      <td><textarea data-report-field="note" rows="2" placeholder="本周建设情况">${escapeHtml(row.note)}</textarea></td>
+      <td><button class="report-remove-button" data-report-action="remove-row" type="button" aria-label="删除第 ${index + 1} 行">×</button></td>
+    </tr>`).join("");
+  renderReportTextList(elements.reportNonquantifiedList, report.nonQuantified, "nonquantified", "暂无补充事项，点击 + 添加");
+  renderReportTextList(elements.reportIssuesList, report.issues, "issues", "暂无需求、Bug 或疑问，点击 + 添加");
+  renderWeeklyReportPreview();
+  updateTopbarForActive(null);
+}
+
+async function persistWeeklyReport() {
+  if (!weeklyReportsLoadedSuccessfully) {
+    throw new Error("Weekly report data was not loaded successfully; refusing to overwrite it");
+  }
+  if (!activeWeeklyReport) return;
+  activeWeeklyReport = normalizeWeeklyReport({ ...activeWeeklyReport, updatedAt: new Date().toISOString() });
+  const existingIndex = weeklyReports.findIndex((report) => report.periodKey === activeWeeklyReport.periodKey);
+  if (existingIndex >= 0) weeklyReports[existingIndex] = activeWeeklyReport;
+  else weeklyReports.push(activeWeeklyReport);
+  weeklyReports = await window.workbench.writeWeeklyReports(weeklyReports.map(normalizeWeeklyReport));
+  weeklyReportDirty = false;
+  renderWeeklyReportCenter();
+}
+
+async function loadWeeklyReports() {
+  try {
+    const rawReports = await window.workbench.readWeeklyReports();
+    const reportsByPeriod = new Map();
+    (Array.isArray(rawReports) ? rawReports : []).forEach((report) => {
+      const normalized = normalizeWeeklyReport(report);
+      const current = reportsByPeriod.get(normalized.periodKey);
+      if (!current || String(normalized.updatedAt) >= String(current.updatedAt)) reportsByPeriod.set(normalized.periodKey, normalized);
+    });
+    weeklyReports = [...reportsByPeriod.values()];
+    weeklyReportsLoadedSuccessfully = true;
+    const periodKey = currentReportPeriod();
+    activeWeeklyReport = weeklyReports.find((report) => report.periodKey === periodKey) || newWeeklyReport(periodKey);
+    weeklyReportDirty = false;
+    renderWeeklyReportCenter();
+  } catch (error) {
+    weeklyReportsLoadedSuccessfully = false;
+    weeklyReports = [];
+    activeWeeklyReport = newWeeklyReport();
+    weeklyReportDirty = false;
+    console.error("读取周报列表失败:", error);
+    showToast("读取周报列表失败", "error");
+  }
+}
+
+function reportInputChanged(field, value) {
+  if (!activeWeeklyReport) return;
+  activeWeeklyReport[field] = String(value || "");
+  markWeeklyReportDirty();
+  renderWeeklyReportPreview();
+  updateTopbarForActive(null);
+}
+
+async function switchWeeklyReportPeriod(periodKey) {
+  if (!/^\d{4}-W\d{2}$/.test(periodKey)) return;
+  if (activeWeeklyReport?.periodKey === periodKey) return;
+  if (weeklyReportDirty) await persistWeeklyReport();
+  activeWeeklyReport = weeklyReports.find((report) => report.periodKey === periodKey) || newWeeklyReport(periodKey);
+  weeklyReportDirty = false;
+  renderWeeklyReportCenter();
+}
+
+async function copyWeeklyReportToClipboard() {
+  if (!activeWeeklyReport) return;
+  const result = await window.workbench.copyWeeklyReport({
+    text: weeklyReportPlainText(activeWeeklyReport),
+    html: weeklyReportHtmlBody(activeWeeklyReport)
+  });
+  if (!result?.success) throw new Error(result?.error || "复制周报失败");
+  showToast("周报已复制，可直接粘贴到企业微信文档", "success");
+}
+
+async function exportWeeklyReport(format) {
+  if (!activeWeeklyReport) return;
+  const isMarkdown = format === "markdown";
+  const result = await window.workbench.exportWeeklyReport({
+    format,
+    content: isMarkdown ? weeklyReportMarkdown(activeWeeklyReport) : weeklyReportHtmlDocument(activeWeeklyReport),
+    filename: `${activeWeeklyReport.periodKey}-${activeWeeklyReport.title}`
+  });
+  if (result?.success) showToast(`已导出 ${isMarkdown ? "Markdown" : "HTML"}`, "success");
+  else if (!result?.canceled) throw new Error(result?.error || "导出周报失败");
+}
+
+function setupWeeklyReportEvents() {
+  elements.navWeeklyReport?.addEventListener("click", () => activateTab(WEEKLY_REPORT_ID));
+  elements.reportGenerate?.addEventListener("click", () => {
+    if (!activeWeeklyReport) return;
+    activeWeeklyReport.rows = generateReportRowsFromTasks(activeWeeklyReport);
+    markWeeklyReportDirty();
+    renderWeeklyReportCenter();
+    showToast(`已从 ${weeklyTasks.length} 项任务生成周报初稿`, "success");
+  });
+  elements.reportSave?.addEventListener("click", async () => {
+    try {
+      await persistWeeklyReport();
+      showToast("周报草稿已保存", "success");
+    } catch (error) {
+      console.error("保存周报失败:", error);
+      showToast("保存周报失败", "error");
+    }
+  });
+  elements.reportCopy?.addEventListener("click", async () => {
+    try {
+      await copyWeeklyReportToClipboard();
+    } catch (error) {
+      console.error("复制周报失败:", error);
+      showToast("复制周报失败", "error");
+    }
+  });
+  elements.reportExportHtml?.addEventListener("click", async () => {
+    try {
+      await exportWeeklyReport("html");
+    } catch (error) {
+      console.error("导出 HTML 失败:", error);
+      showToast("导出 HTML 失败", "error");
+    }
+  });
+  elements.reportExportMarkdown?.addEventListener("click", async () => {
+    try {
+      await exportWeeklyReport("markdown");
+    } catch (error) {
+      console.error("导出 Markdown 失败:", error);
+      showToast("导出 Markdown 失败", "error");
+    }
+  });
+  elements.reportPeriod?.addEventListener("change", async () => {
+    const nextPeriod = elements.reportPeriod.value;
+    try {
+      await switchWeeklyReportPeriod(nextPeriod);
+    } catch (error) {
+      elements.reportPeriod.value = activeWeeklyReport?.periodKey || currentReportPeriod();
+      showToast("切换周报周期前保存失败", "error");
+    }
+  });
+  [
+    [elements.reportTitle, "title"],
+    [elements.reportAuthor, "author"],
+    [elements.reportRange, "dateRange"]
+  ].forEach(([input, field]) => input?.addEventListener("input", () => reportInputChanged(field, input.value)));
+  elements.reportAddRow?.addEventListener("click", () => {
+    if (!activeWeeklyReport) return;
+    activeWeeklyReport.rows.push(normalizeReportRow({ id: reportItemId("row") }));
+    markWeeklyReportDirty();
+    renderWeeklyReportCenter();
+  });
+  elements.reportAddNonquantified?.addEventListener("click", () => {
+    if (!activeWeeklyReport) return;
+    activeWeeklyReport.nonQuantified.push({ id: reportItemId("note"), text: "" });
+    markWeeklyReportDirty();
+    renderWeeklyReportCenter();
+  });
+  elements.reportAddIssue?.addEventListener("click", () => {
+    if (!activeWeeklyReport) return;
+    activeWeeklyReport.issues.push({ id: reportItemId("issue"), text: "" });
+    markWeeklyReportDirty();
+    renderWeeklyReportCenter();
+  });
+  elements.weeklyReportView?.addEventListener("input", (event) => {
+    const field = event.target.closest("[data-report-field]");
+    if (!field || !activeWeeklyReport) return;
+    const row = field.closest("[data-report-row-index]");
+    if (row) {
+      const index = Number(row.dataset.reportRowIndex);
+      const key = field.dataset.reportField;
+      if (activeWeeklyReport.rows[index] && key in activeWeeklyReport.rows[index]) activeWeeklyReport.rows[index][key] = field.value;
+    } else {
+      const item = field.closest("[data-report-list]");
+      if (!item) return;
+      const index = Number(item.dataset.reportIndex);
+      const list = item.dataset.reportList === "issues" ? activeWeeklyReport.issues : activeWeeklyReport.nonQuantified;
+      if (list[index] && field.dataset.reportField === "text") list[index].text = field.value;
+    }
+    markWeeklyReportDirty();
+    renderWeeklyReportPreview();
+  });
+  elements.weeklyReportView?.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-report-action]")?.dataset.reportAction;
+    if (!action || !activeWeeklyReport) return;
+    if (action === "remove-row") {
+      const row = event.target.closest("[data-report-row-index]");
+      activeWeeklyReport.rows.splice(Number(row?.dataset.reportRowIndex), 1);
+    } else if (action === "remove-nonquantified" || action === "remove-issues") {
+      const item = event.target.closest("[data-report-list]");
+      const list = action === "remove-issues" ? activeWeeklyReport.issues : activeWeeklyReport.nonQuantified;
+      list.splice(Number(item?.dataset.reportIndex), 1);
+    } else {
+      return;
+    }
+    markWeeklyReportDirty();
+    renderWeeklyReportCenter();
+  });
+}
+
 function taskProgressInfo(task) {
   const isActiveTask = pipelineState.active && pipelineState.taskId === task.id;
   if (!isActiveTask && !["running", "evaluating"].includes(task.status)) {
@@ -2506,8 +3152,9 @@ function taskProgressInfo(task) {
   const step = isActiveTask ? pipelineState.step : task.step;
   const index = pipelineStepIndex(step);
   const stepNumber = index + 1;
+  const activeSubtask = isActiveTask ? pipelineState.activeSubtaskIndex : runningSubtaskIndex(task);
   return {
-    label: `${stepNumber}/${PIPELINE_STEPS.length} ${PIPELINE_STEPS[index]?.name || ""}`,
+    label: `${activeSubtask ? `子任务 ${activeSubtask}/${Math.max(1, Number(task.quantity) || 1)} · ` : ""}${stepNumber}/${PIPELINE_STEPS.length} ${PIPELINE_STEPS[index]?.name || ""}`,
     ratio: stepNumber / PIPELINE_STEPS.length,
     barClass: task.status === "paused" ? "warn" : ""
   };
@@ -2592,13 +3239,26 @@ function taskCardElement(task) {
   card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}`;
   card.dataset.id = task.id;
   const progress = taskProgressInfo(task);
-  const subtasks = normalizeSubtasks(task.subtasks, task.quantity);
-  const subtaskRows = subtasks.map((subtask) => `
-    <button class="subtask-row" type="button" data-index="${subtask.index}" data-status="${escapeHtml(subtask.status)}">
-      <span>任务 ${subtask.index}</span>
-      <b class="subtask-state ${escapeHtml(subtask.status)}">${escapeHtml(subtaskStatusLabel(subtask.status))}</b>
-    </button>
-  `).join("");
+  const subtasks = taskSubtasks(task);
+  const subtaskRows = subtasks.map((subtask) => {
+    const active = pipelineState.active && pipelineState.taskId === task.id && pipelineState.activeSubtaskIndex === subtask.index;
+    let action = "";
+    if (subtask.status === "running") {
+      action = active
+        ? '<button class="subtask-action finish" type="button" data-subtask-action="finish">结束</button>'
+        : '<button class="subtask-action" type="button" data-subtask-action="resume">继续</button>';
+    } else if (["pending", "unconfirmed"].includes(subtask.status)) {
+      action = '<button class="subtask-action" type="button" data-subtask-action="start">开始</button>';
+    }
+    return `
+    <div class="subtask-row" data-index="${subtask.index}" data-status="${escapeHtml(subtask.status)}">
+      <span>子任务 ${subtask.index}</span>
+      <span class="subtask-controls">
+        <b class="subtask-state ${escapeHtml(subtask.status)}">${escapeHtml(subtaskStatusLabel(subtask.status))}</b>
+        ${action}
+      </span>
+    </div>`;
+  }).join("");
   const chips = [];
   if (task.chatLogPath) chips.push('<span class="file-chip">dialogue.json</span>');
   if (task.reportPath) chips.push('<span class="file-chip">eval_report.pdf</span>');
@@ -2608,7 +3268,7 @@ function taskCardElement(task) {
 
   let mainAction = "";
   if (task.status === "paused") {
-    mainAction = '<button class="btn btn-teal btn-sm task-resume" type="button">继续</button>';
+    mainAction = `<button class="btn btn-teal btn-sm task-resume" type="button">${runningSubtaskIndex(task) ? "继续" : "开始下一项"}</button>`;
   } else if (task.status === "unsubmitted") {
     mainAction = '<button class="btn btn-teal btn-sm task-mark-completed" type="button">标记已完成</button>';
   } else if (task.status === "completed") {
@@ -2640,7 +3300,7 @@ function taskCardElement(task) {
         <button class="icon-button tc-menu-toggle" type="button" title="更多操作" aria-label="更多操作">${svgIcon("dots")}</button>
         <div class="tc-menu-pop">
           ${["completed", "unsubmitted"].includes(task.status) ? '<button class="task-reopen" type="button">重新打开任务</button>' : ""}
-          <button class="task-edit" type="button">编辑</button>
+          <button class="task-edit" type="button">编辑任务与状态</button>
           <button class="task-delete danger" type="button">删除</button>
         </div>
       </div>
@@ -2648,7 +3308,11 @@ function taskCardElement(task) {
   `;
 
   card.querySelector(".task-run")?.addEventListener("click", () => startTaskAutomation(task.id));
-  card.querySelector(".task-resume")?.addEventListener("click", () => resumeTaskAutomation(task.id));
+  card.querySelector(".task-resume")?.addEventListener("click", () => {
+    const activeIndex = runningSubtaskIndex(task);
+    if (activeIndex) resumeTaskAutomation(task.id);
+    else startTaskAutomation(task.id, nextRunnableSubtaskIndex(task));
+  });
   card.querySelector(".task-mark-completed")?.addEventListener("click", () =>
     updateTaskFields(task.id, { status: "completed", subtasks: markAllSubtasksDone(task.subtasks, task.quantity) })
       .then(() => showToast("任务已标记为已完成", "success"))
@@ -2676,9 +3340,19 @@ function taskCardElement(task) {
     openSubtaskPopoverTaskId = willOpen ? task.id : null;
   });
   card.querySelectorAll(".subtask-row").forEach((row) => {
-    row.addEventListener("click", async () => {
-      const current = row.dataset.status || "pending";
-      await updateTaskSubtaskStatus(task.id, Number(row.dataset.index), nextSubtaskStatus(current));
+    row.querySelector(".subtask-action")?.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const index = Number(row.dataset.index);
+      const action = event.currentTarget.dataset.subtaskAction;
+      if (action === "finish") {
+        if (pipelineState.active && pipelineState.taskId === task.id && pipelineState.activeSubtaskIndex === index) finishActiveTask();
+        return;
+      }
+      if (action === "resume") {
+        await resumeTaskAutomation(task.id);
+        return;
+      }
+      if (action === "start") await startTaskAutomation(task.id, index);
     });
   });
   card.querySelector(".task-reopen")?.addEventListener("click", () => {
@@ -2767,21 +3441,29 @@ function renderTaskCenter() {
 function taskFromForm() {
   const id = document.querySelector("#task-id").value || `task-${Date.now()}`;
   const existing = weeklyTasks.find((task) => task.id === id) || {};
+  const status = ["pending", "paused", "unsubmitted", "completed"].includes(elements.taskStatus.value)
+    ? elements.taskStatus.value
+    : (existing.status || "pending");
+  const existingSubtasks = normalizeSubtasks(existing.subtasks, Math.max(1, Number(document.querySelector("#task-quantity").value) || 1));
+  const subtasks = subtasksForTaskStatus(existingSubtasks, existing.status, status);
   return {
     id,
     school: document.querySelector("#task-school").value.trim(),
     course: document.querySelector("#task-course").value.trim(),
     taskType: document.querySelector("#task-type").value,
     quantity: Math.max(1, Number(document.querySelector("#task-quantity").value) || 1),
-    status: existing.status || "pending",
+    status,
     owner: document.querySelector("#task-owner").value.trim(),
     weekday: existing.weekday || "",
     note: existing.note || "",
-    subtasks: existing.subtasks || [],
+    subtasks,
     chatLogPath: existing.chatLogPath || "",
     reportPath: existing.reportPath || "",
     taskFolder: existing.taskFolder || "",
-    step: existing.step || "testing"
+    step: existing.step || "testing",
+    cleanupPending: Boolean(existing.cleanupPending),
+    deletePending: Boolean(existing.deletePending),
+    cardCopied: existing.cardCopied && typeof existing.cardCopied === "object" ? existing.cardCopied : {}
   };
 }
 
@@ -2802,7 +3484,10 @@ function editWeeklyTask(id) {
 async function reopenWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task || !["completed", "unsubmitted"].includes(task.status)) return;
-  await updateTaskFields(id, { status: "pending" });
+  await updateTaskFields(id, {
+    status: "pending",
+    subtasks: taskSubtasks(task).map((subtask) => ({ ...subtask, status: "pending" }))
+  });
   showToast("任务已重新打开", "success");
 }
 
@@ -2821,14 +3506,36 @@ function deleteWeeklyTask(id) {
 
 async function performDeleteWeeklyTask(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
-  weeklyTasks = weeklyTasks.filter((task) => task.id !== id);
+  if (!task) return;
   const folderPath = pipelineState.taskId === id ? pipelineState.taskFolder : task?.taskFolder || "";
-  if (pipelineState.taskId === id) {
-    pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-    updateTaskRail(null);
+  const previousDeletePending = task.deletePending;
+  task.deletePending = true;
+  try {
+    await persistWeeklyTasks();
+  } catch (error) {
+    task.deletePending = previousDeletePending;
+    console.error("保存任务删除标记失败:", error);
+    showToast("无法保存删除操作，任务和临时文件均已保留", "error");
+    return;
   }
-  if (folderPath) await window.workbench.cleanupTaskFolder(folderPath);
-  await persistWeeklyTasks();
+  taskTransitionGeneration += 1;
+  if (pipelineState.taskId === id) {
+    pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+    await updateTaskRail(null);
+  }
+  const cleaned = !folderPath || await window.workbench.cleanupTaskFolder(folderPath).catch(() => false);
+  if (!cleaned) {
+    showToast("任务已标记删除；临时文件清理失败，下次启动会重试", "error");
+    return;
+  }
+  weeklyTasks = weeklyTasks.filter((candidate) => candidate.id !== id);
+  try {
+    await persistWeeklyTasks();
+  } catch (error) {
+    console.error("确认任务删除状态失败:", error);
+    showToast("任务临时文件已清理；记录将在下次启动时自动移除", "error");
+    return;
+  }
   showToast("任务已删除", "success");
 }
 
@@ -2837,7 +3544,7 @@ async function updateTaskFields(id, fields) {
   if (!task) return null;
   Object.assign(task, fields);
   await persistWeeklyTasks();
-  return task;
+  return weeklyTasks.find((candidate) => candidate.id === id) || null;
 }
 
 function renderImportPreviewGroup(key, title, rows, { collapsed = false, selectable = true } = {}) {
@@ -3289,44 +3996,95 @@ function activateOrCreateTab(id, name, url) {
   renderTabs();
 }
 
-async function startTaskAutomation(id) {
+async function startTaskAutomation(id, subtaskIndex = null) {
   if (pipelineState.active) {
     showToast("当前已有正在运行的任务，请先暂停或结束当前任务。", "error");
     return;
   }
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
+  const requestedSubtaskIndex = subtaskIndex !== null && Number.isInteger(Number(subtaskIndex)) ? Number(subtaskIndex) : null;
+  const targetSubtaskIndex = requestedSubtaskIndex || nextRunnableSubtaskIndex(task);
+  const subtasks = taskSubtasks(task);
+  const targetSubtask = subtasks.find((subtask) => subtask.index === targetSubtaskIndex);
+  const existingRunningIndex = runningSubtaskIndex(task);
+  if (existingRunningIndex && existingRunningIndex !== targetSubtaskIndex) {
+    showToast(`子任务 ${existingRunningIndex} 尚未结束，请先继续或结束它`, "error");
+    return;
+  }
+  if (!targetSubtask || !["pending", "unconfirmed"].includes(targetSubtask.status)) {
+    showToast("没有可开始的子任务，请先检查子任务状态", "error");
+    return;
+  }
+  const previousStatus = task.status;
+  const previousStep = task.step;
+  const previousSubtasks = subtasks;
+  const nextSubtasks = updateSubtaskStatus(task, targetSubtaskIndex, "running");
+  const transitionGeneration = ++taskTransitionGeneration;
   // 缺陷 #7：执行先落 prepare（1/5），任务文件夹创建成功后才推进 testing（2/5）
   pipelineState = {
     active: true,
     taskId: id,
+    activeSubtaskIndex: targetSubtaskIndex,
     step: "prepare",
     chatPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
     taskFolder: "",
     uploadQueue: []
   };
-  await updateTaskFields(id, { status: "running", step: "prepare" });
+  try {
+    await updateTaskFields(id, { status: "running", step: "prepare", subtasks: nextSubtasks });
+  } catch (error) {
+    Object.assign(task, { status: previousStatus, step: previousStep, subtasks: previousSubtasks });
+    pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+    await updateTaskRail(null);
+    console.error("保存任务启动状态失败:", error);
+    showToast("无法保存任务启动状态，任务尚未开始", "error");
+    return;
+  }
   taskRailCollapsed = false;
-  updateTaskRail(task);
+  await updateTaskRail(weeklyTasks.find((candidate) => candidate.id === id) || task);
   let taskFolder = "";
   try {
     taskFolder = await window.workbench.prepareTaskFolder(task);
   } catch (error) {
     console.error("创建任务文件夹失败:", error);
   }
+  if (transitionGeneration !== taskTransitionGeneration || !pipelineState.active || pipelineState.taskId !== id) {
+    if (taskFolder) await window.workbench.cleanupTaskFolder(taskFolder).catch(() => false);
+    return;
+  }
   if (!taskFolder) {
+    pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+    const currentTask = weeklyTasks.find((candidate) => candidate.id === id);
+    if (currentTask) Object.assign(currentTask, { status: previousStatus, step: previousStep, subtasks: previousSubtasks });
+    try { await persistWeeklyTasks(); } catch (error) { console.error("回滚任务启动状态失败:", error); }
+    await updateTaskRail(null);
     showToast("任务文件夹创建失败，流程停留在「准备」步骤，请重试。", "error");
     return;
   }
   pipelineState.taskFolder = taskFolder;
   pipelineState.step = "testing";
-  await updateTaskFields(id, { taskFolder, step: "testing" });
-  updateTaskRail(task);
-  showToast(`已开始任务：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
+  let activeTask;
+  try {
+    activeTask = await updateTaskFields(id, { taskFolder, step: "testing" });
+  } catch (error) {
+    await window.workbench.cleanupTaskFolder(taskFolder).catch(() => false);
+    pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+    const currentTask = weeklyTasks.find((candidate) => candidate.id === id);
+    if (currentTask) Object.assign(currentTask, { status: previousStatus, step: previousStep, taskFolder: "", subtasks: previousSubtasks });
+    try { await persistWeeklyTasks(); } catch (rollbackError) { console.error("回滚任务文件夹状态失败:", rollbackError); }
+    await updateTaskRail(null);
+    console.error("保存任务文件夹状态失败:", error);
+    showToast("任务启动状态保存失败，已停止本次任务", "error");
+    return;
+  }
+  await updateTaskRail(activeTask);
+  showToast(`已开始子任务 ${targetSubtaskIndex}：${task.school || ""} ${task.course || ""}。测试完成后下载对话文件即可继续。`, "success");
 }
 
 async function pauseTaskAutomation(id) {
+  taskTransitionGeneration += 1;
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
 
@@ -3338,40 +4096,137 @@ async function pauseTaskAutomation(id) {
   }
 
   task.status = "paused";
-  pipelineState = { active: false, taskId: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
-  updateTaskRail(null);
-  await persistWeeklyTasks();
+  pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+  await updateTaskRail(null);
+  try {
+    await persistWeeklyTasks();
+  } catch (error) {
+    console.error("保存任务暂停状态失败:", error);
+    showToast("任务已暂停，但状态保存失败；重启后会自动核对", "error");
+    return;
+  }
   showToast(`任务已暂停：${task.school || ""} ${task.course || ""}`, "success");
 }
 
 async function resumeTaskAutomation(id) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
+  const previousStatus = task.status;
+  const activeSubtaskIndex = nextRunnableSubtaskIndex(task);
+  if (!activeSubtaskIndex) {
+    showToast("该任务没有待继续的子任务", "error");
+    return;
+  }
+  if (taskSubtasks(task).find((subtask) => subtask.index === activeSubtaskIndex)?.status !== "running") {
+    await startTaskAutomation(id, activeSubtaskIndex);
+    return;
+  }
 
   if (pipelineState.active) {
     showToast("当前已有正在运行的任务，请先暂停或结束当前任务。", "error");
     return;
   }
 
+  const transitionGeneration = ++taskTransitionGeneration;
+  let activation;
+  try {
+    activation = await window.workbench.activateTaskFolder({
+      id,
+      folderPath: task.taskFolder || "",
+      step: task.step || "testing"
+    });
+  } catch {
+    activation = { success: false };
+  }
+  if (!activation?.success) {
+    showToast("任务文件夹已丢失或无效，无法恢复任务", "error");
+    return;
+  }
+  if (transitionGeneration !== taskTransitionGeneration || pipelineState.active) return;
+
+  const assignment = await window.workbench.updateActiveTaskInfo({
+    taskId: id,
+    step: task.step || "testing",
+    folderPath: activation.folderPath
+  }).catch(() => ({ success: false }));
+  if (!assignment?.success || !assignment.folderPath) {
+    showToast("任务文件夹无法在主进程激活，请重试", "error");
+    return;
+  }
+  if (transitionGeneration !== taskTransitionGeneration || pipelineState.active) {
+    await window.workbench.updateActiveTaskInfo({}).catch(() => {});
+    return;
+  }
+
   pipelineState = {
     active: true,
     taskId: id,
+    activeSubtaskIndex,
     step: task.step || "testing",
     chatPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
-    taskFolder: task.taskFolder || "",
+    taskFolder: activation.folderPath,
     uploadQueue: []
   };
 
   const nextStatus = pipelineState.step === "evaluating" ? "evaluating" : "running";
-  await updateTaskFields(id, { status: nextStatus });
   taskRailCollapsed = false;
-  updateTaskRail(task);
+  let activeTask;
+  try {
+    activeTask = await updateTaskFields(id, { status: nextStatus });
+  } catch (error) {
+    task.status = previousStatus;
+    pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+    await updateTaskRail(null);
+    console.error("保存任务恢复状态失败:", error);
+    showToast("无法保存任务恢复状态，任务保持暂停", "error");
+    return;
+  }
+  await updateTaskRail(activeTask);
   showToast(`任务已恢复执行：${task.school || ""} ${task.course || ""}`, "success");
 }
 
 async function handleDownloadCompleted(download) {
-  if (!pipelineState.active || !pipelineState.taskId) return;
+  if (download.state && download.state !== "completed") {
+    const label = download.state === "cancelled" ? "下载已取消" : "下载失败或中断";
+    showToast(`${label}: ${download.filename || download.originalFilename || "未知文件"}`, "error");
+    return;
+  }
+
+  const matchesActiveTask = pipelineState.active
+    && pipelineState.taskId
+    && (!download.taskId || download.taskId === pipelineState.taskId);
+  if (download.captured && download.taskId && !matchesActiveTask) {
+    const targetTask = weeklyTasks.find((task) => task.id === download.taskId);
+    if (targetTask && download.type === "chat") {
+      if (!["prepare", "testing"].includes(targetTask.step)) {
+        showToast(`已忽略原任务的过期对话下载: ${download.filename}`, "error");
+        return;
+      }
+      await updateTaskFields(download.taskId, {
+        status: "paused",
+        chatLogPath: download.path,
+        step: "evaluating"
+      });
+    } else if (targetTask && download.type === "report") {
+      if (targetTask.step !== "evaluating") {
+        showToast(`已忽略原任务的过期报告下载: ${download.filename}`, "error");
+        return;
+      }
+      await updateTaskFields(download.taskId, {
+        status: "completed",
+        reportPath: download.path,
+        step: "report"
+      });
+    }
+    showToast(`下载已归档到原任务文件夹: ${download.filename}`, "success");
+    return;
+  }
+  if (!pipelineState.active || !pipelineState.taskId) {
+    const destination = download.captured ? "任务文件夹" : "系统下载文件夹";
+    showToast(`已下载到${destination}: ${download.filename}`, "success");
+    return;
+  }
 
   if (download.type === "generic") {
     if (download.captured) showToast(`已捕获到任务文件夹: ${download.filename}`, "success");
@@ -3379,6 +4234,10 @@ async function handleDownloadCompleted(download) {
   }
 
   if (download.type === "chat") {
+    if (!["prepare", "testing"].includes(pipelineState.step)) {
+      showToast(`已忽略当前步骤不再需要的对话下载: ${download.filename}`, "error");
+      return;
+    }
     pipelineState.chatPath = download.path;
     pipelineState.step = "evaluating";
     const task = await updateTaskFields(pipelineState.taskId, { status: "evaluating", chatLogPath: download.path, step: "evaluating" });
@@ -3389,6 +4248,10 @@ async function handleDownloadCompleted(download) {
   }
 
   if (download.type === "report") {
+    if (pipelineState.step !== "evaluating") {
+      showToast(`已忽略当前步骤不再需要的报告下载: ${download.filename}`, "error");
+      return;
+    }
     pipelineState.reportPath = download.path;
     pipelineState.step = "report";
     const task = await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path, step: "report" });
@@ -3548,11 +4411,22 @@ function toggleTabExtension(tabId, name, url) {
     // Clear and create/re-use webview
     extBody.replaceChildren();
     const extWebview = document.createElement("webview");
+    const extensionId = new URL(url).hostname;
+    const allowedExtensionPrefix = `chrome-extension://${extensionId}/`;
+    const isAllowedExtensionUrl = (candidate) => String(candidate || "").startsWith(allowedExtensionPrefix);
     extWebview.className = "tab-extension-webview";
     extWebview.src = url;
     extWebview.partition = "persist:personal-workbench";
     extWebview.preload = "./preload-popup.js";
     extWebview.setAttribute("webpreferences", "contextIsolation=no");
+    extWebview.addEventListener("will-navigate", (event) => {
+      if (isAllowedExtensionUrl(event.url)) return;
+      event.preventDefault();
+      showToast("已阻止扩展面板跳转到外部页面", "error");
+    });
+    extWebview.addEventListener("did-navigate", (event) => {
+      if (!isAllowedExtensionUrl(event.url)) extWebview.src = url;
+    });
     extWebview.addEventListener("dom-ready", () => {
       console.info(`[扩展面板] ${name} 已就绪: ${url}`);
     });
@@ -3587,6 +4461,10 @@ function toggleRightSidebar(open, tabId = null) {
     if (bottomSplitTabId === tabId) {
       bottomSplitTabId = null;
       elements.workspace.classList.remove("bottom-sidebar-open");
+    }
+    if (window.innerWidth <= 1050 && pipelineState.active && !taskRailCollapsed) {
+      taskRailCollapsed = true;
+      renderTaskRail(weeklyTasks.find((task) => task.id === pipelineState.taskId) || null);
     }
     elements.appShell.classList.add("right-sidebar-open");
     if (activeTabId === rightSplitTabId) {
@@ -3669,9 +4547,19 @@ elements.menuReloadButton?.addEventListener("click", () => {
   elements.menuMorePop.classList.remove("open");
   activeWebview()?.reload?.();
 });
+function setPrefsFeedback(message = "", type = "") {
+  if (!elements.prefsFeedback) return;
+  elements.prefsFeedback.textContent = message;
+  elements.prefsFeedback.dataset.type = type;
+  const isError = type === "error";
+  elements.prefsFeedback.setAttribute("role", isError ? "alert" : "status");
+  elements.prefsFeedback.setAttribute("aria-live", isError ? "assertive" : "polite");
+}
+
 // 工作台偏好：裁切方向 + 像素数
 elements.menuPrefsButton?.addEventListener("click", async () => {
   elements.menuMorePop.classList.remove("open");
+  setPrefsFeedback();
   try {
     const prefs = await window.workbench.getWorkbenchPrefs();
     elements.prefTheme.value = normalizeWorkbenchTheme(prefs?.theme);
@@ -3705,7 +4593,7 @@ elements.prefsForm?.addEventListener("submit", async (event) => {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("需为对象");
       platformFieldMap = parsed;
     } catch (error) {
-      showToast(`平台字段映射 JSON 格式错误：${error.message}`, "error");
+      setPrefsFeedback(`平台字段映射 JSON 格式错误：${error.message}`, "error");
       return;
     }
   }
@@ -3723,43 +4611,43 @@ elements.prefInjectRun?.addEventListener("click", async () => {
   const field = elements.prefInjectField?.value.trim();
   const value = elements.prefInjectValue?.value ?? "";
   if (!field) {
-    showToast("请填写要试注入的字段名", "error");
+    setPrefsFeedback("请填写要试注入的字段名", "error");
     return;
   }
   let prefs;
   try {
     prefs = await window.workbench.getWorkbenchPrefs();
   } catch {
-    showToast("读取偏好失败", "error");
+    setPrefsFeedback("读取偏好失败", "error");
     return;
   }
   const selector = prefs?.platformFieldMap?.[field];
   if (!selector) {
-    showToast(`字段「${field}」未在映射中配置选择器`, "error");
+    setPrefsFeedback(`字段「${field}」未在映射中配置选择器`, "error");
     return;
   }
   const webview = activeWebview();
   if (!webview) {
-    showToast("当前标签页不是网页，无法注入。请先切换到平台网页标签。", "error");
+    setPrefsFeedback("当前标签页不是网页，无法注入。请先切换到平台网页标签。", "error");
     return;
   }
   let webContentsId;
   try {
     webContentsId = webview.getWebContentsId();
   } catch {
-    showToast("当前网页尚未加载完成，请稍后重试", "error");
+    setPrefsFeedback("当前网页尚未加载完成，请稍后重试", "error");
     return;
   }
   try {
     const result = await window.workbench.testInjectField(webContentsId, selector, value);
     if (result?.ok) {
-      showToast(`试注入成功（${result.kind}）：${field} → ${selector}`, "success");
+      setPrefsFeedback(`试注入成功（${result.kind}）：${field} → ${selector}`, "success");
     } else {
-      showToast(`试注入失败：${result?.error || "未知错误"}`, "error");
+      setPrefsFeedback(`试注入失败：${result?.error || "未知错误"}`, "error");
     }
   } catch (error) {
     console.error("试注入失败:", error);
-    showToast("试注入调用失败", "error");
+    setPrefsFeedback("试注入调用失败", "error");
   }
 });
 document.querySelectorAll("[data-command]").forEach((button) => {
@@ -3776,6 +4664,7 @@ window.workbench.onMenuToggleTasks(() => activateTab(TASK_CENTER_ID));
 window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);
 elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
+setupWeeklyReportEvents();
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
 elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
 elements.btnWritebackTodo?.addEventListener("click", () => handleTodoWriteback());
@@ -3935,6 +4824,8 @@ function showToast(message, type = "success") {
   }
   const toast = document.createElement("div");
   toast.className = `toast-message ${type}`;
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+  toast.setAttribute("aria-live", type === "error" ? "assertive" : "polite");
   toast.textContent = message;
   container.append(toast);
   setTimeout(() => toast.classList.add("show"), 10);
@@ -3956,6 +4847,10 @@ elements.taskForm?.addEventListener("submit", async (event) => {
   const task = taskFromForm();
   if (!task.school || !task.course) {
     showToast("请填写学校和课程", "error");
+    return;
+  }
+  if (pipelineState.active && pipelineState.taskId === task.id) {
+    showToast("当前任务正在执行，请先暂停或结束后再修改状态", "error");
     return;
   }
   await upsertWeeklyTask(task);
@@ -4231,6 +5126,13 @@ elements.bottomSidebarResizer.addEventListener("pointerdown", beginBottomSidebar
 
 let windowResizeTimeout = null;
 window.addEventListener("resize", () => {
+  if (window.innerWidth <= 1050
+    && elements.appShell.classList.contains("right-sidebar-open")
+    && pipelineState.active
+    && !taskRailCollapsed) {
+    taskRailCollapsed = true;
+    renderTaskRail(weeklyTasks.find((task) => task.id === pipelineState.taskId) || null);
+  }
   if (typeof fitAddon?.fit === "function") fitAddon.fit();
   fitWebviewZoom();
   window.workbench.resizeTerminal({ cols: terminal.cols, rows: terminal.rows });
@@ -4580,7 +5482,7 @@ setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 window.workbench.getWorkbenchPrefs().then((prefs) => {
   applyWorkbenchTheme(prefs?.theme);
 }).catch(() => {});
-loadWeeklyTasks();
+loadWeeklyTasks().then(() => loadWeeklyReports());
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
 window.workbench.onUploadChooseFiles(handleUploadChooseFiles);
 window.workbench.onTaskFolderChanged(() => refreshRailTray());

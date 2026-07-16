@@ -34,13 +34,14 @@ test("popup preload cannot be aborted by optional main-world bridge setup", () =
   assert.match(popupSrc, /const \{ contextBridge, ipcRenderer \} = require\("electron"\)/);
   assert.match(popupSrc, /debugLog\("preload:init", \{/);
   assert.match(popupSrc, /contextIsolated: Boolean\(process\.contextIsolated\)/);
-  assert.match(popupSrc, /if \(process\.contextIsolated\) \{/);
+  assert.match(popupSrc, /if \(process\.contextIsolated && TRUSTED_EXTENSION_PAGE\) \{/);
   assert.match(popupSrc, /contextBridge\.executeInMainWorld\(\{ func: mainWorldBridgeBootstrap \}\)/);
   assert.doesNotMatch(popupSrc, /appendChild\(script\)/);
   assert.match(popupSrc, /installMainWorldBridge\(\);/);
   assert.match(popupSrc, /debugLog\("main-world:bridge-error", \{/);
-  assert.match(popupSrc, /if \(window\.chrome\) \{/);
+  assert.match(popupSrc, /if \(TRUSTED_EXTENSION_PAGE && window\.chrome\) \{/);
   assert.match(popupSrc, /patchChromeApis\(window\.chrome\);/);
+  assert.doesNotMatch(popupSrc, /window\.__workbenchSessionToken/);
 });
 
 test("popup compat forwards tab url change messages to runtime listeners", () => {
@@ -86,7 +87,7 @@ test("popup compat proxies platform API requests through main process", () => {
 });
 
 test("main process loads Electron-compatible extension copies with Chrome API polyfills", () => {
-  assert.match(mainSrc, /function prepareExtensionForElectron\(extensionPath, manifest = \{\}\)/);
+  assert.match(mainSrc, /function prepareExtensionForElectron\(extensionPath, manifest = \{\}, token, capabilities\)/);
   assert.match(mainSrc, /workbench-electron-storage-polyfill/);
   assert.match(mainSrc, /const asChromeAsync = \(executor\) => \(\.\.\.args\) => \{/);
   assert.match(mainSrc, /const callback = typeof args\[args\.length - 1\] === "function"/);
@@ -101,11 +102,15 @@ test("main process loads Electron-compatible extension copies with Chrome API po
   assert.match(mainSrc, /background-polyfill:cookies-get-all/);
   assert.match(mainSrc, /fs\.cpSync\(extensionPath, targetRoot, \{ recursive: true \}\)/);
   assert.match(mainSrc, /fs\.writeFileSync\(\s*targetBackgroundPath/);
-  assert.match(mainSrc, /const loadPath = prepareExtensionForElectron\(extensionPath, manifest\)/);
+  assert.match(mainSrc, /const loadPath = prepareExtensionForElectron\(extensionPath, manifest, accessToken, capabilities\)/);
   assert.match(mainSrc, /extensions\.loadExtension\(loadPath/);
+  assert.match(mainSrc, /function getExtensionCapabilities\(manifest = \{\}\)/);
+  assert.match(mainSrc, /resolveExtensionRelativePath\(extensionPath, backgroundScript\)/);
 });
 
 test("renderer extension panel logs popup load and runtime errors", () => {
+  assert.match(rendererSrc, /allowedExtensionPrefix/);
+  assert.match(rendererSrc, /extWebview\.addEventListener\("will-navigate"/);
   assert.match(rendererSrc, /extWebview\.addEventListener\("dom-ready"/);
   assert.match(rendererSrc, /extWebview\.addEventListener\("console-message"/);
   assert.match(rendererSrc, /extWebview\.addEventListener\("did-fail-load"/);

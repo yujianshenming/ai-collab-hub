@@ -10,8 +10,9 @@ contextBridge.exposeInMainWorld("workbench", {
     return () => ipcRenderer.removeListener("terminal:data", listener);
   },
   updateActiveTabInfo: (info) => ipcRenderer.send("tab:active-update", info),
-  updateActiveTaskInfo: (info) => ipcRenderer.send("task:active-update", info),
+  updateActiveTaskInfo: (info) => ipcRenderer.invoke("task:active-update", info),
   prepareTaskFolder: (task) => ipcRenderer.invoke("tasks:prepare-folder", task),
+  activateTaskFolder: (task) => ipcRenderer.invoke("tasks:activate-folder", task),
   cleanupTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:cleanup-folder", folderPath),
   openTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:open-folder", folderPath),
   listTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:list-folder", folderPath),
@@ -40,6 +41,10 @@ contextBridge.exposeInMainWorld("workbench", {
   writeTodoFile: (text) => ipcRenderer.invoke("tasks:write-todo-file", text),
   readWeeklyTasks: () => ipcRenderer.invoke("tasks:read-weekly"),
   writeWeeklyTasks: (tasks) => ipcRenderer.invoke("tasks:write-weekly", tasks),
+  readWeeklyReports: () => ipcRenderer.invoke("reports:read-weekly"),
+  writeWeeklyReports: (reports) => ipcRenderer.invoke("reports:write-weekly", reports),
+  copyWeeklyReport: (payload) => ipcRenderer.invoke("reports:copy-weekly", payload),
+  exportWeeklyReport: (payload) => ipcRenderer.invoke("reports:export-weekly", payload),
   onDownloadCompleted: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("download-completed", listener);

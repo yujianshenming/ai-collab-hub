@@ -4,8 +4,10 @@
 // 跑法：node tests/smoke.e2e.js
 const path = require("path");
 const { _electron: electron } = require("playwright-core");
+const { isolateWeeklyTasks } = require("./e2e-isolation");
 
 const ROOT = path.join(__dirname, "..");
+isolateWeeklyTasks("smoke-e2e");
 const electronPath = path.join(ROOT, "node_modules", "electron", "dist", "electron.exe");
 
 const checks = [];

@@ -6,6 +6,8 @@ const COOKIE_URL = "https://hike-teaching-center.polymas.com/";
 const COOKIE_NAME = "ai-poly";
 const STORAGE_PREFIX = "pw-ext-storage:";
 const POLL_INTERVAL_MS = 1000;
+const TRUSTED_EXTENSION_PAGE = window.location.protocol === "chrome-extension:"
+  && /^[a-p]{32}$/i.test(window.location.hostname);
 const BRIDGE_FIRST_MESSAGE_TYPES = new Set([
   "GET_CURRENT_TAB_URL",
   "GET_CURRENT_TAB_INFO",
@@ -23,6 +25,7 @@ const mainWorldRuntimeListeners = new Set();
 let mainWorldBridgeInstalled = false;
 
 function debugLog(event, details = {}) {
+  if (!TRUSTED_EXTENSION_PAGE) return;
   try {
     ipcRenderer.send("workbench:extension-debug-log", { event, details });
   } catch {}
@@ -175,7 +178,7 @@ function installMainWorldBridge() {
   });
 }
 
-if (process.contextIsolated) {
+if (process.contextIsolated && TRUSTED_EXTENSION_PAGE) {
   try {
     installMainWorldBridge();
   } catch (error) {
@@ -185,13 +188,6 @@ if (process.contextIsolated) {
     });
   }
 }
-
-ipcRenderer
-  .invoke("workbench:get-session-token")
-  .then((token) => {
-    window.__workbenchSessionToken = token;
-  })
-  .catch(() => {});
 
 function parseSendMessageArgs(args) {
   if (!args.length) return { message: {}, callback: null };
@@ -231,6 +227,7 @@ async function handleRuntimeSendMessage(message = {}) {
 }
 
 window.addEventListener("message", async (event) => {
+  if (!TRUSTED_EXTENSION_PAGE) return;
   if (event.source !== window) return;
   const data = event.data || {};
   if (data.source !== "workbench-main-world-chrome") return;
@@ -772,9 +769,9 @@ function patchChromeApis(chromeApi) {
   startUrlPolling();
 }
 
-if (window.chrome) {
+if (TRUSTED_EXTENSION_PAGE && window.chrome) {
   patchChromeApis(window.chrome);
-} else {
+} else if (TRUSTED_EXTENSION_PAGE) {
   let realChrome;
   Object.defineProperty(window, "chrome", {
     get() {

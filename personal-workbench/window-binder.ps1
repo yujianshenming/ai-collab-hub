@@ -241,7 +241,9 @@ if ($Action -eq "bind") {
     # 输出成功找到的窗口句柄，供主进程使用
     Write-Output "BoundHWnd:$($childHwndPtr.ToInt64())"
 } elseif ($Action -eq "resize") {
-    [Win32]::MoveWindow($childHwndPtr, $X, $Y, $Width, $Height, $true) | Out-Null
+    if (-not [Win32]::MoveWindow($childHwndPtr, $X, $Y, $Width, $Height, $true)) {
+        throw "MoveWindow failed for HWND $($childHwndPtr.ToInt64())"
+    }
 } elseif ($Action -eq "show") {
     [Win32]::ShowWindow($childHwndPtr, [Win32]::SW_SHOW) | Out-Null
 } elseif ($Action -eq "hide") {

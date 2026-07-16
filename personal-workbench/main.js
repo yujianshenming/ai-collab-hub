@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage, clipboard } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -6,6 +6,10 @@ const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawn, exec } = require("node:child_process");
+
+if (process.env.PERSONAL_WORKBENCH_USER_DATA) {
+  app.setPath("userData", path.resolve(process.env.PERSONAL_WORKBENCH_USER_DATA));
+}
 
 // Enforce single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
@@ -20,10 +24,18 @@ let activeTabInfo = { url: "", title: "" };
 let extensionResults = [];
 let localServer;
 let activeTaskFolder = "";
+let activeTaskId = "";
+let activeTaskStep = "idle";
 const localAppsMap = new Map();
 const runningDesktopApps = new Map();
 const tabPtyProcesses = new Map();
 const embeddedWindows = new Map();
+const embeddedWindowRects = new Map();
+const embeddedWindowPendingRects = new Map();
+const inFlightDownloadPaths = new Set();
+const extensionAccessTokens = new Map();
+const extensionCapabilities = new Map();
+const loadedExtensionTokens = new Map();
 
 // SSE & state sharing structures
 const sessionToken = crypto.randomBytes(16).toString("hex");
@@ -92,7 +104,9 @@ function runWindowBinder(argsArray) {
     "-File", scriptPath,
     ...argsArray
   ];
-  spawn("powershell.exe", args);
+  const child = spawn("powershell.exe", args);
+  child.on("error", (error) => console.warn("Window binder failed:", error));
+  return child;
 }
 
 function bindWindow(tabId, pid, exePath, parentHwnd, rect) {
@@ -216,8 +230,16 @@ const localServerPort = 38924;
 const extensionApiBaseUrl = "https://cloudapi.polymas.com";
 const extensionAuthCookieUrl = "https://hike-teaching-center.polymas.com/";
 const extensionAuthCookieName = "ai-poly";
-const downloadRoot = path.join(__dirname, "temp");
-const weeklyTasksPath = path.join(__dirname, "..", "tasks", "weekly_tasks.json");
+const downloadRoot = process.env.PERSONAL_WORKBENCH_DOWNLOAD_ROOT
+  ? path.resolve(process.env.PERSONAL_WORKBENCH_DOWNLOAD_ROOT)
+  : path.join(__dirname, "temp");
+const weeklyTasksPath = process.env.PERSONAL_WORKBENCH_WEEKLY_TASKS_PATH
+  ? path.resolve(process.env.PERSONAL_WORKBENCH_WEEKLY_TASKS_PATH)
+  : path.join(__dirname, "..", "tasks", "weekly_tasks.json");
+
+function weeklyReportsPath() {
+  return path.join(app.getPath("userData"), "weekly-reports.json");
+}
 
 function workbenchSession() {
   return session.fromPartition(workbenchPartition);
@@ -333,8 +355,10 @@ function startTerminal(size = {}) {
     return;
   }
 
-  terminalProcess.onData((data) => sendToRenderer("terminal:data", data));
-  terminalProcess.onExit(({ exitCode }) => {
+  const startedTerminal = terminalProcess;
+  startedTerminal.onData((data) => sendToRenderer("terminal:data", data));
+  startedTerminal.onExit(({ exitCode }) => {
+    if (terminalProcess !== startedTerminal) return;
     terminalProcess = null;
     sendToRenderer("terminal:data", `\r\n[命令提示符已退出，代码 ${exitCode ?? "未知"}]\r\n`);
   });
@@ -358,6 +382,8 @@ function canLoadInWebview(url) {
 // 任一环节异常 → 降级为主进程系统选择器注入，保证上传按钮不会点了没反应。
 const webviewContentsSet = new Set();
 const pendingUploadRequests = new Map();
+const debuggerMessageHandlers = new WeakMap();
+const appAttachedDebuggers = new WeakSet();
 let uploadRequestSeq = 0;
 let uploadInterceptionEnabled = false;
 
@@ -367,11 +393,16 @@ function setWebviewFileChooserInterception(contents, enabled) {
     if (enabled) {
       if (!contents.debugger.isAttached()) {
         contents.debugger.attach("1.3");
-        contents.debugger.on("message", (_event, method, params) => {
+        appAttachedDebuggers.add(contents);
+      }
+      if (!debuggerMessageHandlers.has(contents)) {
+        const messageHandler = (_event, method, params) => {
           if (method === "Page.fileChooserOpened") {
             handleFileChooserOpened(contents, params);
           }
-        });
+        };
+        debuggerMessageHandlers.set(contents, messageHandler);
+        contents.debugger.on("message", messageHandler);
       }
       contents.debugger.sendCommand("Page.enable").catch(() => {});
       contents.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: true }).catch((error) => {
@@ -379,6 +410,13 @@ function setWebviewFileChooserInterception(contents, enabled) {
       });
     } else if (contents.debugger.isAttached()) {
       contents.debugger.sendCommand("Page.setInterceptFileChooserDialog", { enabled: false }).catch(() => {});
+      const messageHandler = debuggerMessageHandlers.get(contents);
+      if (messageHandler) contents.debugger.removeListener("message", messageHandler);
+      debuggerMessageHandlers.delete(contents);
+      if (appAttachedDebuggers.has(contents)) {
+        try { contents.debugger.detach(); } catch {}
+        appAttachedDebuggers.delete(contents);
+      }
     }
   } catch (error) {
     // attach 失败（如 devtools 占用）：不拦截，webview 走原生系统选择器，属于自然降级
@@ -399,6 +437,9 @@ function registerWebviewContents(contents) {
   webviewContentsSet.add(contents);
   contents.once("destroyed", () => {
     webviewContentsSet.delete(contents);
+    for (const [requestId, request] of pendingUploadRequests) {
+      if (request.contents === contents) pendingUploadRequests.delete(requestId);
+    }
   });
   if (uploadInterceptionEnabled) {
     setWebviewFileChooserInterception(contents, true);
@@ -574,6 +615,39 @@ function serveFile(res, filePath) {
   });
 }
 
+function tokenCanAccessRoute(token, route) {
+  if (token === sessionToken) return true;
+  const capabilities = extensionAccessTokens.get(token);
+  if (!capabilities) return false;
+  if (route === "/active-tab") return Boolean(capabilities.tabs);
+  if (route === "/cookies") return Boolean(capabilities.cookies);
+  if (route === "/extension-debug-log") return true;
+  return false;
+}
+
+function extensionCanAccessUrl(capabilities, rawUrl) {
+  if (!capabilities || !rawUrl) return false;
+  let target;
+  try { target = new URL(rawUrl); } catch { return false; }
+  return capabilities.hostPermissions.some((permission) => {
+    if (permission === "<all_urls>") return ["http:", "https:"].includes(target.protocol);
+    const match = String(permission).match(/^(\*|https?):\/\/(\*\.)?([^/]+)\//i);
+    if (!match) return false;
+    if (match[1] !== "*" && `${match[1].toLowerCase()}:` !== target.protocol) return false;
+    const allowedHost = match[3].toLowerCase();
+    const targetHost = target.hostname.toLowerCase();
+    return match[2] ? targetHost === allowedHost || targetHost.endsWith(`.${allowedHost}`) : targetHost === allowedHost;
+  });
+}
+
+function resolveContainedRealPath(baseDir, candidatePath) {
+  const realBase = fs.realpathSync(baseDir);
+  const realTarget = fs.realpathSync(candidatePath);
+  const baseWithSep = realBase.endsWith(path.sep) ? realBase : `${realBase}${path.sep}`;
+  if (realTarget !== realBase && !realTarget.startsWith(baseWithSep)) return null;
+  return realTarget;
+}
+
 function broadcastToSse(eventName, payload) {
   const dataStr = JSON.stringify({ event: eventName, payload });
   sseClients.forEach((res) => {
@@ -609,7 +683,8 @@ function getRequestBody(req) {
 function startLocalServer() {
   if (localServer) return;
 
-  localServer = http.createServer(async (req, res) => {
+  localServer = http.createServer((req, res) => {
+    void (async () => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Headers", "*");
 
@@ -624,7 +699,7 @@ function startLocalServer() {
 
     const secureRoutes = ["/cookies", "/events", "/broadcast", "/state", "/tabs", "/active-tab", "/active-task", "/extension-debug-log"];
     if (secureRoutes.includes(parsedUrl.pathname)) {
-      if (token !== sessionToken) {
+      if (!tokenCanAccessRoute(token, parsedUrl.pathname)) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Unauthorized" }));
         return;
@@ -675,6 +750,11 @@ function startLocalServer() {
       const name = parsedUrl.searchParams.get("name");
       if (url) filter.url = url;
       if (name) filter.name = name;
+      const scopedCapabilities = token === sessionToken ? null : extensionAccessTokens.get(token);
+      if (scopedCapabilities && !extensionCanAccessUrl(scopedCapabilities, url)) {
+        sendJson(res, 403, { error: "Cookie host permission denied" });
+        return;
+      }
       const cookies = await getWorkbenchCookies(filter);
       extensionDebugLog("local-server:cookies", {
         url: filter.url || "",
@@ -759,22 +839,40 @@ function startLocalServer() {
         return;
       }
 
-      const stat = fs.statSync(targetPath);
+      const realTargetPath = resolveContainedRealPath(resolvedBase, targetPath);
+      if (!realTargetPath) {
+        sendJson(res, 403, { error: "Access denied" });
+        return;
+      }
+
+      const stat = fs.statSync(realTargetPath);
       if (stat.isDirectory()) {
-        const indexPath = path.join(targetPath, "index.html");
+        const indexPath = path.join(realTargetPath, "index.html");
         if (fs.existsSync(indexPath)) {
-          serveFile(res, indexPath);
+          const realIndexPath = resolveContainedRealPath(resolvedBase, indexPath);
+          if (realIndexPath) serveFile(res, realIndexPath);
+          else sendJson(res, 403, { error: "Access denied" });
         } else {
           sendJson(res, 404, { error: "Index file not found in directory" });
         }
         return;
       }
 
-      serveFile(res, targetPath);
+      serveFile(res, realTargetPath);
       return;
     }
 
     sendJson(res, 404, { error: "Not found" });
+    })().catch((error) => {
+      console.error("Local server request failed:", error);
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      sendJson(res, error instanceof URIError ? 400 : 500, {
+        error: error instanceof URIError ? "Malformed URL encoding" : "Internal server error"
+      });
+    });
   });
 
   localServer.on("error", (error) => {
@@ -831,19 +929,58 @@ function ensureJsonArrayFile(filePath) {
 
 function readWeeklyTasks() {
   ensureJsonArrayFile(weeklyTasksPath);
-  try {
-    const parsed = JSON.parse(fs.readFileSync(weeklyTasksPath, "utf8"));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  const parsed = JSON.parse(fs.readFileSync(weeklyTasksPath, "utf8"));
+  if (!Array.isArray(parsed)) throw new Error("Weekly tasks file must contain a JSON array");
+  return parsed;
 }
 
 function writeWeeklyTasks(tasks) {
-  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  if (!Array.isArray(tasks)) throw new Error("Weekly tasks payload must be an array");
   fs.mkdirSync(path.dirname(weeklyTasksPath), { recursive: true });
-  fs.writeFileSync(weeklyTasksPath, JSON.stringify(safeTasks, null, 2), "utf8");
-  return safeTasks;
+  if (fs.existsSync(weeklyTasksPath)) {
+    const current = JSON.parse(fs.readFileSync(weeklyTasksPath, "utf8"));
+    if (!Array.isArray(current)) throw new Error("Refusing to overwrite an invalid weekly tasks file");
+    const backupPath = path.join(app.getPath("userData"), "backups", "weekly_tasks.json");
+    fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+    fs.copyFileSync(weeklyTasksPath, backupPath);
+  }
+  const tempPath = `${weeklyTasksPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(tasks, null, 2), "utf8");
+    fs.renameSync(tempPath, weeklyTasksPath);
+  } finally {
+    if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
+  }
+  return tasks;
+}
+
+function readWeeklyReports() {
+  const filePath = weeklyReportsPath();
+  if (!fs.existsSync(filePath)) return [];
+  const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  if (!Array.isArray(parsed)) throw new Error("Weekly reports file must contain a JSON array");
+  return parsed;
+}
+
+function writeWeeklyReports(reports) {
+  if (!Array.isArray(reports)) throw new Error("Weekly reports payload must be an array");
+  const filePath = weeklyReportsPath();
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  if (fs.existsSync(filePath)) {
+    const current = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!Array.isArray(current)) throw new Error("Refusing to overwrite an invalid weekly reports file");
+    const backupPath = path.join(app.getPath("userData"), "backups", "weekly-reports.json");
+    fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+    fs.copyFileSync(filePath, backupPath);
+  }
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(reports, null, 2), "utf8");
+    fs.renameSync(tempPath, filePath);
+  } finally {
+    if (fs.existsSync(tempPath)) fs.rmSync(tempPath, { force: true });
+  }
+  return reports;
 }
 
 function safeDownloadName(filename) {
@@ -874,13 +1011,15 @@ function isPipelineSourceUrl(rawUrl) {
   }
 }
 
-function classifyDownload(filename, fromPipelineSource = false) {
+function classifyDownload(filename, fromPipelineSource = false, expectedStep = "") {
   const lowerName = filename.toLowerCase();
   if (fromPipelineSource) {
-    if (/\.(json|txt|md)$/i.test(filename) || lowerName.includes("chat") || lowerName.includes("dialog")) {
+    const chatArtifact = /^(dialogue|dialog|chat(?:[_ -]?log)?)(?:[_ -]?\d+)?\.(json|txt|md)$/i.test(lowerName);
+    const reportArtifact = /^(eval(?:uation)?[_ -]?report|report)(?:[_ -]?\d+)?\.(pdf|html?)$/i.test(lowerName);
+    if (["prepare", "testing"].includes(expectedStep) && chatArtifact) {
       return { type: "chat", folder: "chats" };
     }
-    if (/\.(pdf|html?)$/i.test(filename) || lowerName.includes("report") || lowerName.includes("eval")) {
+    if (["evaluating", "report"].includes(expectedStep) && reportArtifact) {
       return { type: "report", folder: "reports" };
     }
   }
@@ -944,12 +1083,20 @@ function resolveTaskPath(candidate) {
 function cleanupTaskFolder(folderPath) {
   const target = resolveTaskPath(folderPath);
   if (!target || target === path.resolve(downloadRoot, "tasks")) return false;
-  if (!fs.existsSync(target)) return false;
-  fs.rmSync(target, { recursive: true, force: true });
   if (activeTaskFolder && path.resolve(activeTaskFolder) === target) {
     activeTaskFolder = "";
+    activeTaskId = "";
+    activeTaskStep = "idle";
     watchActiveTaskFolder();
     refreshUploadInterception();
+    broadcastToSse("active-task-changed", { folderPath: "" });
+  }
+  if (!fs.existsSync(target)) return true;
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+  } catch (error) {
+    console.warn("Failed to clean task folder:", error);
+    return false;
   }
   return true;
 }
@@ -981,6 +1128,8 @@ function watchActiveTaskFolder() {
       clearTimeout(taskFolderWatchTimer);
       if (activeTaskFolder && !fs.existsSync(activeTaskFolder)) {
         activeTaskFolder = "";
+        activeTaskId = "";
+        activeTaskStep = "idle";
         refreshUploadInterception();
         broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
       }
@@ -996,7 +1145,7 @@ function dedupeFileName(dir, filename) {
   const base = path.basename(filename, extension);
   let candidate = filename;
   let counter = 2;
-  while (fs.existsSync(path.join(dir, candidate))) {
+  while (fs.existsSync(path.join(dir, candidate)) || inFlightDownloadPaths.has(path.resolve(dir, candidate))) {
     candidate = `${base} (${counter})${extension}`;
     counter += 1;
   }
@@ -1006,43 +1155,51 @@ function dedupeFileName(dir, filename) {
 function installDownloadHandler() {
   workbenchSession().on("will-download", (_event, item, webContents) => {
     const filename = safeDownloadName(item.getFilename());
+    const hasActiveTask = Boolean(activeTaskFolder);
+    const downloadTaskId = hasActiveTask ? activeTaskId : "";
+    const downloadTaskStep = hasActiveTask ? activeTaskStep : "idle";
     let pageUrl = "";
     try {
       pageUrl = webContents?.getURL?.() || "";
     } catch {}
     const fromPipelineSource = isPipelineSourceUrl(item.getURL()) || isPipelineSourceUrl(pageUrl);
-    const classification = classifyDownload(filename, fromPipelineSource);
+    const classification = hasActiveTask
+      ? classifyDownload(filename, fromPipelineSource, downloadTaskStep)
+      : { type: "generic", folder: "downloads" };
     const extension = path.extname(filename) || ".bin";
     let saveDir;
     let archiveName;
-    if (activeTaskFolder) {
+    if (hasActiveTask) {
       // 活动任务期间：所有下载汇入任务文件夹；eval_report/dialogue 特殊归档命名优先
       saveDir = activeTaskFolder;
       fs.mkdirSync(saveDir, { recursive: true });
-      archiveName = {
+      const preferredName = {
         chat: "dialogue.json",
         report: `eval_report${extension}`
-      }[classification.type] || dedupeFileName(saveDir, filename);
+      }[classification.type];
+      archiveName = preferredName ? dedupeFileName(saveDir, preferredName) : dedupeFileName(saveDir, filename);
     } else {
-      // 无活动任务：行为与现状一致
-      saveDir = path.join(downloadRoot, classification.folder);
+      // 无活动任务：按普通浏览器行为保存到系统下载目录。
+      saveDir = app.getPath("downloads");
       fs.mkdirSync(saveDir, { recursive: true });
-      archiveName = {
-        chat: "dialogue.json",
-        report: `eval_report${extension}`
-      }[classification.type] || `${Date.now()}_${filename}`;
+      archiveName = dedupeFileName(saveDir, filename);
     }
     const savePath = path.join(saveDir, archiveName);
+    inFlightDownloadPaths.add(path.resolve(savePath));
     item.setSavePath(savePath);
 
-    const captured = Boolean(activeTaskFolder);
+    const captured = hasActiveTask;
     item.once("done", (_doneEvent, state) => {
-      if (state !== "completed") return;
+      inFlightDownloadPaths.delete(path.resolve(savePath));
       sendToRenderer("download-completed", {
+        state,
         type: classification.type,
         path: savePath,
-        filename,
-        captured
+        filename: path.basename(savePath),
+        originalFilename: filename,
+        captured,
+        taskId: downloadTaskId,
+        taskStep: downloadTaskStep
       });
     });
   });
@@ -1107,7 +1264,40 @@ function readExtensionIcon(extensionPath, iconPath) {
   return mimeType ? `data:${mimeType};base64,${fs.readFileSync(fullPath).toString("base64")}` : "";
 }
 
-function extensionStoragePolyfillSource(token) {
+function getExtensionCapabilities(manifest = {}) {
+  const permissions = new Set(Array.isArray(manifest.permissions) ? manifest.permissions : []);
+  const hostPermissions = [
+    ...(Array.isArray(manifest.host_permissions) ? manifest.host_permissions : []),
+    ...[...permissions].filter((permission) => /^(<all_urls>|\*|https?:\/\/)/.test(permission))
+  ];
+  const polymasHostAccess = hostPermissions.some((permission) =>
+    permission === "<all_urls>" || /polymas\.com/i.test(permission)
+  );
+  const capabilities = {
+    tabs: permissions.has("tabs") || permissions.has("activeTab"),
+    cookies: permissions.has("cookies") && hostPermissions.length > 0,
+    api: false,
+    hostPermissions
+  };
+  capabilities.api = polymasHostAccess && extensionCanAccessUrl(capabilities, extensionApiBaseUrl);
+  return capabilities;
+}
+
+function resolveExtensionRelativePath(rootPath, relativePath) {
+  const value = String(relativePath || "");
+  if (!value || path.isAbsolute(value)) return null;
+  const root = path.resolve(rootPath);
+  const target = path.resolve(root, value);
+  if (!target.startsWith(`${root}${path.sep}`)) return null;
+  if (fs.existsSync(root) && fs.existsSync(target)) {
+    const realRoot = fs.realpathSync(root);
+    const realTarget = fs.realpathSync(target);
+    if (!realTarget.startsWith(`${realRoot}${path.sep}`)) return null;
+  }
+  return target;
+}
+
+function extensionStoragePolyfillSource(token, capabilities = {}) {
   return `;(() => {
   const chromeApi = globalThis.chrome = globalThis.chrome || {};
   const workbenchApiBase = "http://127.0.0.1:${localServerPort}";
@@ -1193,6 +1383,7 @@ function extensionStoragePolyfillSource(token) {
     removeListener(listener) { listeners.delete(listener); },
     hasListener(listener) { return listeners.has(listener); }
   };
+  if (${Boolean(capabilities.tabs)}) {
   chromeApi.tabs = chromeApi.tabs || {};
   chromeApi.tabs.query = asChromeAsync(async () => {
     const tab = await workbenchFetchJson("/active-tab");
@@ -1207,6 +1398,8 @@ function extensionStoragePolyfillSource(token) {
     removeListener() {},
     hasListener() { return false; }
   };
+  }
+  if (${Boolean(capabilities.cookies)}) {
   chromeApi.cookies = chromeApi.cookies || {};
   chromeApi.cookies.getAll = asChromeAsync(async (details = {}) => {
     const params = new URLSearchParams();
@@ -1225,13 +1418,15 @@ function extensionStoragePolyfillSource(token) {
     const cookies = await chromeApi.cookies.getAll(details);
     return cookies[0] || null;
   });
+  }
 })();`;
 }
 
-function prepareExtensionForElectron(extensionPath, manifest = {}) {
+function prepareExtensionForElectron(extensionPath, manifest = {}, token, capabilities) {
   const backgroundScript = manifest.background?.service_worker || manifest.background?.scripts?.[0];
   if (!backgroundScript) return extensionPath;
-  const sourceBackgroundPath = path.join(extensionPath, backgroundScript);
+  const sourceBackgroundPath = resolveExtensionRelativePath(extensionPath, backgroundScript);
+  if (!sourceBackgroundPath) throw new Error("Extension background script escapes its directory");
   if (!fs.existsSync(sourceBackgroundPath)) return extensionPath;
 
   const hash = crypto
@@ -1243,12 +1438,13 @@ function prepareExtensionForElectron(extensionPath, manifest = {}) {
   fs.rmSync(targetRoot, { recursive: true, force: true });
   fs.cpSync(extensionPath, targetRoot, { recursive: true });
 
-  const targetBackgroundPath = path.join(targetRoot, backgroundScript);
+  const targetBackgroundPath = resolveExtensionRelativePath(targetRoot, backgroundScript);
+  if (!targetBackgroundPath) throw new Error("Extension background target escapes its directory");
   const backgroundSource = fs.readFileSync(targetBackgroundPath, "utf8");
   if (!backgroundSource.includes("workbench-electron-storage-polyfill")) {
     fs.writeFileSync(
       targetBackgroundPath,
-      `/* workbench-electron-storage-polyfill */\n${extensionStoragePolyfillSource(sessionToken)}\n${backgroundSource}`,
+      `/* workbench-electron-storage-polyfill */\n${extensionStoragePolyfillSource(token, capabilities)}\n${backgroundSource}`,
       "utf8"
     );
   }
@@ -1264,20 +1460,26 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
       results.push({ ...entry, ok: false, message: "未找到扩展目录" });
       continue;
     }
+    let accessToken = "";
     try {
       const manifestPath = path.join(extensionPath, "manifest.json");
       const manifest = fs.existsSync(manifestPath)
         ? JSON.parse(fs.readFileSync(manifestPath, "utf8"))
         : {};
       const action = manifest.action || manifest.browser_action || {};
+      const capabilities = getExtensionCapabilities(manifest);
+      accessToken = crypto.randomBytes(24).toString("hex");
+      extensionAccessTokens.set(accessToken, capabilities);
       const defaultIcon = typeof action.default_icon === "string"
         ? action.default_icon
         : action.default_icon?.["16"] || action.default_icon?.["32"] || manifest.icons?.["16"] || manifest.icons?.["32"] || "";
-      const loadPath = prepareExtensionForElectron(extensionPath, manifest);
+      const loadPath = prepareExtensionForElectron(extensionPath, manifest, accessToken, capabilities);
 
       const extension = await workbenchSession().extensions.loadExtension(loadPath, {
         allowFileAccess: true
       });
+      extensionCapabilities.set(extension.id, capabilities);
+      loadedExtensionTokens.set(extension.id, accessToken);
       results.push({
         ...entry,
         id: extension.id,
@@ -1292,10 +1494,23 @@ async function loadConfiguredExtensions(entries = readExtensionConfig()) {
         message: "已成功启用"
       });
     } catch (error) {
+      if (accessToken) extensionAccessTokens.delete(accessToken);
       results.push({ ...entry, ok: false, path: extensionPath, message: error.message });
     }
   }
   return results;
+}
+
+async function unloadConfiguredExtensions() {
+  for (const extension of workbenchSession().extensions.getAllExtensions()) {
+    try {
+      await workbenchSession().extensions.removeExtension(extension.id);
+    } catch {}
+    extensionCapabilities.delete(extension.id);
+    const token = loadedExtensionTokens.get(extension.id);
+    if (token) extensionAccessTokens.delete(token);
+    loadedExtensionTokens.delete(extension.id);
+  }
 }
 
 function installEmbedHeaderFilter() {
@@ -1312,6 +1527,20 @@ function installEmbedHeaderFilter() {
       callback({ cancel: false, responseHeaders });
     }
   );
+}
+
+function extensionIdFromIpcEvent(event) {
+  const senderUrl = String(event?.senderFrame?.url || event?.sender?.getURL?.() || "");
+  const match = senderUrl.match(/^chrome-extension:\/\/([a-p]{32})(?:\/|$)/i);
+  return match ? match[1] : "";
+}
+
+function requireExtensionCapability(event, capability) {
+  const extensionId = extensionIdFromIpcEvent(event);
+  if (!extensionId || !extensionCapabilities.get(extensionId)?.[capability]) {
+    throw new Error(`Extension is not allowed to use ${capability}`);
+  }
+  return extensionId;
 }
 
 function registerIpc() {
@@ -1332,13 +1561,25 @@ function registerIpc() {
     };
     broadcastToSse("active-tab-changed", activeTabInfo);
   });
-  ipcMain.on("task:active-update", (_event, info = {}) => {
+  ipcMain.handle("task:active-update", (_event, info = {}) => {
     // 活动任务文件夹必须位于 temp/tasks 下，非法路径一律视为无活动任务
     const validated = info.folderPath ? resolveTaskPath(info.folderPath) : null;
-    activeTaskFolder = validated && fs.existsSync(validated) ? validated : "";
+    let isValidDirectory = false;
+    try {
+      isValidDirectory = Boolean(validated && fs.statSync(validated).isDirectory());
+    } catch {}
+    activeTaskFolder = isValidDirectory ? validated : "";
+    activeTaskId = activeTaskFolder ? String(info.taskId || "") : "";
+    activeTaskStep = activeTaskFolder ? String(info.step || "testing") : "idle";
     watchActiveTaskFolder();
     refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
+    return {
+      success: true,
+      folderPath: activeTaskFolder,
+      taskId: activeTaskId,
+      step: activeTaskStep
+    };
   });
   ipcMain.on("tabs:list-update", (_event, list = []) => {
     allTabs = list;
@@ -1356,6 +1597,8 @@ function registerIpc() {
         }
       }
       embeddedWindows.delete(tabId);
+      embeddedWindowRects.delete(tabId);
+      embeddedWindowPendingRects.delete(tabId);
       runningDesktopApps.delete(tabId);
     }
     const ptyProcess = tabPtyProcesses.get(tabId);
@@ -1376,10 +1619,19 @@ function registerIpc() {
     const folderPath = path.join(downloadRoot, "tasks", folderName);
     fs.mkdirSync(folderPath, { recursive: true });
     activeTaskFolder = folderPath;
+    activeTaskId = String(task.id || "");
+    activeTaskStep = "prepare";
     watchActiveTaskFolder();
     refreshUploadInterception();
     broadcastToSse("active-task-changed", { folderPath: activeTaskFolder });
     return folderPath;
+  });
+  ipcMain.handle("tasks:activate-folder", (_event, task = {}) => {
+    const validated = task.folderPath ? resolveTaskPath(task.folderPath) : null;
+    if (!validated || !fs.existsSync(validated) || !fs.statSync(validated).isDirectory()) {
+      return { success: false, error: "Task folder is missing or invalid" };
+    }
+    return { success: true, folderPath: validated };
   });
   // 上传拦截浮层结果回传：paths 为空 = 用户取消（不注入，等同原生取消）
   ipcMain.handle("upload:resolve-files", async (_event, requestId, paths) => {
@@ -1400,11 +1652,10 @@ function registerIpc() {
     return res;
   });
   // 打开任务产物文件夹：仅允许 temp/tasks 下的路径，防止路径穿越
-  ipcMain.handle("tasks:open-folder", (_event, folderPath) => {
+  ipcMain.handle("tasks:open-folder", async (_event, folderPath) => {
     const target = resolveTaskPath(folderPath);
     if (!target || !fs.existsSync(target)) return false;
-    shell.openPath(target);
-    return true;
+    return (await shell.openPath(target)) === "";
   });
   // 列出任务文件夹内文件名（任务舱产物检测用），同样限制在 temp/tasks 内
   ipcMain.handle("tasks:list-folder", (_event, folderPath) => {
@@ -1590,13 +1841,12 @@ function registerIpc() {
     return { ok: true, path: outPath };
   });
   // 托盘文件操作：打开 / 资源管理器定位 / 删除，全部限制在 temp/tasks 内
-  ipcMain.handle("tasks:file-action", (_event, payload = {}) => {
+  ipcMain.handle("tasks:file-action", async (_event, payload = {}) => {
     const target = resolveTaskPath(payload.filePath);
     if (!target || target === path.resolve(downloadRoot, "tasks") || !fs.existsSync(target)) return false;
     const action = String(payload.action || "");
     if (action === "open") {
-      shell.openPath(target);
-      return true;
+      return (await shell.openPath(target)) === "";
     }
     if (action === "reveal") {
       shell.showItemInFolder(target);
@@ -1608,19 +1858,52 @@ function registerIpc() {
     }
     return false;
   });
-  ipcMain.handle("workbench:get-active-tab-info", () => activeTabInfo);
-  ipcMain.handle("workbench:get-cookies", async (_event, details = {}) => {
+  ipcMain.handle("workbench:get-active-tab-info", (event) => {
+    requireExtensionCapability(event, "tabs");
+    return activeTabInfo;
+  });
+  ipcMain.handle("workbench:get-cookies", async (event, details = {}) => {
+    const extensionId = requireExtensionCapability(event, "cookies");
+    if (!extensionCanAccessUrl(extensionCapabilities.get(extensionId), details.url)) return [];
     return getWorkbenchCookies(details);
   });
-  ipcMain.on("workbench:extension-debug-log", (_event, payload = {}) => {
-    const { event = "preload", details = {} } = payload && typeof payload === "object" ? payload : {};
-    extensionDebugLog(String(event), details && typeof details === "object" ? details : {});
+  ipcMain.on("workbench:extension-debug-log", (event, payload = {}) => {
+    if (!extensionIdFromIpcEvent(event)) return;
+    const { event: logEvent = "preload", details = {} } = payload && typeof payload === "object" ? payload : {};
+    extensionDebugLog(String(logEvent), details && typeof details === "object" ? details : {});
   });
-  ipcMain.handle("workbench:extension-api-request", async (_event, payload = {}) => {
+  ipcMain.handle("workbench:extension-api-request", async (event, payload = {}) => {
+    requireExtensionCapability(event, "api");
     return requestExtensionApi(payload);
   });
   ipcMain.handle("tasks:read-weekly", () => readWeeklyTasks());
   ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
+
+  ipcMain.handle("reports:read-weekly", () => readWeeklyReports());
+  ipcMain.handle("reports:write-weekly", (_event, reports) => writeWeeklyReports(reports));
+  ipcMain.handle("reports:copy-weekly", (_event, payload = {}) => {
+    const text = typeof payload.text === "string" ? payload.text : "";
+    const html = typeof payload.html === "string" ? payload.html : "";
+    if (!text && !html) return { success: false, error: "Weekly report content is empty" };
+    clipboard.write({ text, html });
+    return { success: true };
+  });
+  ipcMain.handle("reports:export-weekly", async (_event, payload = {}) => {
+    const format = payload.format === "markdown" ? "markdown" : "html";
+    const content = typeof payload.content === "string" ? payload.content : "";
+    if (!content) return { success: false, error: "Weekly report content is empty" };
+    const suggestedName = safePathPart(payload.filename || "weekly-report") || "weekly-report";
+    const extension = format === "markdown" ? "md" : "html";
+    const result = await dialog.showSaveDialog(mainWindow ?? undefined, {
+      defaultPath: path.join(app.getPath("documents"), `${suggestedName}.${extension}`),
+      filters: format === "markdown"
+        ? [{ name: "Markdown", extensions: ["md"] }]
+        : [{ name: "HTML", extensions: ["html"] }]
+    });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+    fs.writeFileSync(result.filePath, content, "utf8");
+    return { success: true, path: result.filePath };
+  });
 
 
   ipcMain.handle("extensions:get", () => ({
@@ -1637,15 +1920,12 @@ function registerIpc() {
       : [];
     fs.mkdirSync(path.dirname(extensionConfigPath()), { recursive: true });
     fs.writeFileSync(extensionConfigPath(), JSON.stringify(safeEntries, null, 2), "utf8");
+    await unloadConfiguredExtensions();
     extensionResults = await loadConfiguredExtensions(safeEntries);
     return extensionResults;
   });
   ipcMain.handle("extensions:refresh", async () => {
-    for (const extension of workbenchSession().extensions.getAllExtensions()) {
-      try {
-        await workbenchSession().extensions.removeExtension(extension.id);
-      } catch {}
-    }
+    await unloadConfiguredExtensions();
     extensionResults = await loadConfiguredExtensions();
     return extensionResults;
   });
@@ -1668,7 +1948,13 @@ function registerIpc() {
 
   ipcMain.handle("local-apps:register", (_event, tabId, baseDir) => {
     if (tabId && baseDir) {
-      localAppsMap.set(String(tabId), String(baseDir));
+      try {
+        const realBaseDir = fs.realpathSync(String(baseDir));
+        if (!fs.statSync(realBaseDir).isDirectory()) return false;
+        localAppsMap.set(String(tabId), realBaseDir);
+      } catch {
+        return false;
+      }
     }
     return true;
   });
@@ -1691,6 +1977,8 @@ function registerIpc() {
         return { success: true, pid: existing.pid };
       } catch (e) {
         embeddedWindows.delete(tabId);
+        embeddedWindowRects.delete(tabId);
+        embeddedWindowPendingRects.delete(tabId);
         runningDesktopApps.delete(tabId);
       }
     }
@@ -1718,20 +2006,26 @@ function registerIpc() {
       runningDesktopApps.set(tabId, appInfo);
 
       child.on("exit", () => {
+        if (runningDesktopApps.get(tabId) !== appInfo) return;
         // 如果窗口已成功绑定，则包装/启动器进程的退出属于正常现象，不清理状态
         if (embeddedWindows.has(tabId)) {
           return;
         }
         embeddedWindows.delete(tabId);
+        embeddedWindowRects.delete(tabId);
+        embeddedWindowPendingRects.delete(tabId);
         runningDesktopApps.delete(tabId);
         sendToRenderer(`desktop-app:status-change:${tabId}`, { running: false, pid: null });
       });
 
       child.on("error", (err) => {
+        if (runningDesktopApps.get(tabId) !== appInfo) return;
         if (embeddedWindows.has(tabId)) {
           return;
         }
         embeddedWindows.delete(tabId);
+        embeddedWindowRects.delete(tabId);
+        embeddedWindowPendingRects.delete(tabId);
         runningDesktopApps.delete(tabId);
         sendToRenderer(`desktop-app:status-change:${tabId}`, { running: false, pid: null, error: err.message });
       });
@@ -1758,6 +2052,8 @@ function registerIpc() {
       return { running: true, pid: appInfo.pid };
     } catch {
       embeddedWindows.delete(tabId);
+      embeddedWindowRects.delete(tabId);
+      embeddedWindowPendingRects.delete(tabId);
       runningDesktopApps.delete(tabId);
       return { running: false, pid: null };
     }
@@ -1776,6 +2072,8 @@ function registerIpc() {
       }
     }
     embeddedWindows.delete(tabId);
+    embeddedWindowRects.delete(tabId);
+    embeddedWindowPendingRects.delete(tabId);
     runningDesktopApps.delete(tabId);
     return { success: true };
   });
@@ -1783,14 +2081,31 @@ function registerIpc() {
   ipcMain.handle("desktop-app:resize-window", (_event, tabId, rect) => {
     const childHwnd = embeddedWindows.get(tabId);
     if (childHwnd && rect) {
-      runWindowBinder([
+      const normalizedRect = {
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      };
+      const rectKey = JSON.stringify(normalizedRect);
+      if (embeddedWindowRects.get(tabId) === rectKey || embeddedWindowPendingRects.get(tabId) === rectKey) return true;
+      embeddedWindowPendingRects.set(tabId, rectKey);
+      const binder = runWindowBinder([
         "-Action", "resize",
         "-ChildHWnd", childHwnd,
-        "-X", String(Math.round(rect.x)),
-        "-Y", String(Math.round(rect.y)),
-        "-Width", String(Math.round(rect.width)),
-        "-Height", String(Math.round(rect.height))
+        "-X", String(normalizedRect.x),
+        "-Y", String(normalizedRect.y),
+        "-Width", String(normalizedRect.width),
+        "-Height", String(normalizedRect.height)
       ]);
+      binder.once("error", () => {
+        if (embeddedWindowPendingRects.get(tabId) === rectKey) embeddedWindowPendingRects.delete(tabId);
+      });
+      binder.once("close", (code) => {
+        if (embeddedWindowPendingRects.get(tabId) === rectKey) embeddedWindowPendingRects.delete(tabId);
+        if (code === 0) embeddedWindowRects.set(tabId, rectKey);
+        else embeddedWindowRects.delete(tabId);
+      });
     }
     return true;
   });
@@ -1842,6 +2157,7 @@ function registerIpc() {
     });
 
     ptyProcess.onExit(({ exitCode }) => {
+      if (tabPtyProcesses.get(tabId) !== ptyProcess) return;
       tabPtyProcesses.delete(tabId);
       event.sender.send(`cli-terminal:data:${tabId}`, `\r\n[终端会话已退出，代码 ${exitCode ?? "未知"}]\r\n`);
     });
@@ -1884,9 +2200,11 @@ app.whenReady().then(async () => {
     if (contents.getType() === "webview") {
       registerWebviewContents(contents);
       contents.setWindowOpenHandler(({ url }) => {
-        if (canLoadInWebview(url)) {
+        let protocol = "";
+        try { protocol = new URL(url).protocol; } catch {}
+        if (["http:", "https:"].includes(protocol)) {
           contents.loadURL(url).catch(() => {});
-        } else {
+        } else if (protocol === "mailto:") {
           shell.openExternal(url).catch(() => {});
         }
         return { action: "deny" };

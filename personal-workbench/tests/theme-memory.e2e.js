@@ -1,11 +1,11 @@
-const fs = require("node:fs");
-const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright-core");
+const { isolateWeeklyTasks } = require("./e2e-isolation");
 
 const root = path.join(__dirname, "..");
+isolateWeeklyTasks("theme-e2e");
 const electronPath = path.join(root, "node_modules", "electron", "dist", "electron.exe");
-const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "personal-workbench-theme-e2e-"));
+const userDataDir = process.env.PERSONAL_WORKBENCH_USER_DATA;
 
 const checks = [];
 function record(name, ok, detail = "") {
@@ -66,7 +66,6 @@ function record(name, ok, detail = "") {
     record("theme and lifecycle e2e completed", false, String(error?.stack || error));
   } finally {
     if (app) await app.close().catch(() => {});
-    fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 
   const failed = checks.filter((check) => !check.ok);
