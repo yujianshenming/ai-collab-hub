@@ -54,7 +54,10 @@ test("安全① resolveTaskPath 与 cleanupTaskFolder 在 main.js 中真实存�
 function makeStaticGuard(baseDir) {
   return (relPath) => {
     const resolvedBase = path.resolve(baseDir);
-    const targetPath = path.resolve(resolvedBase, relPath);
+    // Windows 反斜杠在 POSIX 上不是路径分隔符；测试向量先归一化，避免 Linux CI 假阴性。
+    // 生产路径在 Windows 宿主由 path.resolve 原生处理反斜杠。
+    const normalizedRel = String(relPath || "").replace(/\\/g, "/");
+    const targetPath = path.resolve(resolvedBase, normalizedRel);
     const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : `${resolvedBase}${path.sep}`;
     return targetPath !== resolvedBase && !targetPath.startsWith(baseWithSep) ? "403" : "ok";
   };

@@ -341,6 +341,7 @@ git diff --stat
 ## 12. 相关文档
 
 - 应用快速介绍：`personal-workbench/README.md`
+- A/B/C 本机验收清单：`personal-workbench/docs/ACCEPTANCE_CHECKLIST_ABC.md`
 - 回归清单：`personal-workbench/regression-checklist.md`
 - 任务系统要求：`personal-workbench/task_system_requirements.md`
 - 自动化重构方案：`personal-workbench-automation-plan.md`
