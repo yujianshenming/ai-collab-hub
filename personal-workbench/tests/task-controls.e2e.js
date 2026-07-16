@@ -84,6 +84,69 @@ async function waitForTask(page, taskId, state) {
       JSON.stringify(manuallyCompleted)
     );
 
+    // 搜索 / 归档：只影响任务中心网格，不改 status 与产物路径
+    await page.locator("#task-search").fill("Independent");
+    await page.waitForTimeout(220);
+    const searchVisible = await page.evaluate(() => ({
+      multi: Boolean(document.querySelector('.task-card[data-id="multi-child"]')),
+      manual: Boolean(document.querySelector('.task-card[data-id="manual-status"]')),
+      total: document.querySelector("#stat-total")?.textContent
+    }));
+    record(
+      "task search filters the grid while stats stay global",
+      searchVisible.multi && !searchVisible.manual && searchVisible.total === "2",
+      JSON.stringify(searchVisible)
+    );
+    await page.locator("#task-search").fill("");
+    await page.waitForTimeout(220);
+
+    const multiMenuCard = page.locator('.task-card[data-id="multi-child"]');
+    await multiMenuCard.locator(".tc-menu-toggle").click();
+    await multiMenuCard.locator(".task-archive").click();
+    await page.waitForFunction(async () => {
+      const tasks = await window.workbench.readWeeklyTasks();
+      const multi = tasks.find((task) => task.id === "multi-child");
+      return Boolean(multi?.archived);
+    }, null, { timeout: 5000 });
+    const archivedState = await page.evaluate(async () => {
+      const tasks = await window.workbench.readWeeklyTasks();
+      const multi = tasks.find((task) => task.id === "multi-child");
+      return {
+        archived: Boolean(multi?.archived),
+        status: multi?.status,
+        visible: Boolean(document.querySelector('.task-card[data-id="multi-child"]')),
+        total: document.querySelector("#stat-total")?.textContent
+      };
+    });
+    record(
+      "archiving hides the card by default without changing status",
+      archivedState.archived && archivedState.status === "pending" && !archivedState.visible && archivedState.total === "2",
+      JSON.stringify(archivedState)
+    );
+    await page.locator('#task-filter-chips [data-status-filter="archived"]').click();
+    await page.waitForTimeout(200);
+    const archivedOnlyVisible = await page.evaluate(() => Boolean(document.querySelector('.task-card[data-id="multi-child"]')));
+    record("archived filter shows archived tasks", archivedOnlyVisible);
+    const archivedCard = page.locator('.task-card[data-id="multi-child"]');
+    await archivedCard.locator(".tc-menu-toggle").click();
+    await archivedCard.locator(".task-archive").click();
+    await page.waitForTimeout(300);
+    await page.locator('#task-filter-chips [data-status-filter="all"]').click();
+    await page.waitForTimeout(200);
+    const unarchivedState = await page.evaluate(async () => {
+      const tasks = await window.workbench.readWeeklyTasks();
+      const multi = tasks.find((task) => task.id === "multi-child");
+      return {
+        archived: Boolean(multi?.archived),
+        visible: Boolean(document.querySelector('.task-card[data-id="multi-child"]'))
+      };
+    });
+    record(
+      "unarchive restores the card in the default list",
+      !unarchivedState.archived && unarchivedState.visible,
+      JSON.stringify(unarchivedState)
+    );
+
     const multiCard = page.locator('.task-card[data-id="multi-child"]');
     await multiCard.locator(".tc-progress").click();
     await multiCard.locator('.subtask-row[data-index="2"] .subtask-action[data-subtask-action="start"]').click();

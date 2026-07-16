@@ -243,9 +243,14 @@ const elements = {
   statCompleted: document.querySelector("#stat-completed"),
   focusCard: document.querySelector("#focus-card"),
   taskGridActive: document.querySelector("#task-grid-active"),
+  sectionActive: document.querySelector("#section-active"),
   sectionUnsubmitted: document.querySelector("#section-unsubmitted"),
+  sectionDone: document.querySelector("#section-done"),
   taskGridUnsubmitted: document.querySelector("#task-grid-unsubmitted"),
   taskGridDone: document.querySelector("#task-grid-done"),
+  taskSearch: document.querySelector("#task-search"),
+  taskFilterChips: document.querySelector("#task-filter-chips"),
+  taskSchoolFilter: document.querySelector("#task-school-filter"),
   btnImportTodo: document.querySelector("#btn-import-todo"),
   taskDialog: document.querySelector("#task-dialog"),
   taskFormTitle: document.querySelector("#task-form-title"),
@@ -1431,6 +1436,51 @@ function taskTypeLabel(type) {
   }[type] || type || "未分类";
 }
 
+// 任务中心搜索：匹配 school / course / owner / note / taskType 中文标签
+function matchesTaskQuery(task, query, typeLabelFn = taskTypeLabel) {
+  const needle = String(query || "").trim().toLowerCase();
+  if (!needle) return true;
+  const haystack = [
+    task?.school,
+    task?.course,
+    task?.owner,
+    task?.note,
+    typeLabelFn(task?.taskType)
+  ].map((value) => String(value || "").toLowerCase()).join("\n");
+  return haystack.includes(needle);
+}
+
+// 任务中心筛选：默认隐藏 archived；status=archived 时仅显示归档
+// status: all | pending | running | paused | unsubmitted | completed | archived
+function filterTasks(tasks, { query = "", status = "all", school = "" } = {}, typeLabelFn = taskTypeLabel) {
+  const statusFilter = String(status || "all");
+  const schoolFilter = String(school || "").trim();
+  const showArchivedOnly = statusFilter === "archived";
+  return (Array.isArray(tasks) ? tasks : []).filter((task) => {
+    const archived = Boolean(task?.archived);
+    if (showArchivedOnly) {
+      if (!archived) return false;
+    } else if (archived) {
+      return false;
+    }
+    if (!showArchivedOnly && statusFilter !== "all") {
+      if (statusFilter === "running") {
+        if (!(task.status === "running" || task.status === "evaluating")) return false;
+      } else if (task.status !== statusFilter) {
+        return false;
+      }
+    }
+    if (schoolFilter && schoolFilter !== "all" && String(task.school || "") !== schoolFilter) {
+      return false;
+    }
+    return matchesTaskQuery(task, query, typeLabelFn);
+  });
+}
+
+window.matchesTaskQuery = matchesTaskQuery;
+window.filterTasks = filterTasks;
+window.taskTypeLabel = taskTypeLabel;
+
 // ============ 待做任务.txt 解析（纯函数，无副作用，供测试注入） ============
 
 // 任务类型关键词 → 内部枚举（含 V3.2 新增的 grading-edit）
@@ -2580,6 +2630,8 @@ function normalizeWeeklyTask(task = {}) {
     step: normalizePipelineStep(task.step),
     cleanupPending: Boolean(task.cleanupPending),
     deletePending: Boolean(task.deletePending),
+    // 归档：仅影响任务中心默认列表与写回，不改 status / 产物路径
+    archived: Boolean(task.archived),
     // 卡片舱「已复制」状态（V3.4）：fieldKey → true，任务结束时清空
     cardCopied: task.cardCopied && typeof task.cardCopied === "object" ? task.cardCopied : {}
   };
@@ -3416,9 +3468,61 @@ async function updateTaskSubtaskStatus(taskId, subtaskIndex, status) {
   await updateTaskFields(taskId, { subtasks });
 }
 
+// 任务中心筛选状态（仅影响网格，不影响统计卡 / pipeline / 任务舱）
+const taskCenterFilters = {
+  query: "",
+  status: "all",
+  school: ""
+};
+let taskSearchDebounceTimer = null;
+
+function getVisibleTasks() {
+  return filterTasks(weeklyTasks, taskCenterFilters);
+}
+
+function uniqueTaskSchools(tasks = weeklyTasks) {
+  const schools = [];
+  const seen = new Set();
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    const school = String(task?.school || "").trim();
+    if (!school || seen.has(school)) continue;
+    seen.add(school);
+    schools.push(school);
+  }
+  return schools.sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
+function syncTaskFilterControls() {
+  if (elements.taskSearch && elements.taskSearch.value !== taskCenterFilters.query) {
+    elements.taskSearch.value = taskCenterFilters.query;
+  }
+  if (elements.taskFilterChips) {
+    elements.taskFilterChips.querySelectorAll("[data-status-filter]").forEach((chip) => {
+      const active = chip.dataset.statusFilter === taskCenterFilters.status;
+      chip.classList.toggle("active", active);
+      chip.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+  }
+  if (elements.taskSchoolFilter) {
+    const schools = uniqueTaskSchools();
+    const current = taskCenterFilters.school;
+    const options = ['<option value="">全部学校</option>']
+      .concat(schools.map((school) => `<option value="${escapeHtml(school)}">${escapeHtml(school)}</option>`));
+    elements.taskSchoolFilter.innerHTML = options.join("");
+    elements.taskSchoolFilter.value = schools.includes(current) ? current : "";
+    if (!schools.includes(current)) taskCenterFilters.school = "";
+  }
+}
+
+async function setTaskArchived(taskId, archived) {
+  const updated = await updateTaskFields(taskId, { archived: Boolean(archived) });
+  if (!updated) return;
+  showToast(archived ? "任务已归档" : "已取消归档", "success");
+}
+
 function taskCardElement(task) {
   const card = document.createElement("div");
-  card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}`;
+  card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}${task.archived ? " archived" : ""}`;
   card.dataset.id = task.id;
   const progress = taskProgressInfo(task);
   const subtasks = taskSubtasks(task);
@@ -3447,6 +3551,7 @@ function taskCardElement(task) {
   const chipsHtml = chips.length ? chips.join("") : '<span class="file-chip empty">尚无产物</span>';
   const weekdayHtml = task.weekday ? `<span>交付 <b>${escapeHtml(task.weekday)}</b></span>` : "";
   const noteHtml = task.note ? `<div class="tc-note">备注：${escapeHtml(task.note)}</div>` : "";
+  const archiveMenuLabel = task.archived ? "取消归档" : "归档";
 
   let mainAction = "";
   if (task.status === "paused") {
@@ -3483,6 +3588,7 @@ function taskCardElement(task) {
         <div class="tc-menu-pop">
           ${["completed", "unsubmitted"].includes(task.status) ? '<button class="task-reopen" type="button">重新打开任务</button>' : ""}
           <button class="task-edit" type="button">编辑任务与状态</button>
+          <button class="task-archive" type="button">${archiveMenuLabel}</button>
           <button class="task-delete danger" type="button">删除</button>
         </div>
       </div>
@@ -3545,6 +3651,10 @@ function taskCardElement(task) {
     closeAllCardMenus();
     editWeeklyTask(task.id);
   });
+  card.querySelector(".task-archive")?.addEventListener("click", () => {
+    closeAllCardMenus();
+    setTaskArchived(task.id, !task.archived);
+  });
   card.querySelector(".task-delete").addEventListener("click", () => {
     closeAllCardMenus();
     deleteWeeklyTask(task.id);
@@ -3556,6 +3666,7 @@ function taskCardElement(task) {
 function renderTaskCenter() {
   if (!elements.taskCenterView) return;
 
+  // 统计卡始终使用全局计数，不受筛选影响
   const total = weeklyTasks.length;
   const running = weeklyTasks.filter((task) => task.status === "running" || task.status === "evaluating").length;
   const paused = weeklyTasks.filter((task) => task.status === "paused").length;
@@ -3573,38 +3684,96 @@ function renderTaskCenter() {
   elements.taskCenterBadge.hidden = pendingCount <= 0;
   elements.taskCenterBadge.textContent = String(pendingCount);
 
+  syncTaskFilterControls();
   renderFocusCard();
 
-  // 进行中/评估中任务只出现在聚焦卡；网格展示 待处理+已暂停 / 未提交 / 已完成
-  const activeGroup = sortTasksByWeekday(weeklyTasks.filter((task) => task.status === "pending" || task.status === "paused"));
-  const unsubmittedGroup = weeklyTasks.filter((task) => task.status === "unsubmitted");
-  const doneGroup = weeklyTasks.filter((task) => task.status === "completed");
+  const visibleTasks = getVisibleTasks();
+  const statusFilter = taskCenterFilters.status || "all";
+  const archivedOnly = statusFilter === "archived";
+  const isFiltered = Boolean(taskCenterFilters.query || statusFilter !== "all" || taskCenterFilters.school);
 
-  elements.taskGridActive.replaceChildren();
-  if (activeGroup.length) {
-    activeGroup.forEach((task) => elements.taskGridActive.append(taskCardElement(task)));
+  // 进行中/评估中默认只出现在聚焦卡；网格展示 待处理+已暂停 / 未提交 / 已完成
+  // 指定状态 chip 时把可见集直接落到对应分区；归档模式单独一区
+  let activeGroup = [];
+  let unsubmittedGroup = [];
+  let doneGroup = [];
+  if (archivedOnly) {
+    doneGroup = sortTasksByWeekday(visibleTasks);
+  } else if (statusFilter === "pending" || statusFilter === "paused" || statusFilter === "running") {
+    activeGroup = sortTasksByWeekday(visibleTasks);
+  } else if (statusFilter === "unsubmitted") {
+    unsubmittedGroup = visibleTasks;
+  } else if (statusFilter === "completed") {
+    doneGroup = visibleTasks;
   } else {
-    const empty = document.createElement("div");
-    empty.className = "task-grid-empty";
-    empty.textContent = "暂无待处理任务。点击右上角「添加任务」开始。";
-    elements.taskGridActive.append(empty);
+    activeGroup = sortTasksByWeekday(visibleTasks.filter((task) => task.status === "pending" || task.status === "paused"));
+    unsubmittedGroup = visibleTasks.filter((task) => task.status === "unsubmitted");
+    doneGroup = visibleTasks.filter((task) => task.status === "completed");
+  }
+
+  const activeLabel = {
+    all: "待处理 / 已暂停",
+    pending: "待处理",
+    running: "进行中",
+    paused: "已暂停"
+  }[statusFilter] || "待处理 / 已暂停";
+
+  if (elements.sectionActive) {
+    elements.sectionActive.textContent = activeLabel;
+    elements.sectionActive.hidden = archivedOnly || statusFilter === "unsubmitted" || statusFilter === "completed";
+  }
+  if (elements.sectionDone) {
+    elements.sectionDone.textContent = archivedOnly ? "已归档" : "已完成";
+    elements.sectionDone.hidden = statusFilter === "pending" || statusFilter === "paused" || statusFilter === "running" || statusFilter === "unsubmitted";
+  }
+
+  const showActiveGrid = !(archivedOnly || statusFilter === "unsubmitted" || statusFilter === "completed");
+  elements.taskGridActive.replaceChildren();
+  elements.taskGridActive.hidden = !showActiveGrid;
+  if (showActiveGrid) {
+    if (activeGroup.length) {
+      activeGroup.forEach((task) => elements.taskGridActive.append(taskCardElement(task)));
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "task-grid-empty";
+      empty.textContent = isFiltered
+        ? "没有符合筛选条件的任务。"
+        : "暂无待处理任务。点击右上角「添加任务」开始。";
+      elements.taskGridActive.append(empty);
+    }
   }
 
   if (elements.sectionUnsubmitted && elements.taskGridUnsubmitted) {
-    elements.sectionUnsubmitted.hidden = unsubmittedGroup.length <= 0;
-    elements.taskGridUnsubmitted.hidden = unsubmittedGroup.length <= 0;
+    const showUnsubmitted = !archivedOnly && (statusFilter === "unsubmitted" || (statusFilter === "all" && unsubmittedGroup.length > 0));
+    elements.sectionUnsubmitted.hidden = !showUnsubmitted;
+    elements.taskGridUnsubmitted.hidden = !showUnsubmitted;
     elements.taskGridUnsubmitted.replaceChildren();
-    unsubmittedGroup.forEach((task) => elements.taskGridUnsubmitted.append(taskCardElement(task)));
+    if (showUnsubmitted) {
+      if (unsubmittedGroup.length) {
+        unsubmittedGroup.forEach((task) => elements.taskGridUnsubmitted.append(taskCardElement(task)));
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "task-grid-empty";
+        empty.textContent = "没有符合筛选条件的未提交任务。";
+        elements.taskGridUnsubmitted.append(empty);
+      }
+    }
   }
 
+  const showDoneGrid = archivedOnly || statusFilter === "completed" || statusFilter === "all";
   elements.taskGridDone.replaceChildren();
-  if (doneGroup.length) {
-    doneGroup.forEach((task) => elements.taskGridDone.append(taskCardElement(task)));
-  } else {
-    const empty = document.createElement("div");
-    empty.className = "task-grid-empty";
-    empty.textContent = "本周还没有已完成的任务。";
-    elements.taskGridDone.append(empty);
+  if (elements.sectionDone) elements.sectionDone.hidden = !showDoneGrid;
+  elements.taskGridDone.hidden = !showDoneGrid;
+  if (showDoneGrid) {
+    if (doneGroup.length) {
+      doneGroup.forEach((task) => elements.taskGridDone.append(taskCardElement(task)));
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "task-grid-empty";
+      if (archivedOnly) empty.textContent = "没有已归档的任务。";
+      else empty.textContent = isFiltered ? "没有符合筛选条件的已完成任务。" : "本周还没有已完成的任务。";
+      elements.taskGridDone.append(empty);
+    }
   }
 
   if (activeTabId === TASK_CENTER_ID) {
@@ -3645,6 +3814,7 @@ function taskFromForm() {
     step: existing.step || "testing",
     cleanupPending: Boolean(existing.cleanupPending),
     deletePending: Boolean(existing.deletePending),
+    archived: Boolean(existing.archived),
     cardCopied: existing.cardCopied && typeof existing.cardCopied === "object" ? existing.cardCopied : {}
   };
 }
@@ -3994,6 +4164,11 @@ function renderWritebackPreview() {
     changedCount + appendSelected.size > 0 ? `确认写回 (${changedCount + appendSelected.size})` : "确认写回";
 }
 
+// 写回待做任务时排除已归档任务（不改文件中原有匹配行，也不追加归档项）
+function activeTasksForWriteback(tasks = weeklyTasks) {
+  return (Array.isArray(tasks) ? tasks : []).filter((task) => !task?.archived);
+}
+
 async function handleTodoWriteback() {
   try {
     const result = await window.workbench.readTodoFile();
@@ -4001,9 +4176,10 @@ async function handleTodoWriteback() {
       showToast(todoReadErrorMessage(result?.error), "error");
       return;
     }
+    const activeTasks = activeTasksForWriteback();
     writebackState = {
       sourceText: result.text,
-      merge: mergeTodoFile(result.text, weeklyTasks),
+      merge: mergeTodoFile(result.text, activeTasks),
       appendSelected: new Set()
     };
     renderWritebackPreview();
@@ -4018,7 +4194,7 @@ async function applyTodoWriteback() {
   if (!writebackState) return;
   const { sourceText, merge, appendSelected } = writebackState;
   const appendTasks = merge.onlyInWorkbench.filter((_task, index) => appendSelected.has(index));
-  const finalMerge = mergeTodoFile(sourceText, weeklyTasks, appendTasks);
+  const finalMerge = mergeTodoFile(sourceText, activeTasksForWriteback(), appendTasks);
   const changedCount = finalMerge.entries.filter((entry) => entry.changed).length;
   try {
     const result = await window.workbench.writeTodoFile(finalMerge.text);
@@ -4862,6 +5038,24 @@ setupWeeklyReportEvents();
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
 elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
 elements.btnWritebackTodo?.addEventListener("click", () => handleTodoWriteback());
+// 任务中心筛选：搜索 debounce ~150ms；chip / 学校即时刷新列表
+elements.taskSearch?.addEventListener("input", () => {
+  clearTimeout(taskSearchDebounceTimer);
+  taskSearchDebounceTimer = setTimeout(() => {
+    taskCenterFilters.query = elements.taskSearch.value || "";
+    renderTaskCenter();
+  }, 150);
+});
+elements.taskFilterChips?.addEventListener("click", (event) => {
+  const chip = event.target.closest("[data-status-filter]");
+  if (!chip) return;
+  taskCenterFilters.status = chip.dataset.statusFilter || "all";
+  renderTaskCenter();
+});
+elements.taskSchoolFilter?.addEventListener("change", () => {
+  taskCenterFilters.school = elements.taskSchoolFilter.value || "";
+  renderTaskCenter();
+});
 elements.writebackPreviewApply?.addEventListener("click", () => applyTodoWriteback());
 elements.writebackPreviewCancel?.addEventListener("click", () => elements.writebackPreviewDialog?.close());
 elements.writebackPreviewCancelX?.addEventListener("click", () => elements.writebackPreviewDialog?.close());

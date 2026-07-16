@@ -59,9 +59,10 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 常驻网页标签 | 已实现 | `renderer.js` 的标签、webview、分屏逻辑 |
 | 本地 PowerShell 终端 | 已实现 | `main.js` 的 `node-pty` IPC、`renderer.js` 的 xterm |
 | CLI / 桌面应用标签 | 已实现 | `main.js` 的 CLI PTY 与桌面进程管理 |
-| 任务中心 | 已实现 | `renderer.js` 的任务卡、任务表单和任务状态 |
+| 任务中心 | 已实现 | `renderer.js` 的任务卡、搜索筛选、归档、任务表单和任务状态 |
 | 五步任务流水线 | 已实现 | `PIPELINE_STEPS`、任务舱、下载/报告事件 |
 | 任务暂停、继续、子任务 | 已实现并有 E2E | `startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
+| 任务筛选 / 搜索 / 归档 | 已实现 | `matchesTaskQuery`、`filterTasks`、任务中心 filter bar、卡片归档菜单 |
 | 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘、图片裁切 |
 | `cards.md` 卡片舱 | 已实现并有 E2E | `renderRailCards`、卡片字段复制和持久化 |
 | Chrome 扩展兼容层 | 已实现，依赖真实扩展与登录态 | `preload-popup.js`、扩展兼容 IPC |
@@ -179,6 +180,7 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
   "taskType": "capability-setup",
   "quantity": 1,
   "status": "pending",
+  "archived": false,
   "subtasks": [{ "index": 1, "status": "pending" }],
   "step": "testing",
   "taskFolder": "",
@@ -188,6 +190,8 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 ```
 
 任务状态包括 `pending`、`running`、`evaluating`、`paused`、`unsubmitted`、`completed`。应用重启时会把未恢复的 `running/evaluating` 任务收敛为 `paused`，避免假装仍在执行。
+
+可选字段 `archived`（默认 `false`）只影响任务中心默认列表与「写回待做任务」；归档不改变 `status`、不删除任务文件夹、不清除 `chatLogPath`/`reportPath`。默认列表隐藏已归档任务；状态 chip「已归档」才显示。写回「待做任务.txt」时不会把归档任务写回。
 
 ### 5.4 周报记录的核心字段
 
@@ -320,6 +324,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-16 | feat | 任务中心搜索/状态 chips/学校筛选与归档：默认隐藏 archived，写回待做任务排除归档；统计卡仍用全局计数 | `renderer.js`、`index.html`、`style.css`、`tests/task-filter-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
 | 2026-07-16 | feat | 周报历史周次列表、上一周/下一周、默认姓名与标题模板（prefs.weeklyReportDefaults）；从任务再生成保留手动备注 | `main.js`、`renderer.js`、`index.html`、`style.css`、`tests/weekly-report-helpers.test.js`、`tests/weekly-report.e2e.js`、`docs/FEATURE_PLAN_THREE.md` | `npm test`；`node tests/weekly-report.e2e.js` |
 | 2026-07-16 | feat | 增加 DOCX 周报导出、完整周报 HTML/纯文本复制和表格专用 HTML/TSV 复制，明确已有表格粘贴受目标编辑器控制 | `weekly-report-docx.js`、`main.js`、`renderer.js`、`index.html`、`tests/weekly-report-docx.test.js`、`tests/weekly-report.e2e.js` | `npm run test:all` |
 | 2026-07-16 | feat | 新增周报中心：从任务生成、独立快照、手动编辑、预览、企业微信富文本复制、HTML/Markdown 导出 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm run test:all` |

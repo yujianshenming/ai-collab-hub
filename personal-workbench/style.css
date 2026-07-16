@@ -1139,6 +1139,92 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
 .stat-card .num { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
 .stat-card .lbl { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
 
+/* 任务中心筛选条 */
+.task-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+.task-search-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: min(280px, 100%);
+  flex: 1 1 220px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-app, var(--bg));
+  color: var(--text-muted);
+}
+.task-search-wrap:focus-within {
+  border-color: var(--primary-border);
+  color: var(--primary-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-light) 70%, transparent);
+}
+.task-search-wrap input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary, var(--text));
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.task-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 2 1 320px;
+}
+.filter-chip {
+  appearance: none;
+  border: 1px solid var(--border-color);
+  background: var(--bg-app, var(--bg));
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.filter-chip:hover {
+  color: var(--primary-strong);
+  border-color: var(--primary-border);
+  background: var(--primary-light);
+}
+.filter-chip.active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #0d9488, #0f766e);
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.22);
+}
+.task-school-filter {
+  min-width: 140px;
+  max-width: 220px;
+  flex: 0 1 180px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  background: var(--bg-app, var(--bg));
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+.task-card.archived {
+  opacity: 0.92;
+  border-style: dashed;
+}
+
 /* 进行中聚焦卡 */
 .focus-card {
   margin-bottom: 22px;
