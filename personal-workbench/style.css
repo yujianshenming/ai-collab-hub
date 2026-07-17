@@ -1823,9 +1823,7 @@ body[data-theme="sky"] {
   --shadow-md: 0 12px 34px rgba(72, 93, 129, 0.09);
   --shadow-lg: 0 22px 54px rgba(72, 93, 129, 0.16);
   --sidebar-width: 216px;
-  --right-sidebar-width: 318px;
   --task-rail-width: 318px;
-  --terminal-height: 250px;
 }
 
 body[data-theme="morning"] {
@@ -1859,9 +1857,7 @@ body[data-theme="morning"] {
   --shadow-md: 4px 4px 0 rgba(36, 49, 46, 0.12);
   --shadow-lg: 8px 8px 0 rgba(36, 49, 46, 0.16);
   --sidebar-width: 214px;
-  --right-sidebar-width: 304px;
   --task-rail-width: 304px;
-  --terminal-height: 250px;
 }
 
 body[data-theme="night"] {
@@ -1895,9 +1891,7 @@ body[data-theme="night"] {
   --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.34);
   --shadow-lg: 0 24px 58px rgba(0, 0, 0, 0.48);
   --sidebar-width: 230px;
-  --right-sidebar-width: 318px;
   --task-rail-width: 318px;
-  --terminal-height: 260px;
 }
 
 body[data-theme] {
@@ -2083,7 +2077,6 @@ body[data-theme="night"] .terminal-toolbar {
 @media (max-width: 1260px) {
   body[data-theme] {
     --sidebar-width: 196px;
-    --right-sidebar-width: 286px;
     --task-rail-width: 286px;
   }
   .task-center-view { padding-inline: 22px; }
@@ -2093,7 +2086,6 @@ body[data-theme="night"] .terminal-toolbar {
 @media (max-width: 1050px) {
   body[data-theme] {
     --sidebar-width: 178px;
-    --right-sidebar-width: 260px;
     --task-rail-width: 270px;
   }
   .crumb span { display: none; }

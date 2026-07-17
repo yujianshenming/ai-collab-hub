@@ -342,6 +342,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-17 | fix | 终端/右分屏/底部分屏拖动尺寸可覆盖主题：从 `body[data-theme]` 与相关 media 移除 `--terminal-height`、`--right-sidebar-width`，默认只保留在 `:root` | `style.css`、`docs/PROJECT_HANDBOOK.md` | 主题下拖动终端高度、右分屏宽度、底部分屏高度；`node --check` 无语法影响 |
 | 2026-07-17 | docs | 日常启动改为桌面 `打开个人工作台.vbs`：独立进程、无黑窗、无 launch.log；弃用桌面 cmd/ps1；手册与 README 同步 | 本机桌面 `打开个人工作台.vbs`、`docs/PROJECT_HANDBOOK.md`、`README.md` | 双击 vbs 打开工作台；关闭启动器不影响应用 |
 | 2026-07-16 | fix | 周报表格删除入口可见性：操作列 sticky、删除按钮文案与样式增强；允许表格删空 | `renderer.js`、`index.html`、`style.css`、`tests/weekly-report.e2e.js` | `npm test`；`node tests/weekly-report.e2e.js` |
 | 2026-07-16 | feat | 任务卡产物徽章（对话/报告/卡片）、文件夹回扫缓存、报告完成后台系统通知；归档任务不回扫 | `renderer.js`、`main.js`、`style.css`、`tests/task-artifact-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
