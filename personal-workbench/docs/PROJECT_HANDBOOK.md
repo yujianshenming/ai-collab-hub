@@ -70,10 +70,11 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 常驻网页标签 | 已实现 | `renderer.js` 的标签、webview、分屏逻辑 |
 | 本地 PowerShell 终端 | 已实现 | `main.js` 的 `node-pty` IPC、`renderer.js` 的 xterm |
 | CLI / 桌面应用标签 | 已实现 | `main.js` 的 CLI PTY 与桌面进程管理 |
-| 任务中心 | 已实现 | `renderer.js` 的任务卡、搜索筛选、归档、任务表单和任务状态 |
+| 任务中心 | 已实现 | 任务卡、搜索筛选、归档、跨区拖拽改状态、完成时限、跨周清理已完成 |
 | 五步任务流水线 | 已实现 | `PIPELINE_STEPS`、任务舱、下载/报告事件 |
 | 任务暂停、继续、子任务 | 已实现并有 E2E | `startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
 | 任务筛选 / 搜索 / 归档 | 已实现 | `matchesTaskQuery`、`filterTasks`、任务中心 filter bar、卡片归档菜单 |
+| 任务跨区拖拽 / 时限 / 周清理 | 已实现 | 三区拖拽改 status；`dueDate` 默认本周日；`purgeCompletedFromPreviousWeeks` |
 | 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘（打开/定位/复制/重命名/裁切/删除）、图片裁切覆盖原图 |
 | 任务产物徽章 | 已实现 | 任务卡对话/报告/卡片徽章；文件夹回扫；`taskArtifactsFromPathsAndFiles` |
 | 报告到达系统通知 | 已实现 | 主进程 `Notification`（窗口未聚焦 + 活动任务 report 完成） |
@@ -194,6 +195,9 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
   "taskType": "capability-setup",
   "quantity": 1,
   "status": "pending",
+  "dueDate": "2026-07-19",
+  "completedAt": "",
+  "sortKey": 0,
   "archived": false,
   "subtasks": [{ "index": 1, "status": "pending" }],
   "step": "testing",
@@ -206,6 +210,12 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 任务状态包括 `pending`、`running`、`evaluating`、`paused`、`unsubmitted`、`completed`。应用重启时会把未恢复的 `running/evaluating` 任务收敛为 `paused`，避免假装仍在执行。
 
 可选字段 `archived`（默认 `false`）只影响任务中心默认列表与「写回待做任务」；归档不改变 `status`、不删除任务文件夹、不清除 `chatLogPath`/`reportPath`。默认列表隐藏已归档任务；状态 chip「已归档」才显示。写回「待做任务.txt」时不会把归档任务写回。
+
+`dueDate` 为 `YYYY-MM-DD` 完成时限；创建/导入缺省时设为当前 ISO 周周日。任务中心各分区内按 `dueDate` 升序，再按 `sortKey`、学校、课程排序。过期未完成任务有轻微过期样式。
+
+任务卡可在「待处理/已暂停」「未提交」「已完成」三区间拖拽：区内拖动只重排（写 `sortKey`）；跨区松手按目标区改 `status`（active→`pending`、unsubmitted→`unsubmitted`、done→`completed`）。若拖的是当前流水线活动任务，会先暂停流水线再改状态。
+
+标记为 `completed` 时写入 `completedAt`。每次成功加载任务列表后，会移除「完成归属周」早于当前 ISO 周的已完成记录（归属周优先 `completedAt`，其次 `dueDate`）；只删 `weekly_tasks.json` 记录，不删任务文件夹。
 
 ### 5.4 周报记录的核心字段
 
@@ -345,6 +355,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-17 | feat | 任务卡三区拖拽改状态、完成时限 dueDate（默认本周日）、跨周清理已完成任务（completedAt 归属周） | `renderer.js`、`index.html`、`style.css`、`tests/task-lane-helpers.test.js`、`package.json`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：跨区拖拽、时限排序、上周 completed 加载后消失 |
 | 2026-07-17 | docs | 同步手册检查点与数据流：托盘重命名、裁切覆盖原图、拖拽收尾；检查点改为 2026-07-17 | `docs/PROJECT_HANDBOOK.md` | 手册与 README/代码行为核对 |
 | 2026-07-17 | fix/feat | 修复主体拖拽“粘住”（blur/visibility/buttons=0 强制结束 + guest mouseup）；任务托盘支持重命名；裁切改为覆盖原图（webp→png） | `renderer.js`、`main.js`、`preload.js`、`README.md`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：拖出再回、托盘改名、裁切后无 `_cropped` |
 | 2026-07-17 | fix | 终端/右分屏/底部分屏拖动尺寸可覆盖主题：从 `body[data-theme]` 与相关 media 移除 `--terminal-height`、`--right-sidebar-width`，默认只保留在 `:root` | `style.css`、`docs/PROJECT_HANDBOOK.md` | 主题下拖动终端高度、右分屏宽度、底部分屏高度；`node --check` 无语法影响 |

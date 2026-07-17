@@ -1265,6 +1265,35 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-colo
   opacity: 0.92;
   border-style: dashed;
 }
+.task-card.overdue {
+  border-color: color-mix(in srgb, var(--danger, #dc4848) 45%, var(--border-color));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger, #dc4848) 18%, transparent);
+}
+.task-card.dragging {
+  opacity: 0.55;
+  transform: scale(0.98);
+  cursor: grabbing;
+}
+.task-card.drop-before {
+  box-shadow: inset 0 3px 0 0 var(--accent-strong, #0d9488);
+}
+.task-card.drop-after {
+  box-shadow: inset 0 -3px 0 0 var(--accent-strong, #0d9488);
+}
+.task-grid.drop-target {
+  outline: 2px dashed color-mix(in srgb, var(--accent-strong, #0d9488) 55%, transparent);
+  outline-offset: 4px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent-light, #ccfbf1) 35%, transparent);
+}
+.tc-due {
+  color: var(--text-muted);
+}
+.tc-due.overdue,
+.tc-due.overdue b {
+  color: var(--danger, #dc4848);
+  font-weight: 700;
+}
 
 /* 进行中聚焦卡 */
 .focus-card {

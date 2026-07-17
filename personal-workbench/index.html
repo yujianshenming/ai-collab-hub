@@ -179,13 +179,13 @@
           <div id="focus-card" class="focus-card" hidden></div>
 
           <div id="section-active" class="section-label">待处理 / 已暂停</div>
-          <div id="task-grid-active" class="task-grid"></div>
+          <div id="task-grid-active" class="task-grid" data-task-lane="active"></div>
 
           <div id="section-unsubmitted" class="section-label section-label-unsubmitted" hidden>未提交</div>
-          <div id="task-grid-unsubmitted" class="task-grid" hidden></div>
+          <div id="task-grid-unsubmitted" class="task-grid" data-task-lane="unsubmitted" hidden></div>
 
           <div id="section-done" class="section-label section-label-done">已完成</div>
-          <div id="task-grid-done" class="task-grid"></div>
+          <div id="task-grid-done" class="task-grid" data-task-lane="done"></div>
         </section>
 
         <section id="weekly-report-view" class="weekly-report-view" aria-label="周报中心">
@@ -516,6 +516,11 @@
           <label>
             负责人
             <input id="task-owner" type="text" placeholder="负责人" />
+          </label>
+          <label>
+            完成时限
+            <input id="task-due-date" type="date" />
+            <small class="helper-text">默认本周日，可随时修改；列表按此排序。</small>
           </label>
         </div>
         <div class="modal-actions">

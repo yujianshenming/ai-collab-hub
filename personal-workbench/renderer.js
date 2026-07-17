@@ -618,6 +618,7 @@ function endPointerDrag({ commit = false, event = null } = {}) {
 function forceEndAllPointerInteractions({ commitDrag = false, event = null } = {}) {
   endAllResizes();
   endPointerDrag({ commit: commitDrag, event });
+  endTaskCardDrag();
   releaseGuestPointerCapture();
 }
 
@@ -1602,6 +1603,142 @@ function filterTasks(tasks, { query = "", status = "all", school = "" } = {}, ty
 window.matchesTaskQuery = matchesTaskQuery;
 window.filterTasks = filterTasks;
 window.taskTypeLabel = taskTypeLabel;
+
+// ============ 任务时限 / 分区 / 跨周清理（纯函数，供测试注入） ============
+
+function formatDateYmd(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateYmd(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || "").trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return date;
+}
+
+// 当前 ISO 周的周日（周一为一周起点）
+function defaultDueDateForWeek(date = new Date()) {
+  const local = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = local.getDay() || 7; // 周日 = 7
+  local.setDate(local.getDate() + (7 - day));
+  return formatDateYmd(local);
+}
+
+function normalizeDueDate(value, fallbackDate = new Date()) {
+  const parsed = parseDateYmd(value);
+  if (parsed) return formatDateYmd(parsed);
+  return defaultDueDateForWeek(fallbackDate);
+}
+
+function isoWeekKeyFromDate(date = new Date()) {
+  const source = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(source.getTime())) return "";
+  // 与 getIsoWeekNumber / currentReportPeriod 同一套 ISO 周算法（避免依赖后置函数定义顺序）
+  const target = new Date(Date.UTC(source.getFullYear(), source.getMonth(), source.getDate()));
+  const dayNumber = target.getUTCDay() || 7;
+  target.setUTCDate(target.getUTCDate() + 4 - dayNumber);
+  const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((target - yearStart) / 86400000 + 1) / 7);
+  return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+function isoWeekKeyFromYmd(value) {
+  const parsed = parseDateYmd(value);
+  return parsed ? isoWeekKeyFromDate(parsed) : "";
+}
+
+function isoWeekKeyFromIsoTimestamp(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  return isoWeekKeyFromDate(date);
+}
+
+// 任务中心分区：active=待处理/已暂停(+进行中展示) / unsubmitted / done
+function taskLaneForStatus(status) {
+  if (status === "unsubmitted") return "unsubmitted";
+  if (status === "completed") return "done";
+  return "active";
+}
+
+function laneStatusForDrop(lane) {
+  if (lane === "unsubmitted") return "unsubmitted";
+  if (lane === "done") return "completed";
+  return "pending";
+}
+
+function compareTasksForLane(a, b) {
+  const dueA = String(a?.dueDate || "");
+  const dueB = String(b?.dueDate || "");
+  if (dueA !== dueB) return dueA.localeCompare(dueB);
+  const sortA = Number.isFinite(Number(a?.sortKey)) ? Number(a.sortKey) : 0;
+  const sortB = Number.isFinite(Number(b?.sortKey)) ? Number(b.sortKey) : 0;
+  if (sortA !== sortB) return sortA - sortB;
+  const school = String(a?.school || "").localeCompare(String(b?.school || ""), "zh-CN");
+  if (school !== 0) return school;
+  return String(a?.course || "").localeCompare(String(b?.course || ""), "zh-CN");
+}
+
+function sortTasksForLane(tasks) {
+  return (Array.isArray(tasks) ? tasks : [])
+    .map((task, index) => ({ task, index }))
+    .sort((a, b) => compareTasksForLane(a.task, b.task) || a.index - b.index)
+    .map((entry) => entry.task);
+}
+
+// completed 任务的完成归属周：completedAt > updatedAt > dueDate；都没有则本周不删
+function completedOwnershipWeek(task) {
+  return isoWeekKeyFromIsoTimestamp(task?.completedAt)
+    || isoWeekKeyFromIsoTimestamp(task?.updatedAt)
+    || isoWeekKeyFromYmd(task?.dueDate)
+    || "";
+}
+
+function shouldPurgeCompletedTask(task, currentWeekKey = isoWeekKeyFromDate(new Date())) {
+  if (!task || task.status !== "completed") return false;
+  const week = completedOwnershipWeek(task);
+  if (!week || !currentWeekKey) return false;
+  return week < currentWeekKey;
+}
+
+function purgeCompletedFromPreviousWeeks(tasks, currentWeekKey = isoWeekKeyFromDate(new Date())) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const kept = [];
+  const removed = [];
+  for (const task of list) {
+    if (shouldPurgeCompletedTask(task, currentWeekKey)) removed.push(task);
+    else kept.push(task);
+  }
+  return { kept, removed };
+}
+
+function isTaskDueOverdue(task, todayYmd = formatDateYmd(new Date())) {
+  if (!task || task.status === "completed") return false;
+  const due = String(task.dueDate || "");
+  return Boolean(due && due < todayYmd);
+}
+
+window.formatDateYmd = formatDateYmd;
+window.defaultDueDateForWeek = defaultDueDateForWeek;
+window.normalizeDueDate = normalizeDueDate;
+window.taskLaneForStatus = taskLaneForStatus;
+window.laneStatusForDrop = laneStatusForDrop;
+window.sortTasksForLane = sortTasksForLane;
+window.shouldPurgeCompletedTask = shouldPurgeCompletedTask;
+window.purgeCompletedFromPreviousWeeks = purgeCompletedFromPreviousWeeks;
+window.completedOwnershipWeek = completedOwnershipWeek;
+window.isTaskDueOverdue = isTaskDueOverdue;
+window.isoWeekKeyFromDate = isoWeekKeyFromDate;
 
 // ============ 任务产物徽章（纯函数，无副作用，供测试注入） ============
 
@@ -2797,7 +2934,12 @@ function openTaskForm(task = null) {
       : "pending";
     document.querySelector("#task-quantity").value = Number(task.quantity) || 1;
     document.querySelector("#task-owner").value = task.owner || "";
+    if (document.querySelector("#task-due-date")) {
+      document.querySelector("#task-due-date").value = normalizeDueDate(task.dueDate);
+    }
     elements.taskFormTitle.textContent = "编辑任务";
+  } else if (document.querySelector("#task-due-date")) {
+    document.querySelector("#task-due-date").value = defaultDueDateForWeek();
   }
   elements.taskDialog.showModal();
   document.querySelector("#task-school").focus();
@@ -2814,6 +2956,9 @@ function resetTaskForm() {
   elements.taskStatus.value = "pending";
   document.querySelector("#task-quantity").value = "1";
   document.querySelector("#task-type").value = "capability-setup";
+  if (document.querySelector("#task-due-date")) {
+    document.querySelector("#task-due-date").value = defaultDueDateForWeek();
+  }
   if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
 }
 
@@ -2831,6 +2976,11 @@ function normalizeSubtasks(subtasks, quantity) {
 
 function normalizeWeeklyTask(task = {}) {
   const quantity = Math.max(1, Number(task.quantity) || 1);
+  const status = task.status || "pending";
+  const completedAtRaw = String(task.completedAt || "").trim();
+  const completedAt = status === "completed"
+    ? (completedAtRaw || "")
+    : "";
   return {
     id: task.id || `task-${Date.now()}`,
     school: task.school || "",
@@ -2838,10 +2988,16 @@ function normalizeWeeklyTask(task = {}) {
     // 允许空字符串（txt 导入未匹配到类型时留空，预览中标黄提醒）
     taskType: typeof task.taskType === "string" ? task.taskType : "capability-setup",
     quantity,
-    status: task.status || "pending",
+    status,
     owner: task.owner || "",
     weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
     note: task.note || "",
+    // 完成时限：YYYY-MM-DD；缺省为本 ISO 周周日
+    dueDate: normalizeDueDate(task.dueDate),
+    // 完成时间：仅 completed 保留；用于跨周清理归属
+    completedAt,
+    // 同 dueDate 下稳定排序；拖拽重排时写入
+    sortKey: Number.isFinite(Number(task.sortKey)) ? Number(task.sortKey) : 0,
     subtasks: normalizeSubtasks(task.subtasks, quantity),
     chatLogPath: task.chatLogPath || "",
     reportPath: task.reportPath || "",
@@ -2866,10 +3022,8 @@ function weekdayRank(weekday) {
 }
 
 function sortTasksByWeekday(tasks) {
-  return tasks
-    .map((task, index) => ({ task, index }))
-    .sort((a, b) => weekdayRank(a.task.weekday) - weekdayRank(b.task.weekday) || a.index - b.index)
-    .map((entry) => entry.task);
+  // 兼容旧调用名：任务中心现按 dueDate + sortKey 排序
+  return sortTasksForLane(tasks);
 }
 
 function nextSubtaskStatus(status) {
@@ -2959,7 +3113,18 @@ async function loadWeeklyTasks() {
       retainedTasks.push(task);
     }
     weeklyTasks = retainedTasks;
+
+    // 跨周清理：仅移除上周及更早的已完成记录（不删文件夹）
+    const purge = purgeCompletedFromPreviousWeeks(weeklyTasks, isoWeekKeyFromDate(new Date()));
+    if (purge.removed.length) {
+      weeklyTasks = purge.kept;
+      reconciled = true;
+    }
+
     if (reconciled) await persistWeeklyTasks();
+    if (purge.removed.length) {
+      showToast(`已清理 ${purge.removed.length} 条上周及更早的已完成任务`, "success");
+    }
   } catch (error) {
     weeklyTasksLoadedSuccessfully = false;
     console.error("读取任务列表失败:", error);
@@ -3672,13 +3837,31 @@ function renderFocusCard() {
         <button class="btn btn-ghost btn-sm focus-detail" type="button">查看详情</button>
       </div>
     </div>
-    <div class="focus-meta">负责人 ${escapeHtml(task.owner || "未指定")} · 任务文件夹 <code>${escapeHtml(folder || "尚未创建")}</code></div>
+    <div class="focus-meta">负责人 ${escapeHtml(task.owner || "未指定")} · 时限 ${escapeHtml(task.dueDate || "未设置")} · 任务文件夹 <code>${escapeHtml(folder || "尚未创建")}</code> · 可拖到下方分区改状态</div>
     ${pipelineStepperHtml(pipelineState.step)}
   `;
   card.querySelector(".focus-pause").addEventListener("click", () => pauseTaskAutomation(task.id));
   card.querySelector(".focus-detail").addEventListener("click", () => {
     if (folder) window.workbench.openTaskFolder(folder);
   });
+  card.draggable = true;
+  card.dataset.id = task.id;
+  card.ondragstart = (event) => {
+    if (event.target.closest("button")) {
+      event.preventDefault();
+      return;
+    }
+    taskCardDrag = {
+      id: task.id,
+      fromLane: taskLaneForStatus(task.status),
+      active: true
+    };
+    card.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/task-id", task.id);
+    event.dataTransfer.setData("text/plain", task.id);
+  };
+  card.ondragend = () => endTaskCardDrag();
   card.hidden = false;
 }
 
@@ -3916,8 +4099,11 @@ function pathLikeEqual(a, b) {
 
 function taskCardElement(task) {
   const card = document.createElement("div");
-  card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}${task.archived ? " archived" : ""}`;
+  const overdue = isTaskDueOverdue(task);
+  card.className = `task-card${task.status === "completed" ? " completed" : ""}${task.status === "unsubmitted" ? " unsubmitted" : ""}${task.archived ? " archived" : ""}${overdue ? " overdue" : ""}`;
   card.dataset.id = task.id;
+  card.dataset.lane = taskLaneForStatus(task.status);
+  card.draggable = true;
   const progress = taskProgressInfo(task);
   const subtasks = taskSubtasks(task);
   const subtaskRows = subtasks.map((subtask) => {
@@ -3942,6 +4128,9 @@ function taskCardElement(task) {
   const artifacts = getTaskArtifacts(task);
   const chipsHtml = renderArtifactChipsHtml(artifacts);
   const weekdayHtml = task.weekday ? `<span>交付 <b>${escapeHtml(task.weekday)}</b></span>` : "";
+  const dueHtml = task.dueDate
+    ? `<span class="tc-due${overdue ? " overdue" : ""}">时限 <b>${escapeHtml(task.dueDate)}</b>${overdue ? " · 已过期" : ""}</span>`
+    : "";
   const noteHtml = task.note ? `<div class="tc-note">备注：${escapeHtml(task.note)}</div>` : "";
   const archiveMenuLabel = task.archived ? "取消归档" : "归档";
 
@@ -3964,7 +4153,7 @@ function taskCardElement(task) {
       </div>
       <span class="tc-status task-status status-${escapeHtml(task.status || "pending")}">${escapeHtml(taskStatusLabel(task.status || "pending"))}</span>
     </div>
-    <div class="tc-meta"><span>负责人 <b>${escapeHtml(task.owner || "未指定")}</b></span><span>数量 <b>${Number(task.quantity) || 1}</b></span>${weekdayHtml}</div>
+    <div class="tc-meta"><span>负责人 <b>${escapeHtml(task.owner || "未指定")}</b></span><span>数量 <b>${Number(task.quantity) || 1}</b></span>${weekdayHtml}${dueHtml}</div>
     ${noteHtml}
     <button class="tc-progress" type="button" title="点击维护子任务进度">
       <div class="tc-bar ${progress.barClass}"><i style="width:${Math.round(progress.ratio * 100)}%"></i></div>
@@ -3994,8 +4183,11 @@ function taskCardElement(task) {
     else startTaskAutomation(task.id, nextRunnableSubtaskIndex(task));
   });
   card.querySelector(".task-mark-completed")?.addEventListener("click", () =>
-    updateTaskFields(task.id, { status: "completed", subtasks: markAllSubtasksDone(task.subtasks, task.quantity) })
-      .then(() => showToast("任务已标记为已完成", "success"))
+    updateTaskFields(task.id, {
+      status: "completed",
+      subtasks: markAllSubtasksDone(task.subtasks, task.quantity),
+      completedAt: new Date().toISOString()
+    }).then(() => showToast("任务已标记为已完成", "success"))
   );
   card.querySelector(".task-open-folder")?.addEventListener("click", () => {
     if (task.taskFolder) {
@@ -4052,7 +4244,148 @@ function taskCardElement(task) {
     closeAllCardMenus();
     deleteWeeklyTask(task.id);
   });
+
+  // 任务卡跨区拖拽：不与标签 pointerDrag 共用状态
+  card.addEventListener("dragstart", (event) => {
+    if (event.target.closest("button, input, textarea, select, a, .tc-menu-pop, .subtask-popover")) {
+      event.preventDefault();
+      return;
+    }
+    closeAllCardMenus();
+    closeAllSubtaskPopovers();
+    taskCardDrag = {
+      id: task.id,
+      fromLane: taskLaneForStatus(task.status),
+      active: true
+    };
+    card.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/task-id", task.id);
+    event.dataTransfer.setData("text/plain", task.id);
+  });
+  card.addEventListener("dragend", () => {
+    endTaskCardDrag();
+  });
   return card;
+}
+
+// 任务中心拖拽状态（与标签 pointerDrag 隔离）
+let taskCardDrag = null;
+
+function clearTaskLaneDropStyles() {
+  document.querySelectorAll(".task-grid.drop-target, .task-card.drop-before, .task-card.drop-after").forEach((node) => {
+    node.classList.remove("drop-target", "drop-before", "drop-after");
+  });
+}
+
+function endTaskCardDrag() {
+  taskCardDrag = null;
+  document.querySelectorAll(".task-card.dragging").forEach((node) => node.classList.remove("dragging"));
+  clearTaskLaneDropStyles();
+}
+
+function setupTaskLaneDragAndDrop() {
+  const grids = [
+    elements.taskGridActive,
+    elements.taskGridUnsubmitted,
+    elements.taskGridDone
+  ].filter(Boolean);
+  if (!grids.length || grids[0].dataset.laneDragBound === "1") return;
+
+  grids.forEach((grid) => {
+    grid.dataset.laneDragBound = "1";
+    grid.addEventListener("dragover", (event) => {
+      if (!taskCardDrag?.id) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      clearTaskLaneDropStyles();
+      grid.classList.add("drop-target");
+      const overCard = event.target.closest?.(".task-card");
+      if (overCard && overCard.dataset.id !== taskCardDrag.id) {
+        const rect = overCard.getBoundingClientRect();
+        const before = event.clientY < rect.top + rect.height / 2;
+        overCard.classList.add(before ? "drop-before" : "drop-after");
+      }
+    });
+    grid.addEventListener("dragleave", (event) => {
+      if (!grid.contains(event.relatedTarget)) {
+        grid.classList.remove("drop-target");
+      }
+    });
+    grid.addEventListener("drop", async (event) => {
+      if (!taskCardDrag?.id) return;
+      event.preventDefault();
+      const taskId = taskCardDrag.id;
+      const targetLane = grid.dataset.taskLane || "active";
+      const overCard = event.target.closest?.(".task-card");
+      let beforeId = null;
+      let afterId = null;
+      if (overCard && overCard.dataset.id !== taskId) {
+        const rect = overCard.getBoundingClientRect();
+        if (event.clientY < rect.top + rect.height / 2) beforeId = overCard.dataset.id;
+        else afterId = overCard.dataset.id;
+      }
+      endTaskCardDrag();
+      await applyTaskCardDrop({ taskId, targetLane, beforeId, afterId });
+    });
+  });
+}
+
+async function applyTaskCardDrop({ taskId, targetLane, beforeId = null, afterId = null }) {
+  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
+  if (!task || !targetLane) return;
+
+  // 活动流水线任务跨区/重排前先暂停，避免假运行
+  if (pipelineState.active && pipelineState.taskId === taskId) {
+    await pauseTaskAutomation(taskId);
+  }
+
+  const nextStatus = laneStatusForDrop(targetLane);
+  const fromLane = taskLaneForStatus(task.status);
+  const statusChanged = fromLane !== targetLane || task.status !== nextStatus;
+
+  // 目标区内的任务顺序（不含被拖任务）
+  const laneTasks = sortTasksForLane(
+    weeklyTasks.filter((candidate) =>
+      candidate.id !== taskId
+      && !candidate.archived
+      && taskLaneForStatus(candidate.status) === targetLane
+    )
+  );
+
+  let insertAt = laneTasks.length;
+  if (beforeId) {
+    const idx = laneTasks.findIndex((candidate) => candidate.id === beforeId);
+    if (idx >= 0) insertAt = idx;
+  } else if (afterId) {
+    const idx = laneTasks.findIndex((candidate) => candidate.id === afterId);
+    if (idx >= 0) insertAt = idx + 1;
+  }
+  laneTasks.splice(insertAt, 0, task);
+
+  // 重写同区 sortKey，保持稳定顺序
+  laneTasks.forEach((candidate, index) => {
+    candidate.sortKey = index;
+  });
+
+  if (statusChanged) {
+    const patch = { status: nextStatus, sortKey: task.sortKey };
+    if (nextStatus === "completed") {
+      patch.subtasks = markAllSubtasksDone(task.subtasks, task.quantity);
+      patch.completedAt = task.completedAt || new Date().toISOString();
+    } else if (task.status === "completed") {
+      patch.completedAt = "";
+    }
+    if (nextStatus === "pending" && ["completed", "unsubmitted"].includes(task.status)) {
+      patch.subtasks = subtasksForTaskStatus(task.subtasks, task.status, "pending");
+    }
+    Object.assign(task, patch);
+  }
+
+  await persistWeeklyTasks();
+  if (statusChanged) {
+    showToast(`已移至${targetLane === "done" ? "已完成" : targetLane === "unsubmitted" ? "未提交" : "待处理"}`, "success");
+  }
 }
 
 // 任务中心首页整体渲染：统计卡 + 聚焦卡 + 任务卡片网格 + 角标/芯片
@@ -4183,6 +4516,7 @@ function renderTaskCenter() {
 
   // 异步回扫可见任务产物徽章（不阻塞渲染；归档任务跳过）
   scheduleVisibleArtifactRefresh();
+  setupTaskLaneDragAndDrop();
 }
 
 function taskFromForm() {
@@ -4193,6 +4527,13 @@ function taskFromForm() {
     : (existing.status || "pending");
   const existingSubtasks = normalizeSubtasks(existing.subtasks, Math.max(1, Number(document.querySelector("#task-quantity").value) || 1));
   const subtasks = subtasksForTaskStatus(existingSubtasks, existing.status, status);
+  const dueDate = normalizeDueDate(document.querySelector("#task-due-date")?.value || existing.dueDate);
+  let completedAt = existing.completedAt || "";
+  if (status === "completed") {
+    if (existing.status !== "completed" || !completedAt) completedAt = new Date().toISOString();
+  } else {
+    completedAt = "";
+  }
   return {
     id,
     school: document.querySelector("#task-school").value.trim(),
@@ -4203,6 +4544,9 @@ function taskFromForm() {
     owner: document.querySelector("#task-owner").value.trim(),
     weekday: existing.weekday || "",
     note: existing.note || "",
+    dueDate,
+    completedAt,
+    sortKey: Number.isFinite(Number(existing.sortKey)) ? Number(existing.sortKey) : 0,
     subtasks,
     chatLogPath: existing.chatLogPath || "",
     reportPath: existing.reportPath || "",
@@ -4290,7 +4634,20 @@ async function performDeleteWeeklyTask(id) {
 async function updateTaskFields(id, fields) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return null;
-  Object.assign(task, fields);
+  const next = { ...fields };
+  if (Object.prototype.hasOwnProperty.call(next, "status")) {
+    if (next.status === "completed") {
+      if (task.status !== "completed" || !task.completedAt) {
+        next.completedAt = next.completedAt || new Date().toISOString();
+      }
+    } else if (task.status === "completed" || next.status) {
+      next.completedAt = "";
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(next, "dueDate")) {
+    next.dueDate = normalizeDueDate(next.dueDate);
+  }
+  Object.assign(task, next);
   await persistWeeklyTasks();
   return weeklyTasks.find((candidate) => candidate.id === id) || null;
 }
