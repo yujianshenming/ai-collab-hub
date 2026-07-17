@@ -411,7 +411,20 @@ button { cursor: pointer; }
 .modal { width: min(460px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 0; overflow: hidden; color: var(--text-primary); background: rgba(255,255,255,0.97); border: 1px solid rgba(226, 232, 240, 0.9); border-radius: 20px; box-shadow: var(--shadow-lg); }
 .modal::backdrop { background: rgba(30, 41, 59, 0.28); backdrop-filter: blur(8px); }
 .modal form { display: grid; gap: 17px; max-height: calc(100vh - 34px); padding: 23px; overflow-y: auto; }
-.modal-heading { display: flex; align-items: flex-start; justify-content: space-between; }
+/* 无 form 的确认框（如删除任务）需要自己的内边距与换行，否则文案会贴边/被裁切 */
+.confirm-modal { width: min(520px, calc(100vw - 32px)); }
+.confirm-modal-body { display: grid; gap: 16px; padding: 23px; max-height: calc(100vh - 34px); overflow-y: auto; }
+.confirm-modal-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.65;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.modal-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .modal h2 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
 .modal label { display: grid; gap: 7px; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
 .modal input[type="text"], .modal input[type="number"], .modal select { width: 100%; padding: 11px 12px; color: var(--text-primary); background: #f8fafc; border: 1px solid var(--border-color); border-radius: 10px; outline: 0; }

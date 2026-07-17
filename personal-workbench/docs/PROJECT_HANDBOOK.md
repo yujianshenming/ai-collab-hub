@@ -355,6 +355,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-17 | fix | 删除任务确认弹窗加宽并补内边距/换行，避免说明文字被裁切 | `index.html`、`style.css`、`docs/PROJECT_HANDBOOK.md` | 打开删除确认，长任务名说明完整可见 |
 | 2026-07-17 | feat | 任务卡三区拖拽改状态、完成时限 dueDate（默认本周日）、跨周清理已完成任务（completedAt 归属周） | `renderer.js`、`index.html`、`style.css`、`tests/task-lane-helpers.test.js`、`package.json`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：跨区拖拽、时限排序、上周 completed 加载后消失 |
 | 2026-07-17 | docs | 同步手册检查点与数据流：托盘重命名、裁切覆盖原图、拖拽收尾；检查点改为 2026-07-17 | `docs/PROJECT_HANDBOOK.md` | 手册与 README/代码行为核对 |
 | 2026-07-17 | fix/feat | 修复主体拖拽“粘住”（blur/visibility/buttons=0 强制结束 + guest mouseup）；任务托盘支持重命名；裁切改为覆盖原图（webp→png） | `renderer.js`、`main.js`、`preload.js`、`README.md`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：拖出再回、托盘改名、裁切后无 `_cropped` |
