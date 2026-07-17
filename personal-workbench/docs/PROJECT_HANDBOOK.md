@@ -77,7 +77,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 
 - 从当前任务生成一份独立的周报快照，不直接修改任务记录。
 - 表格字段为：课程名称、学校名称、任务名称、任务进度、任务数量、任务状态、本周建议情况描述。
-- 支持手动添加/删除表格行、非量化事项和产品需求 / Bug / 卡点 / 疑问。
+- 支持手动添加/删除表格行、非量化事项和产品需求 / Bug / 卡点 / 疑问；表格「操作」列 sticky 固定在右侧，删除按钮始终可见。
 - 周报按 `YYYY-Www` 保存；标题、姓名和日期范围可编辑。
 - 支持历史周次列表（已保存草稿）、上一周 / 下一周切换，以及 `type=week` 输入任意跳转；切换前若有未保存修改会先落盘。
 - 新建周次草稿可使用偏好模板：默认姓名 `weeklyReportDefaults.author`、可选标题模式 `weeklyReportDefaults.titlePattern`（占位符 `{period}` `{year}` `{isoWeek}` `{month}` `{weekOfMonth}`）；周报信息区提供「存为默认」姓名按钮。模板只影响新建草稿，不覆盖已保存周报。
@@ -331,6 +331,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-16 | fix | 周报表格删除入口可见性：操作列 sticky、删除按钮文案与样式增强；允许表格删空 | `renderer.js`、`index.html`、`style.css`、`tests/weekly-report.e2e.js` | `npm test`；`node tests/weekly-report.e2e.js` |
 | 2026-07-16 | feat | 任务卡产物徽章（对话/报告/卡片）、文件夹回扫缓存、报告完成后台系统通知；归档任务不回扫 | `renderer.js`、`main.js`、`style.css`、`tests/task-artifact-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
 | 2026-07-16 | feat | 任务中心搜索/状态 chips/学校筛选与归档：默认隐藏 archived，写回待做任务排除归档；统计卡仍用全局计数 | `renderer.js`、`index.html`、`style.css`、`tests/task-filter-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
 | 2026-07-16 | feat | 周报历史周次列表、上一周/下一周、默认姓名与标题模板（prefs.weeklyReportDefaults）；从任务再生成保留手动备注 | `main.js`、`renderer.js`、`index.html`、`style.css`、`tests/weekly-report-helpers.test.js`、`tests/weekly-report.e2e.js`、`docs/FEATURE_PLAN_THREE.md` | `npm test`；`node tests/weekly-report.e2e.js` |

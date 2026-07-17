@@ -73,6 +73,36 @@ async function launch() {
       JSON.stringify(generated)
     );
 
+    // 添加一行后删除：操作列删除按钮应可见且立刻减少行数
+    await page.locator("#report-add-row").click();
+    await page.waitForFunction(() => document.querySelectorAll("#report-rows-body tr[data-report-row-index]").length === 3);
+    const afterAdd = await page.evaluate(() => ({
+      rowCount: document.querySelectorAll("#report-rows-body tr[data-report-row-index]").length,
+      removeButtons: document.querySelectorAll('#report-rows-body [data-report-action="remove-row"]').length,
+      countLabel: document.querySelector("#report-row-count")?.textContent
+    }));
+    record(
+      "manual add row increases editable rows and exposes delete buttons",
+      afterAdd.rowCount === 3 && afterAdd.removeButtons === 3 && afterAdd.countLabel === "3 项",
+      JSON.stringify(afterAdd)
+    );
+    await page.locator('#report-rows-body tr[data-report-row-index="2"] [data-report-action="remove-row"]').click();
+    await page.waitForFunction(() => document.querySelectorAll("#report-rows-body tr[data-report-row-index]").length === 2);
+    const afterDelete = await page.evaluate(() => ({
+      rowCount: document.querySelectorAll("#report-rows-body tr[data-report-row-index]").length,
+      countLabel: document.querySelector("#report-row-count")?.textContent,
+      dirty: document.querySelector("#report-save-state")?.textContent,
+      previewRows: document.querySelectorAll("#report-preview table tbody tr").length
+    }));
+    record(
+      "delete row removes the target row and updates count/preview immediately",
+      afterDelete.rowCount === 2
+        && afterDelete.countLabel === "2 项"
+        && afterDelete.dirty === "未保存"
+        && afterDelete.previewRows >= 2,
+      JSON.stringify(afterDelete)
+    );
+
     await page.locator("#report-author").fill("刘毅");
     await page.locator("#report-title").fill("M7W2周报测试");
     await page.locator('#report-rows-body tr').nth(1).locator('textarea[data-report-field="note"]').fill("下周继续跟进第二个子任务");

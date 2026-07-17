@@ -3130,7 +3130,7 @@ function renderReportTextList(container, items, listName, emptyText) {
     <div class="report-text-row" data-report-list="${listName}" data-report-index="${index}">
       <span class="report-list-index">${index + 1}.</span>
       <textarea data-report-field="text" rows="2" placeholder="填写内容">${escapeHtml(item.text)}</textarea>
-      <button class="report-remove-button" data-report-action="remove-${listName}" type="button" aria-label="删除第 ${index + 1} 项">×</button>
+      <button class="report-remove-button" data-report-action="remove-${listName}" type="button" title="删除此项" aria-label="删除第 ${index + 1} 项">删除</button>
     </div>`).join("");
 }
 
@@ -3166,7 +3166,15 @@ function renderWeeklyReportCenter() {
   elements.reportSaveState.textContent = weeklyReportDirty ? "未保存" : "已保存";
   elements.reportRowCount.textContent = `${report.rows.length} 项`;
   renderReportHistoryList();
-  elements.reportRowsBody.innerHTML = report.rows.map((row, index) => `
+  if (!report.rows.length) {
+    elements.reportRowsBody.innerHTML = `
+      <tr class="report-empty-row">
+        <td colspan="8">
+          <div class="report-empty-line">暂无工作内容行。可「从任务生成」或点击下方「手动添加一行」。</div>
+        </td>
+      </tr>`;
+  } else {
+    elements.reportRowsBody.innerHTML = report.rows.map((row, index) => `
     <tr data-report-row-index="${index}">
       <td><input data-report-field="course" type="text" value="${escapeHtml(row.course)}" placeholder="课程名称"></td>
       <td><input data-report-field="school" type="text" value="${escapeHtml(row.school)}" placeholder="学校名称"></td>
@@ -3175,8 +3183,11 @@ function renderWeeklyReportCenter() {
       <td><input data-report-field="quantity" type="number" min="0" step="1" value="${escapeHtml(row.quantity)}" placeholder="1"></td>
       <td><input data-report-field="status" type="text" value="${escapeHtml(row.status)}" placeholder="任务状态"></td>
       <td><textarea data-report-field="note" rows="2" placeholder="本周建设情况">${escapeHtml(row.note)}</textarea></td>
-      <td><button class="report-remove-button" data-report-action="remove-row" type="button" aria-label="删除第 ${index + 1} 行">×</button></td>
+      <td class="report-row-actions">
+        <button class="report-remove-button" data-report-action="remove-row" type="button" title="删除此行" aria-label="删除第 ${index + 1} 行">删除</button>
+      </td>
     </tr>`).join("");
+  }
   renderReportTextList(elements.reportNonquantifiedList, report.nonQuantified, "nonquantified", "暂无补充事项，点击 + 添加");
   renderReportTextList(elements.reportIssuesList, report.issues, "issues", "暂无需求、Bug 或疑问，点击 + 添加");
   renderWeeklyReportPreview();
@@ -3422,15 +3433,21 @@ function setupWeeklyReportEvents() {
     renderWeeklyReportPreview();
   });
   elements.weeklyReportView?.addEventListener("click", (event) => {
-    const action = event.target.closest("[data-report-action]")?.dataset.reportAction;
+    const actionButton = event.target.closest("[data-report-action]");
+    const action = actionButton?.dataset.reportAction;
     if (!action || !activeWeeklyReport) return;
+    event.preventDefault();
     if (action === "remove-row") {
-      const row = event.target.closest("[data-report-row-index]");
-      activeWeeklyReport.rows.splice(Number(row?.dataset.reportRowIndex), 1);
+      const row = actionButton.closest("[data-report-row-index]");
+      const index = Number(row?.dataset.reportRowIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= activeWeeklyReport.rows.length) return;
+      activeWeeklyReport.rows.splice(index, 1);
     } else if (action === "remove-nonquantified" || action === "remove-issues") {
-      const item = event.target.closest("[data-report-list]");
+      const item = actionButton.closest("[data-report-list]");
       const list = action === "remove-issues" ? activeWeeklyReport.issues : activeWeeklyReport.nonQuantified;
-      list.splice(Number(item?.dataset.reportIndex), 1);
+      const index = Number(item?.dataset.reportIndex);
+      if (!Number.isInteger(index) || index < 0 || index >= list.length) return;
+      list.splice(index, 1);
     } else {
       return;
     }
