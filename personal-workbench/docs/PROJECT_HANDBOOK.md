@@ -7,7 +7,7 @@
 - 代码入口：`main.js`、`preload.js`、`renderer.js`
 - 当前工作分支：`codex/personal-workbench-redesign`
 - 上一稳定基线：`personal-workbench-stable-2026-07-15`
-- 本次检查点：`personal-workbench-stable-2026-07-16`
+- 本次检查点：`personal-workbench-stable-2026-07-17`
 
 ## 1. 新成员 / 新模型先读什么
 
@@ -74,9 +74,10 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 五步任务流水线 | 已实现 | `PIPELINE_STEPS`、任务舱、下载/报告事件 |
 | 任务暂停、继续、子任务 | 已实现并有 E2E | `startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
 | 任务筛选 / 搜索 / 归档 | 已实现 | `matchesTaskQuery`、`filterTasks`、任务中心 filter bar、卡片归档菜单 |
-| 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘（含重命名）、图片裁切覆盖原图 |
+| 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘（打开/定位/复制/重命名/裁切/删除）、图片裁切覆盖原图 |
 | 任务产物徽章 | 已实现 | 任务卡对话/报告/卡片徽章；文件夹回扫；`taskArtifactsFromPathsAndFiles` |
 | 报告到达系统通知 | 已实现 | 主进程 `Notification`（窗口未聚焦 + 活动任务 report 完成） |
+| 指针拖拽收尾 | 已实现 | 标签拖/分屏拖在 blur、visibility、buttons=0 时强制结束；guest 页补发 mouseup |
 | `cards.md` 卡片舱 | 已实现并有 E2E | `renderRailCards`、卡片字段复制和持久化 |
 | Chrome 扩展兼容层 | 已实现，依赖真实扩展与登录态 | `preload-popup.js`、扩展兼容 IPC |
 | 平台字段试注入 | 预研 / 辅助能力 | `platformFieldMap`、`platform:test-inject` |
@@ -245,8 +246,9 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 5. 任务中心异步 `listTaskFiles` 回扫未归档任务的产物徽章（对话/报告/卡片）；路径为空且发现标准文件名时可写回 `chatLogPath`/`reportPath`，已有路径不覆盖。
 6. 评估报告下载完成：renderer 前台 toast；若主窗口未聚焦，主进程发系统 `Notification`（仅活动任务 `type=report`）。
 7. 上传通过 CDP 文件选择器拦截，把已选文件注入网页；系统文件选择器作为降级路径。
-8. 任务结束后按用户选择清理临时任务目录；任务记录保留必要的状态和产物路径。
-9. 周报中心只读取当前任务，生成可编辑快照；保存周报不会改变第 1 至 8 步的数据。
+8. 任务舱托盘可对任务夹内文件重命名（`tasks:file-action` + `resolveTaskPath`）；图片裁切覆盖原路径（先写临时文件再 rename；`webp` 输出为同主名 `.png` 并删除原文件）。
+9. 任务结束后按用户选择清理临时任务目录；任务记录保留必要的状态和产物路径。
+10. 周报中心只读取当前任务，生成可编辑快照；保存周报不会改变第 1 至 9 步的数据。
 
 ## 7. 安全边界
 
@@ -329,11 +331,12 @@ git diff --stat
 - DOCX 导出保留周报表格结构；企业微信/腾讯文档的实际粘贴行为仍由目标编辑器决定，表格专用复制通过 HTML + TSV 提高兼容性但不承诺填充每一种已有表格。
 - 系统通知依赖 Windows 通知权限与专注助手；失败时静默，不阻塞下载归档与前台 toast。
 - 任务卡产物回扫依赖 `listTaskFiles` 与内存 cache；任务很多时靠 debounce + 仅未归档任务回扫控制 IPC 频率。
+- 图片裁切覆盖原图不可撤销；`webp` 会变成 `.png`，需在真实样本上确认平台是否仍接受。
 - 完整 E2E 会启动多个 Electron 实例，开发时应使用测试隔离环境，不能让夹具污染真实用户数据。
 
 ### 推荐顺序
 
-1. A/B/C 三项计划功能已落地；继续人工验收企业微信粘贴与 Windows 后台报告通知。
+1. A/B/C 与近期拖拽/托盘/裁切修复已落地；继续人工验收企业微信粘贴、Windows 后台报告通知、裁切覆盖与拖拽收尾。
 2. 处理 `regression-checklist.md` 中仍未关闭的真实浏览器和上传边界风险。
 3. 在不改变 IPC 的前提下拆分任务状态、文件总线、扩展兼容和报告生成模块。
 4. 只有在真实需求明确后，才评估企业微信/腾讯文档的官方接口或导出格式。
@@ -342,6 +345,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-17 | docs | 同步手册检查点与数据流：托盘重命名、裁切覆盖原图、拖拽收尾；检查点改为 2026-07-17 | `docs/PROJECT_HANDBOOK.md` | 手册与 README/代码行为核对 |
 | 2026-07-17 | fix/feat | 修复主体拖拽“粘住”（blur/visibility/buttons=0 强制结束 + guest mouseup）；任务托盘支持重命名；裁切改为覆盖原图（webp→png） | `renderer.js`、`main.js`、`preload.js`、`README.md`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：拖出再回、托盘改名、裁切后无 `_cropped` |
 | 2026-07-17 | fix | 终端/右分屏/底部分屏拖动尺寸可覆盖主题：从 `body[data-theme]` 与相关 media 移除 `--terminal-height`、`--right-sidebar-width`，默认只保留在 `:root` | `style.css`、`docs/PROJECT_HANDBOOK.md` | 主题下拖动终端高度、右分屏宽度、底部分屏高度；`node --check` 无语法影响 |
 | 2026-07-17 | docs | 日常启动改为桌面 `打开个人工作台.vbs`：独立进程、无黑窗、无 launch.log；弃用桌面 cmd/ps1；手册与 README 同步 | 本机桌面 `打开个人工作台.vbs`、`docs/PROJECT_HANDBOOK.md`、`README.md` | 双击 vbs 打开工作台；关闭启动器不影响应用 |
