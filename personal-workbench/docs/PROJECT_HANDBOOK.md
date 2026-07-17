@@ -74,7 +74,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 五步任务流水线 | 已实现 | `PIPELINE_STEPS`、任务舱、下载/报告事件 |
 | 任务暂停、继续、子任务 | 已实现并有 E2E | `startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
 | 任务筛选 / 搜索 / 归档 | 已实现 | `matchesTaskQuery`、`filterTasks`、任务中心 filter bar、卡片归档菜单 |
-| 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘、图片裁切 |
+| 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘（含重命名）、图片裁切覆盖原图 |
 | 任务产物徽章 | 已实现 | 任务卡对话/报告/卡片徽章；文件夹回扫；`taskArtifactsFromPathsAndFiles` |
 | 报告到达系统通知 | 已实现 | 主进程 `Notification`（窗口未聚焦 + 活动任务 report 完成） |
 | `cards.md` 卡片舱 | 已实现并有 E2E | `renderRailCards`、卡片字段复制和持久化 |
@@ -342,6 +342,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-17 | fix/feat | 修复主体拖拽“粘住”（blur/visibility/buttons=0 强制结束 + guest mouseup）；任务托盘支持重命名；裁切改为覆盖原图（webp→png） | `renderer.js`、`main.js`、`preload.js`、`README.md`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：拖出再回、托盘改名、裁切后无 `_cropped` |
 | 2026-07-17 | fix | 终端/右分屏/底部分屏拖动尺寸可覆盖主题：从 `body[data-theme]` 与相关 media 移除 `--terminal-height`、`--right-sidebar-width`，默认只保留在 `:root` | `style.css`、`docs/PROJECT_HANDBOOK.md` | 主题下拖动终端高度、右分屏宽度、底部分屏高度；`node --check` 无语法影响 |
 | 2026-07-17 | docs | 日常启动改为桌面 `打开个人工作台.vbs`：独立进程、无黑窗、无 launch.log；弃用桌面 cmd/ps1；手册与 README 同步 | 本机桌面 `打开个人工作台.vbs`、`docs/PROJECT_HANDBOOK.md`、`README.md` | 双击 vbs 打开工作台；关闭启动器不影响应用 |
 | 2026-07-16 | fix | 周报表格删除入口可见性：操作列 sticky、删除按钮文案与样式增强；允许表格删空 | `renderer.js`、`index.html`、`style.css`、`tests/weekly-report.e2e.js` | `npm test`；`node tests/weekly-report.e2e.js` |

@@ -1858,7 +1858,8 @@ function registerIpc() {
     }
     return { ok: true, path: todoPath, backupPath };
   });
-  // 图片裁切去水印：nativeImage 实现，生成 原名_cropped 新文件，原图保留
+  // 图片裁切去水印：nativeImage 实现；裁切结果覆盖原文件（先写临时文件再 rename）
+  // webp 源只能输出 png：覆盖为同主文件名 .png，并删除原 .webp
   ipcMain.handle("tasks:crop-image", (_event, filePath) => {
     const target = resolveTaskPath(filePath);
     if (!target || !fs.existsSync(target)) return { ok: false, error: "文件不存在或越出任务目录" };
@@ -1876,34 +1877,74 @@ function registerIpc() {
     else rect.width = width - pixels;
     const cropped = image.crop(rect);
     const extension = path.extname(target);
-    // nativeImage 无法编码 webp，webp 源输出为 png
+    const dir = path.dirname(target);
+    const base = path.basename(target, extension);
+    // nativeImage 无法编码 webp，webp 源输出为 png 并替换原文件
     const outExtension = /\.jpe?g$/i.test(extension) ? extension : /\.webp$/i.test(extension) ? ".png" : extension;
-    const outPath = path.join(path.dirname(target), `${path.basename(target, extension)}_cropped${outExtension}`);
+    const finalPath = path.join(dir, `${base}${outExtension}`);
+    const finalResolved = resolveTaskPath(finalPath);
+    if (!finalResolved) return { ok: false, error: "输出路径越出任务目录" };
+    const tempPath = path.join(dir, `.${base}.crop-tmp-${Date.now()}${outExtension}`);
+    const tempResolved = resolveTaskPath(tempPath);
+    if (!tempResolved) return { ok: false, error: "临时路径越出任务目录" };
     const buffer = /\.jpe?g$/i.test(outExtension) ? cropped.toJPEG(90) : cropped.toPNG();
     try {
-      fs.writeFileSync(outPath, buffer);
+      fs.writeFileSync(tempResolved, buffer);
+      fs.renameSync(tempResolved, finalResolved);
+      if (/\.webp$/i.test(extension) && path.resolve(target) !== path.resolve(finalResolved) && fs.existsSync(target)) {
+        fs.rmSync(target, { force: true });
+      }
     } catch (error) {
+      try { if (fs.existsSync(tempResolved)) fs.rmSync(tempResolved, { force: true }); } catch {}
       return { ok: false, error: `写入失败: ${error.message}` };
     }
-    return { ok: true, path: outPath };
+    return { ok: true, path: finalResolved };
   });
-  // 托盘文件操作：打开 / 资源管理器定位 / 删除，全部限制在 temp/tasks 内
+  // 托盘文件操作：打开 / 资源管理器定位 / 重命名 / 删除，全部限制在 temp/tasks 内
   ipcMain.handle("tasks:file-action", async (_event, payload = {}) => {
     const target = resolveTaskPath(payload.filePath);
-    if (!target || target === path.resolve(downloadRoot, "tasks") || !fs.existsSync(target)) return false;
+    if (!target || target === path.resolve(downloadRoot, "tasks") || !fs.existsSync(target)) {
+      return { ok: false, error: "文件不存在或越出任务目录" };
+    }
     const action = String(payload.action || "");
     if (action === "open") {
-      return (await shell.openPath(target)) === "";
+      const err = await shell.openPath(target);
+      return err ? { ok: false, error: err } : { ok: true, path: target };
     }
     if (action === "reveal") {
       shell.showItemInFolder(target);
-      return true;
+      return { ok: true, path: target };
     }
     if (action === "delete") {
       fs.rmSync(target, { recursive: true, force: true });
-      return true;
+      return { ok: true };
     }
-    return false;
+    if (action === "rename") {
+      const rawName = String(payload.newName || "").trim();
+      if (!rawName) return { ok: false, error: "新文件名不能为空" };
+      if (rawName === "." || rawName === ".." || /[\\/:*?"<>|]/.test(rawName)) {
+        return { ok: false, error: "文件名含非法字符" };
+      }
+      if (rawName.includes("\0")) return { ok: false, error: "文件名非法" };
+      const dest = path.join(path.dirname(target), rawName);
+      const destResolved = resolveTaskPath(dest);
+      if (!destResolved) return { ok: false, error: "目标路径越出任务目录" };
+      if (path.resolve(destResolved) === path.resolve(target)) {
+        return { ok: true, path: target, name: path.basename(target) };
+      }
+      // 禁止改到其他任务文件夹：必须仍在原父目录下
+      if (path.resolve(path.dirname(destResolved)) !== path.resolve(path.dirname(target))) {
+        return { ok: false, error: "只能在同一任务文件夹内重命名" };
+      }
+      if (fs.existsSync(destResolved)) return { ok: false, error: "同目录已存在同名文件" };
+      try {
+        fs.renameSync(target, destResolved);
+      } catch (error) {
+        return { ok: false, error: `重命名失败: ${error.message}` };
+      }
+      return { ok: true, path: destResolved, name: path.basename(destResolved) };
+    }
+    return { ok: false, error: "未知操作" };
   });
   ipcMain.handle("workbench:get-active-tab-info", (event) => {
     requireExtensionCapability(event, "tabs");

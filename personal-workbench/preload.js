@@ -17,7 +17,8 @@ contextBridge.exposeInMainWorld("workbench", {
   openTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:open-folder", folderPath),
   listTaskFolder: (folderPath) => ipcRenderer.invoke("tasks:list-folder", folderPath),
   listTaskFiles: (folderPath) => ipcRenderer.invoke("tasks:list-files", folderPath),
-  taskFileAction: (action, filePath) => ipcRenderer.invoke("tasks:file-action", { action, filePath }),
+  taskFileAction: (action, filePath, extra = {}) =>
+    ipcRenderer.invoke("tasks:file-action", { action, filePath, ...(extra && typeof extra === "object" ? extra : {}) }),
   readTaskTextFile: (filePath) => ipcRenderer.invoke("tasks:read-text-file", filePath),
   testInjectField: (webContentsId, selector, value) =>
     ipcRenderer.invoke("platform:test-inject", { webContentsId, selector, value }),

@@ -508,6 +508,119 @@ function setWebviewPointerEvents(enabled) {
   });
 }
 
+// 向 guest 页补发 pointerup/mouseup，避免网页内拖拽移出 chrome 后“粘住”
+let lastGuestPointerReleaseAt = 0;
+function releaseGuestPointerCapture() {
+  const now = Date.now();
+  if (now - lastGuestPointerReleaseAt < 120) return;
+  lastGuestPointerReleaseAt = now;
+  document.querySelectorAll("webview").forEach((webview) => {
+    webview.executeJavaScript(`(() => {
+      try {
+        const opts = { bubbles: true, cancelable: true, view: window, buttons: 0, button: 0, clientX: 0, clientY: 0 };
+        const targets = [window, document, document.activeElement, document.body].filter(Boolean);
+        for (const target of targets) {
+          try { target.dispatchEvent(new PointerEvent("pointerup", opts)); } catch {}
+          try { target.dispatchEvent(new MouseEvent("mouseup", opts)); } catch {}
+          try { target.dispatchEvent(new PointerEvent("pointercancel", opts)); } catch {}
+        }
+      } catch {}
+    })();`).catch(() => {});
+  });
+}
+
+// 活动分屏/终端/扩展宽度拖动的统一结束回调（防止 pointerup 丢失后 webview 永久不可点）
+let activeResizeEnd = null;
+
+function endAllResizes() {
+  const ender = activeResizeEnd;
+  activeResizeEnd = null;
+  if (typeof ender === "function") {
+    try { ender(); } catch (error) {
+      console.error("结束面板拖动失败:", error);
+    }
+  }
+  elements.appShell?.classList.remove("resizing");
+  elements.workspace?.classList.remove("resizing");
+  document.querySelectorAll(".tab-extension-panel.resizing, .tab-extension-resizer.resizing").forEach((node) => {
+    node.classList.remove("resizing");
+  });
+  setWebviewPointerEvents(true);
+}
+
+// 结束标签拖拽：commit=true 走投放/排序；false 仅清理残留状态
+function endPointerDrag({ commit = false, event = null } = {}) {
+  if (!pointerDrag) {
+    setWebviewPointerEvents(true);
+    return;
+  }
+  const drag = pointerDrag;
+  pointerDrag = null;
+  try {
+    const dragItem = document.querySelector(`.tab-item[data-id="${drag.id}"]`);
+    if (dragItem && drag.pointerId !== undefined && dragItem.hasPointerCapture?.(drag.pointerId)) {
+      dragItem.releasePointerCapture(drag.pointerId);
+    }
+  } catch (error) {
+    console.error("释放标签拖拽指针失败:", error);
+  }
+  setWebviewPointerEvents(true);
+
+  if (commit) {
+    try {
+      if (drag.active) {
+        const clientX = event?.clientX ?? -1;
+        const clientY = event?.clientY ?? -1;
+        const isRightSide = clientX > window.innerWidth * 0.7;
+        const isBottomSide = clientY > window.innerHeight * 0.75 && clientX <= window.innerWidth * 0.7;
+        if (isRightSide) {
+          toggleRightSidebar(true, drag.id);
+        } else if (isBottomSide) {
+          toggleBottomSidebar(true, drag.id);
+        } else if (clientX > 238) {
+          if (rightSplitTabId === drag.id) toggleRightSidebar(false);
+          else if (bottomSplitTabId === drag.id) toggleBottomSidebar(false);
+          activateTab(drag.id);
+        } else {
+          const draggedIndex = drag.draggedIndex;
+          const insertIndex = drag.insertIndex;
+          if (typeof draggedIndex === "number" && typeof insertIndex === "number" && draggedIndex !== insertIndex) {
+            const draggedTab = tabs.find((t) => t.id === drag.id);
+            if (draggedTab) {
+              const category = getTabCategory(draggedTab);
+              const indices = [];
+              tabs.forEach((t, idx) => {
+                if (getTabCategory(t) === category) indices.push(idx);
+              });
+              const categoryTabs = indices.map((idx) => tabs[idx]);
+              if (draggedIndex < categoryTabs.length && insertIndex < categoryTabs.length) {
+                const [movedTab] = categoryTabs.splice(draggedIndex, 1);
+                categoryTabs.splice(insertIndex, 0, movedTab);
+                indices.forEach((originalIdx, i) => {
+                  tabs[originalIdx] = categoryTabs[i];
+                });
+                saveTabs();
+                renderTabs();
+              }
+            }
+          }
+        }
+      } else {
+        activateTab(drag.id);
+      }
+    } catch (error) {
+      console.error("释放拖拽操作执行失败:", error);
+    }
+  }
+  clearDragState();
+}
+
+function forceEndAllPointerInteractions({ commitDrag = false, event = null } = {}) {
+  endAllResizes();
+  endPointerDrag({ commit: commitDrag, event });
+  releaseGuestPointerCapture();
+}
+
 function isLocalLoopbackUrl(rawUrl) {
   try {
     const parsed = new URL(rawUrl);
@@ -600,25 +713,33 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     resizer.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       event.preventDefault();
+      endAllResizes();
       resizer.setPointerCapture(event.pointerId);
       elements.appShell.classList.add("resizing");
       extPanel.classList.add("resizing");
       resizer.classList.add("resizing");
       setWebviewPointerEvents(false);
-      
+
       const startX = event.clientX;
       const startWidth = extPanel.getBoundingClientRect().width || 320;
-      
+
       const onMove = (moveEvent) => {
+        if (moveEvent.buttons === 0) {
+          onUp();
+          return;
+        }
         const deltaX = startX - moveEvent.clientX;
         const width = Math.max(240, Math.min(window.innerWidth * 0.6, startWidth + deltaX));
         extPanel.style.setProperty("--tab-ext-width", `${width}px`);
       };
-      
+
       const onUp = () => {
-        if (resizer.hasPointerCapture(event.pointerId)) {
-          resizer.releasePointerCapture(event.pointerId);
-        }
+        if (activeResizeEnd === onUp) activeResizeEnd = null;
+        try {
+          if (resizer.hasPointerCapture(event.pointerId)) {
+            resizer.releasePointerCapture(event.pointerId);
+          }
+        } catch {}
         elements.appShell.classList.remove("resizing");
         extPanel.classList.remove("resizing");
         resizer.classList.remove("resizing");
@@ -627,7 +748,8 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
         document.removeEventListener("pointerup", onUp);
         document.removeEventListener("pointercancel", onUp);
       };
-      
+
+      activeResizeEnd = onUp;
       document.addEventListener("pointermove", onMove);
       document.addEventListener("pointerup", onUp);
       document.addEventListener("pointercancel", onUp);
@@ -2158,17 +2280,42 @@ async function runTaskFileAction(action, file) {
   if (action === "crop") {
     const result = await window.workbench.cropImage(file.path);
     if (result?.ok) {
-      showToast(`裁切完成：${result.path.split(/[\\/]/).pop()}`, "success");
+      const outName = String(result.path || "").split(/[\\/]/).pop() || file.name;
+      const converted = /\.webp$/i.test(file.name) && /\.png$/i.test(outName);
+      showToast(converted ? `裁切完成并覆盖为 ${outName}` : `裁切完成并已覆盖 ${outName}`, "success");
     } else {
       showToast(`裁切失败：${result?.error || "未知错误"}`, "error");
     }
     refreshRailTray();
     return;
   }
+  if (action === "rename") {
+    const nextName = window.prompt("重命名为：", file.name);
+    if (nextName === null) return;
+    const trimmed = String(nextName).trim();
+    if (!trimmed) {
+      showToast("文件名不能为空", "error");
+      return;
+    }
+    if (trimmed === file.name) return;
+    if (/[\\/:*?"<>|]/.test(trimmed) || trimmed === "." || trimmed === "..") {
+      showToast("文件名含非法字符", "error");
+      return;
+    }
+    const result = await window.workbench.taskFileAction("rename", file.path, { newName: trimmed });
+    if (result?.ok) {
+      showToast(`已重命名为 ${result.name || trimmed}`, "success");
+      refreshRailTray();
+    } else {
+      showToast(`重命名失败：${result?.error || "未知错误"}`, "error");
+    }
+    return;
+  }
   if (action === "delete" && !window.confirm(`确认删除 ${file.name}？此操作不可恢复。`)) return;
-  const ok = await window.workbench.taskFileAction(action, file.path);
+  const result = await window.workbench.taskFileAction(action, file.path);
+  const ok = result === true || result?.ok === true;
   if (!ok) {
-    showToast("文件操作失败（文件可能已不存在）", "error");
+    showToast(result?.error ? `文件操作失败：${result.error}` : "文件操作失败（文件可能已不存在）", "error");
   } else if (action === "delete") {
     showToast(`已删除 ${file.name}`, "success");
   }
@@ -2210,6 +2357,11 @@ function railFileRow(file, { badge = "", waiting = false } = {}) {
         title: "复制绝对路径",
         svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
         onClick: () => runTaskFileAction("copy", file)
+      }),
+      railActionButton({
+        title: "重命名",
+        svg: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>',
+        onClick: () => runTaskFileAction("rename", file)
       })
     );
     if (isImageFile(file.name)) {
@@ -3652,8 +3804,8 @@ function bindArtifactChipClicks(card, task) {
       const badge = artifacts[key];
       if (!badge?.ready) return;
       if (badge.path) {
-        const ok = await window.workbench.taskFileAction("open", badge.path);
-        if (!ok) showToast(`无法打开${chip.textContent}`, "error");
+        const result = await window.workbench.taskFileAction("open", badge.path);
+        if (!(result === true || result?.ok === true)) showToast(`无法打开${chip.textContent}`, "error");
         return;
       }
       if (task.taskFolder) {
@@ -5628,6 +5780,7 @@ const terminalHeader = document.querySelector(".terminal-header");
 function beginTerminalResize(event) {
   if (event.button !== 0 || event.target.closest("button")) return;
   event.preventDefault();
+  endAllResizes();
   const handle = event.currentTarget;
   handle.setPointerCapture(event.pointerId);
   elements.appShell.classList.add("resizing");
@@ -5635,19 +5788,27 @@ function beginTerminalResize(event) {
   const startY = event.clientY;
   const startHeight = elements.terminalPanel.getBoundingClientRect().height;
   const onMove = (moveEvent) => {
+    if (moveEvent.buttons === 0) {
+      onUp();
+      return;
+    }
     const height = Math.max(180, Math.min(window.innerHeight * 0.7, startHeight + startY - moveEvent.clientY));
     document.documentElement.style.setProperty("--terminal-height", `${height}px`);
     fitAddon.fit();
     window.workbench.resizeTerminal({ cols: terminal.cols, rows: terminal.rows });
   };
   const onUp = () => {
-    if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    if (activeResizeEnd === onUp) activeResizeEnd = null;
+    try {
+      if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+    } catch {}
     elements.appShell.classList.remove("resizing");
     setWebviewPointerEvents(true);
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", onUp);
   };
+  activeResizeEnd = onUp;
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
   document.addEventListener("pointercancel", onUp);
@@ -5700,29 +5861,37 @@ function updateAllEmbeddedPositions(throttled = false) {
 function beginRightSidebarResize(event) {
   if (event.button !== 0) return;
   event.preventDefault();
+  endAllResizes();
   elements.rightSidebarResizer.setPointerCapture(event.pointerId);
   elements.appShell.classList.add("resizing");
   setWebviewPointerEvents(false);
   const startX = event.clientX;
   const startWidth = elements.rightSidebar.getBoundingClientRect().width;
   const onMove = (moveEvent) => {
+    if (moveEvent.buttons === 0) {
+      onUp();
+      return;
+    }
     const width = Math.max(280, Math.min(window.innerWidth * 0.6, startWidth + startX - moveEvent.clientX));
     document.documentElement.style.setProperty("--right-sidebar-width", `${width}px`);
     fitWebviewZoom();
     updateAllEmbeddedPositions(true);
   };
   const onUp = () => {
-    if (elements.rightSidebarResizer.hasPointerCapture(event.pointerId)) {
-      elements.rightSidebarResizer.releasePointerCapture(event.pointerId);
-    }
+    if (activeResizeEnd === onUp) activeResizeEnd = null;
+    try {
+      if (elements.rightSidebarResizer.hasPointerCapture(event.pointerId)) {
+        elements.rightSidebarResizer.releasePointerCapture(event.pointerId);
+      }
+    } catch {}
     elements.appShell.classList.remove("resizing");
     setWebviewPointerEvents(true);
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", onUp);
-    
     updateAllEmbeddedPositions(false);
   };
+  activeResizeEnd = onUp;
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
   document.addEventListener("pointercancel", onUp);
@@ -5731,31 +5900,39 @@ function beginRightSidebarResize(event) {
 function beginBottomSidebarResize(event) {
   if (event.button !== 0) return;
   event.preventDefault();
+  endAllResizes();
   elements.bottomSidebarResizer.setPointerCapture(event.pointerId);
   elements.workspace.classList.add("resizing");
   setWebviewPointerEvents(false);
   const startY = event.clientY;
   const startHeight = elements.bottomSidebar.getBoundingClientRect().height;
-  
+
   const onMove = (moveEvent) => {
+    if (moveEvent.buttons === 0) {
+      onUp();
+      return;
+    }
     const maxHeight = Math.max(200, window.innerHeight * 0.7);
     const height = Math.max(150, Math.min(maxHeight, startHeight + startY - moveEvent.clientY));
     document.documentElement.style.setProperty("--bottom-sidebar-height", `${height}px`);
     updateAllEmbeddedPositions(true);
   };
-  
+
   const onUp = () => {
-    if (elements.bottomSidebarResizer.hasPointerCapture(event.pointerId)) {
-      elements.bottomSidebarResizer.releasePointerCapture(event.pointerId);
-    }
+    if (activeResizeEnd === onUp) activeResizeEnd = null;
+    try {
+      if (elements.bottomSidebarResizer.hasPointerCapture(event.pointerId)) {
+        elements.bottomSidebarResizer.releasePointerCapture(event.pointerId);
+      }
+    } catch {}
     elements.workspace.classList.remove("resizing");
     setWebviewPointerEvents(true);
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", onUp);
     document.removeEventListener("pointercancel", onUp);
-    
     updateAllEmbeddedPositions(false);
   };
+  activeResizeEnd = onUp;
   document.addEventListener("pointermove", onMove);
   document.addEventListener("pointerup", onUp);
   document.addEventListener("pointercancel", onUp);
@@ -5794,10 +5971,16 @@ window.addEventListener("resize", () => {
 });
 document.addEventListener("pointermove", (event) => {
   if (!pointerDrag) return;
-  
+
+  // 按键已抬起但 drag 状态残留 → 强制结束
+  if (event.buttons === 0) {
+    endPointerDrag({ commit: true, event });
+    return;
+  }
+
   if (!pointerDrag.active) {
     if (Math.hypot(event.clientX - pointerDrag.startX, event.clientY - pointerDrag.startY) < 6) return;
-    
+
     // Initialize drag parameters on first movement
     pointerDrag.active = true;
     const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
@@ -5808,14 +5991,14 @@ document.addEventListener("pointermove", (event) => {
     const itemHeights = itemRects.map(r => r.height);
     const itemGaps = 4; // flex gap in stylesheet
     const shiftY = (itemHeights[draggedIndex] || 44) + itemGaps;
-    
+
     pointerDrag.items = items;
     pointerDrag.draggedIndex = draggedIndex;
     pointerDrag.itemRects = itemRects;
     pointerDrag.shiftY = shiftY;
     pointerDrag.insertIndex = draggedIndex;
   }
-  
+
   const dragItem = pointerDrag.items[pointerDrag.draggedIndex];
   if (dragItem) {
     dragItem.classList.add("dragging");
@@ -5879,80 +6062,31 @@ document.addEventListener("pointermove", (event) => {
 });
 
 document.addEventListener("pointerup", (event) => {
-  if (!pointerDrag) return;
-  const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag.id}"]`);
-  if (dragItem?.hasPointerCapture(pointerDrag.pointerId)) dragItem.releasePointerCapture(pointerDrag.pointerId);
-  setWebviewPointerEvents(true);
-
-  try {
-    if (pointerDrag.active) {
-      const isRightSide = event.clientX > window.innerWidth * 0.7;
-      const isBottomSide = event.clientY > window.innerHeight * 0.75 && event.clientX <= window.innerWidth * 0.7;
-      
-      if (isRightSide) {
-        toggleRightSidebar(true, pointerDrag.id);
-      } else if (isBottomSide) {
-        toggleBottomSidebar(true, pointerDrag.id);
-      } else if (event.clientX > 238) {
-        // Dropped outside sidebar -> Restore split if applicable, then activate
-        if (rightSplitTabId === pointerDrag.id) {
-          toggleRightSidebar(false);
-        } else if (bottomSplitTabId === pointerDrag.id) {
-          toggleBottomSidebar(false);
-        }
-        activateTab(pointerDrag.id);
-      } else {
-        // Dropped inside sidebar -> Reorder tabs within category
-        const draggedIndex = pointerDrag.draggedIndex;
-        const insertIndex = pointerDrag.insertIndex;
-        if (typeof draggedIndex === "number" && typeof insertIndex === "number" && draggedIndex !== insertIndex) {
-          const draggedTab = tabs.find(t => t.id === pointerDrag.id);
-          if (draggedTab) {
-            const category = getTabCategory(draggedTab);
-            const indices = [];
-            tabs.forEach((t, idx) => {
-              if (getTabCategory(t) === category) {
-                indices.push(idx);
-              }
-            });
-            const categoryTabs = indices.map(idx => tabs[idx]);
-            if (draggedIndex < categoryTabs.length && insertIndex < categoryTabs.length) {
-              const [movedTab] = categoryTabs.splice(draggedIndex, 1);
-              categoryTabs.splice(insertIndex, 0, movedTab);
-              indices.forEach((originalIdx, i) => {
-                tabs[originalIdx] = categoryTabs[i];
-              });
-              saveTabs();
-              renderTabs();
-            }
-          }
-        }
-      }
-    } else {
-      activateTab(pointerDrag.id);
-    }
-  } catch (error) {
-    console.error("释放拖拽操作执行失败:", error);
-  } finally {
-    pointerDrag = null;
-    clearDragState();
-  }
+  if (pointerDrag) endPointerDrag({ commit: true, event });
+  else releaseGuestPointerCapture();
 });
 
 document.addEventListener("pointercancel", () => {
-  try {
-    const dragItem = document.querySelector(`.tab-item[data-id="${pointerDrag?.id}"]`);
-    if (dragItem && pointerDrag?.pointerId !== undefined && dragItem.hasPointerCapture(pointerDrag.pointerId)) {
-      dragItem.releasePointerCapture(pointerDrag.pointerId);
-    }
-  } catch (error) {
-    console.error("释放指针捕获失败:", error);
-  } finally {
-    setWebviewPointerEvents(true);
-    pointerDrag = null;
-    clearDragState();
+  forceEndAllPointerInteractions({ commitDrag: false });
+});
+
+window.addEventListener("blur", () => {
+  forceEndAllPointerInteractions({ commitDrag: false });
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    forceEndAllPointerInteractions({ commitDrag: false });
   }
 });
+
+document.addEventListener("lostpointercapture", () => {
+  // capture 丢失时若仍有 drag/resize 状态，强制收尾
+  if (pointerDrag || activeResizeEnd) {
+    forceEndAllPointerInteractions({ commitDrag: false });
+  }
+});
+
 // Register all local web app folders on startup
 tabs.forEach(tab => {
   if (tab.type === "local-web" && tab.localPath) {
