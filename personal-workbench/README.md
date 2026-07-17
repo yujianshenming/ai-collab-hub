@@ -7,6 +7,16 @@
 
 ## 启动
 
+### 日常使用（推荐）
+
+双击桌面 **`打开个人工作台.vbs`**。
+
+- 无常驻黑窗；工作台与启动脚本进程分离，关掉启动器不会关掉应用。
+- 在项目目录执行 `electron.exe .`，加载本应用（不要只双击 `electron.exe`）。
+- 不生成 `personal-workbench-launch.log`；桌面不再保留 `.cmd` / `.ps1` 启动器。
+
+### 开发启动
+
 ```powershell
 cd personal-workbench
 npm install
@@ -15,7 +25,7 @@ npm start
 
 > Windows 沙箱/包装器下若遇到 `node-pty` 的 `AttachConsole failed` 闪退，改用独立进程启动：
 > ```powershell
-> Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory <项目目录>
+> Start-Process .\node_modules\electron\dist\electron.exe -ArgumentList "." -WorkingDirectory <项目目录>
 > ```
 
 ## 功能总览

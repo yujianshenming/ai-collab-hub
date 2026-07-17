@@ -2,7 +2,7 @@
 
 > 这是 `personal-workbench` 的当前事实主文档。它描述产品边界、功能、架构、数据、测试、版本状态和维护规则。规格书、审查报告与交接文档可以补充历史背景，但与本手册冲突时，必须先核对代码和测试，再更新本手册。
 
-- 最后更新：2026-07-16
+- 最后更新：2026-07-17
 - 项目类型：Windows Electron 桌面应用
 - 代码入口：`main.js`、`preload.js`、`renderer.js`
 - 当前工作分支：`codex/personal-workbench-redesign`
@@ -20,7 +20,18 @@
 5. 与当前任务直接相关的代码和测试；不要为了“熟悉项目”一次性阅读整个 `renderer.js` 或 `main.js`。
 6. 根目录的 `personal-workbench-roadmap.md`、`personal-workbench-automation-plan.md` 和 `decisions/`：只在需要路线图或历史决策时阅读。
 
-首次运行：
+### 日常启动（推荐）
+
+Windows 用户日常打开工作台，使用桌面 **`打开个人工作台.vbs`**（本机路径通常为 `C:\Users\<用户名>\Desktop\打开个人工作台.vbs`）：
+
+- 无常驻黑窗；启动脚本结束后工作台进程独立运行，关闭启动器不会关掉应用。
+- 会先进入项目目录，再执行 `electron.exe .`，确保加载 `main.js`（不要只双击 `electron.exe`，否则只会看到 Electron 默认欢迎页）。
+- 不写 `personal-workbench-launch.log`；不依赖桌面 `.cmd` / `.ps1` 启动器（已弃用，只保留 vbs）。
+- 若上次异常退出导致“已在运行却打不开”，脚本会尝试清理 `%APPDATA%\personal-workbench\Singleton*` 锁文件。
+
+脚本不在 Git 仓库内（属于本机桌面入口）；修改启动方式时必须同步本节与 `README.md`。
+
+### 开发启动
 
 ```powershell
 cd personal-workbench
@@ -31,7 +42,7 @@ npm start
 Windows 下如果通过包装器启动导致 `node-pty` 报 `AttachConsole failed`，使用独立 Electron 进程：
 
 ```powershell
-Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory (Get-Location)
+Start-Process .\node_modules\electron\dist\electron.exe -ArgumentList "." -WorkingDirectory (Get-Location)
 ```
 
 ## 2. 项目定位与边界
@@ -269,7 +280,7 @@ npm run dist
 - 已登录的能力训练平台上传、评估和报告下载。
 - 报告下载完成后：前台 toast；窗口在后台时 Windows 系统通知（依赖通知权限与专注助手设置）。
 - 企业微信文档对完整周报 HTML、表格 HTML/TSV 剪贴板的实际粘贴效果；目标编辑器可能选择新建表格或按 TSV 填充已有表格，这是第三方粘贴策略，应用无法强制改变。
-- Windows 桌面启动脚本、`node-pty` 和不同代理/登录态下的启动。
+- 桌面 `打开个人工作台.vbs` 一键启动（无黑窗、独立进程）；开发态 `npm start` / 独立 `electron.exe .`；`node-pty` 与不同代理/登录态下的启动。
 
 任何测试失败都应先保存错误日志和复现步骤，再修改代码；不要为了让测试变绿而删除测试或放宽安全边界。
 
@@ -331,6 +342,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-17 | docs | 日常启动改为桌面 `打开个人工作台.vbs`：独立进程、无黑窗、无 launch.log；弃用桌面 cmd/ps1；手册与 README 同步 | 本机桌面 `打开个人工作台.vbs`、`docs/PROJECT_HANDBOOK.md`、`README.md` | 双击 vbs 打开工作台；关闭启动器不影响应用 |
 | 2026-07-16 | fix | 周报表格删除入口可见性：操作列 sticky、删除按钮文案与样式增强；允许表格删空 | `renderer.js`、`index.html`、`style.css`、`tests/weekly-report.e2e.js` | `npm test`；`node tests/weekly-report.e2e.js` |
 | 2026-07-16 | feat | 任务卡产物徽章（对话/报告/卡片）、文件夹回扫缓存、报告完成后台系统通知；归档任务不回扫 | `renderer.js`、`main.js`、`style.css`、`tests/task-artifact-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
 | 2026-07-16 | feat | 任务中心搜索/状态 chips/学校筛选与归档：默认隐藏 archived，写回待做任务排除归档；统计卡仍用全局计数 | `renderer.js`、`index.html`、`style.css`、`tests/task-filter-helpers.test.js`、`package.json`、`docs/FEATURE_PLAN_THREE.md` | `npm run check`；`npm test` |
