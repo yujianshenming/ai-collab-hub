@@ -2,12 +2,12 @@
 
 > 这是 `personal-workbench` 的当前事实主文档。它描述产品边界、功能、架构、数据、测试、版本状态和维护规则。规格书、审查报告与交接文档可以补充历史背景，但与本手册冲突时，必须先核对代码和测试，再更新本手册。
 
-- 最后更新：2026-07-17
+- 最后更新：2026-07-24
 - 项目类型：Windows Electron 桌面应用
 - 代码入口：`main.js`、`preload.js`、`renderer.js`
 - 当前工作分支：`codex/personal-workbench-redesign`
-- 上一稳定基线：`personal-workbench-stable-2026-07-15`
-- 本次检查点：`personal-workbench-stable-2026-07-17`
+- 上一稳定基线：`personal-workbench-stable-2026-07-16`
+- 本次检查点：2026-07-24 未提交工作区（当前分支 `codex/personal-workbench-redesign`）
 
 ## 1. 新成员 / 新模型先读什么
 
@@ -84,6 +84,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 平台字段试注入 | 预研 / 辅助能力 | `platformFieldMap`、`platform:test-inject` |
 | 主题 | 已实现 | `sky`、`morning`、`night` |
 | 周报中心首版 | 已实现 | `__weeklyreport__`、历史周次、模板姓名/标题、编辑器、预览、HTML/Markdown/DOCX 导出和表格复制 |
+| Token 统计 | 已接入协议，构建 sidecar 后可用 | `__tokenbox__`、TokenBox Rust sidecar、Codex/Claude Code 日志扫描、模型/日期筛选和账本汇总 |
 | 直接上传企业微信/腾讯文档 | 未实现 | 当前使用 HTML/纯文本剪贴板或 DOCX 文件导出 |
 
 ### 周报中心首版行为
@@ -113,6 +114,9 @@ flowchart LR
   BUS[任务文件总线 temp/tasks / Downloads]
   PTY[node-pty / 桌面进程]
   HTTP[本地 HTTP 服务 :38924]
+  BRIDGE[tokenbox-bridge.exe / JSONL stdio]
+  TOKENDB[TokenBox SQLite 账本]
+  LOGS[Codex / Claude Code JSONL 日志]
 
   UI -->|受限 API| PRELOAD
   PRELOAD -->|IPC| MAIN
@@ -122,6 +126,9 @@ flowchart LR
   MAIN --> BUS
   MAIN --> PTY
   MAIN --> HTTP
+  MAIN -->|白名单 IPC| BRIDGE
+  BRIDGE --> TOKENDB
+  BRIDGE --> LOGS
 ```
 
 ### 进程职责
@@ -131,6 +138,7 @@ flowchart LR
 - 创建主窗口，配置 `contextIsolation: true`、`nodeIntegration: false` 和 `webviewTag`。
 - 管理 Electron session、下载、文件系统、任务目录、本地 HTTP 服务、终端 PTY、CLI 和桌面应用进程。
 - 负责所有需要系统权限的操作：读写文件、打开目录、系统文件选择器、剪贴板、导出文件。
+- 启动并管理 TokenBox sidecar；仅允许固定的 `refresh_dashboard` 请求经过 `tokenbox:refresh` IPC，不把任意命令、路径或方法暴露给 renderer。
 - 通过 IPC 验证任务路径、扩展能力和本地服务 Token，不把 Node.js 直接暴露给网页。
 
 #### `preload.js`：主窗口的最小桥接层
@@ -147,9 +155,9 @@ flowchart LR
 
 #### `renderer.js`：界面状态与业务编排
 
-- 管理标签、内置任务中心、内置周报中心、任务状态、任务舱、卡片复制状态和 UI 事件。
+- 管理标签、内置任务中心、内置周报中心、Token 统计视图、任务状态、任务舱、卡片复制状态和 UI 事件。
 - 任务数据和周报数据都通过 `window.workbench` 读写；renderer 不直接访问文件系统。
-- `TASK_CENTER_ID` 和 `WEEKLY_REPORT_ID` 是内置视图 ID，不能当成普通网页标签创建 webview。
+- `TASK_CENTER_ID`、`WEEKLY_REPORT_ID` 和 `TOKENBOX_ID` 是内置视图 ID，不能当成普通网页标签创建 webview。
 
 ## 5. 关键数据与持久化
 
@@ -159,6 +167,8 @@ flowchart LR
 |---|---|---|
 | `personal-workbench/*.js`、`index.html`、`style.css` | 应用源码 | 应提交 |
 | `personal-workbench/tests/` | 静态和 Electron 回归测试 | 应提交 |
+| `personal-workbench/sidecars/` | TokenBox bridge 本地 staging 目录 | 只提交说明文件；`*.exe` 由构建生成并忽略 |
+| `personal-workbench/wb-audit/sample-cards.md` | `cards-bay.e2e.js` 使用的脱敏卡片夹具 | 应提交；不是运行时个人数据 |
 | `personal-workbench/docs/PROJECT_HANDBOOK.md` | 当前项目主手册 | 每次功能/缺陷变化维护 |
 | `personal-workbench/regression-checklist.md` | 回归标准和风险登记 | 修复/发现缺陷时维护 |
 | `tasks/weekly_tasks.json` | 用户本地任务数据 | 默认不提交，不覆盖用户改动 |
@@ -247,6 +257,14 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 
 默认状态映射：`pending` → 未开始，`running/evaluating` → 进行中，`paused` → 已暂停，`unsubmitted` → 已完成、未提交，`completed` → 已完成。用户在周报中手动改状态不会改变任务状态。
 
+### 5.5 Token 统计与 TokenBox 账本
+
+- 工作台不解析原始日志，也不在 renderer 内复制计费规则；`main.js` 启动 `tokenbox-bridge.exe`，通过 JSONL stdin/stdout 调用 TokenBox 的 Rust 核心。
+- 当前首个方法是 `refresh_dashboard`：sidecar 先增量扫描 Codex / Claude Code JSONL，再从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本，返回扫描摘要与 `DashboardSnapshot`。
+- renderer 只提交 provider、from、to 三个筛选字段，展示总 Token、官方估算成本、请求次数、模型用量和每日用量；未识别模型和扫描警告保留显示。
+- sidecar 不是 HTTP 服务，不接收任意文件路径、shell 命令或原始提示词；工作台的 preload 只暴露 `getTokenboxStatus` 与 `refreshTokenbox`。
+- 开发态可从 `../../tokenbox/src-tauri/target/release/tokenbox-bridge.exe` 发现 sidecar；打包态使用 `resources/sidecars/tokenbox-bridge.exe`。运行 `npm run build:bridge:stage` 后再 `npm run dist` 才会把统计能力放进安装包。
+
 ## 6. 任务与文件数据流
 
 1. 用户在任务中心创建或导入任务。
@@ -267,6 +285,7 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 - 本地 HTTP 服务默认监听 `38924`，敏感路由需要 session Token。
 - `local-apps` 静态服务和 `temp/tasks` IPC 必须进行绝对路径边界检查，不能只用字符串前缀比较。
 - 扩展 API 按扩展 ID、manifest 权限和 host permission 门控；修复扩展问题时不能把权限扩大到 `<all_urls>`。
+- TokenBox sidecar 只从固定候选路径启动，并且要求文件扩展名为 `.exe`；renderer 不能指定 sidecar 路径、方法名或启动参数。sidecar 的 stdout 只承载 JSONL 协议，stderr 只作为诊断信息。
 - 所有用户路径、Cookie、Token、扩展目录和调试日志都不应写进 Markdown、测试夹具或 Git 提交。
 
 安全相关代码变更必须至少运行静态安全回归、HTTP 安全 E2E，并记录结果；不能只凭“页面看起来正常”结案。
@@ -282,9 +301,12 @@ npm run test:e2e
 npm run test:all
 npm run pack
 npm run dist
+npm run build:bridge:stage  # 需要本机 Rust Windows linker
 ```
 
 当前 E2E 覆盖：启动冒烟、卡片舱、P1 缺陷、HTTP 安全、主题和 webview 生命周期、下载归档、任务重启恢复、任务状态/子任务、周报生成与持久化。
+
+2026-07-24 洁癖收尾核对结果：`npm run check` 通过；`npm test` 通过（69/69）；`npm run pack` 通过，但因当前机器没有 Rust MSVC `link.exe`，构建产物不包含 `tokenbox-bridge.exe`。最近一次完整 E2E 尝试中，启动冒烟通过，随后 `cards-bay.e2e.js` 长时间无输出，已停止该测试进程，因此不能把 `npm run test:e2e` 或 `npm run test:all` 标记为全量通过。
 
 人工验收仍然重要的场景：
 
@@ -292,6 +314,7 @@ npm run dist
 - 已登录的能力训练平台上传、评估和报告下载。
 - 报告下载完成后：前台 toast；窗口在后台时 Windows 系统通知（依赖通知权限与专注助手设置）。
 - 企业微信文档对完整周报 HTML、表格 HTML/TSV 剪贴板的实际粘贴效果；目标编辑器可能选择新建表格或按 TSV 填充已有表格，这是第三方粘贴策略，应用无法强制改变。
+- TokenBox 真实 sidecar 构建、首次扫描本机 Codex / Claude Code 日志、筛选结果与重启后的账本复用需要在本机手工验收；自动化契约测试不读取用户真实日志。
 - 桌面 `打开个人工作台.vbs` 一键启动（无黑窗、独立进程）；开发态 `npm start` / 独立 `electron.exe .`；`node-pty` 与不同代理/登录态下的启动。
 
 任何测试失败都应先保存错误日志和复现步骤，再修改代码；不要为了让测试变绿而删除测试或放宽安全边界。
@@ -335,6 +358,7 @@ git diff --stat
 ### 已知风险
 
 - `main.js` 和 `renderer.js` 仍是较大的编排文件；后续重构必须保持 IPC 契约和 E2E 行为不变。
+- Token 统计依赖外部 TokenBox Rust sidecar；当前仓库不提交二进制，若缺少 MSVC linker 或未执行 staging，工作台会明确显示“未找到 sidecar”，不会退化为猜测或重复解析。
 - 扩展兼容层依赖第三方扩展版本、登录态和平台页面结构，自动化测试不能覆盖所有真实页面变化。
 - 平台字段注入是辅助能力，selector 映射失效时应提供明确反馈，而不是静默写入。
 - 周报目前没有企业微信/腾讯文档 API 直连，也没有多人协作冲突合并；它是本地快照 + 剪贴板工作流。
@@ -343,6 +367,7 @@ git diff --stat
 - 任务卡产物回扫依赖 `listTaskFiles` 与内存 cache；任务很多时靠 debounce + 仅未归档任务回扫控制 IPC 频率。
 - 图片裁切覆盖原图不可撤销；`webp` 会变成 `.png`，需在真实样本上确认平台是否仍接受。
 - 完整 E2E 会启动多个 Electron 实例，开发时应使用测试隔离环境，不能让夹具污染真实用户数据。
+- 当前完整 E2E 尚未闭环：启动冒烟已通过，但 `cards-bay.e2e.js` 测试进程曾无输出挂起；需要单独修复测试 harness 或收集其阻塞日志后，才能重新声明 `npm run test:all` 全量通过。
 
 ### 推荐顺序
 
@@ -355,6 +380,8 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-24 | docs/chore | 完成洁癖收尾：同步当前稳定基线与工作区状态，清理已关闭回归登记，标记历史计划与验收清单，明确 E2E 挂起和 sidecar linker 阻塞；确认运行时个人数据、E2E 夹具与本地 agent 配置边界 | `README.md`、`.gitignore`、`docs/PROJECT_HANDBOOK.md`、`docs/FEATURE_PLAN_THREE.md`、`docs/ACCEPTANCE_CHECKLIST_ABC.md`、`regression-checklist.md` | `npm run check`；`npm test`（69/69）；`npm run pack`；只读 Git/残留盘点 |
+| 2026-07-22 | feat/refactor | 接入长期 Token 统计方案：TokenBox 增加 headless JSONL sidecar，工作台通过白名单 IPC 展示模型/日期筛选、账本汇总和扫描警告；补充 sidecar staging 与契约测试 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css`、`package.json`、`scripts/stage-tokenbox-bridge.js`、`tests/tokenbox-integration-contract.test.js`、`../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs` | `npm test`（69 项）；TokenBox `npm run build`；`cargo fmt --check`；真实 bridge 构建待本机 linker |
 | 2026-07-17 | fix | 删除任务确认弹窗加宽并补内边距/换行，避免说明文字被裁切 | `index.html`、`style.css`、`docs/PROJECT_HANDBOOK.md` | 打开删除确认，长任务名说明完整可见 |
 | 2026-07-17 | feat | 任务卡三区拖拽改状态、完成时限 dueDate（默认本周日）、跨周清理已完成任务（completedAt 归属周） | `renderer.js`、`index.html`、`style.css`、`tests/task-lane-helpers.test.js`、`package.json`、`docs/PROJECT_HANDBOOK.md` | `npm test`；人工：跨区拖拽、时限排序、上周 completed 加载后消失 |
 | 2026-07-17 | docs | 同步手册检查点与数据流：托盘重命名、裁切覆盖原图、拖拽收尾；检查点改为 2026-07-17 | `docs/PROJECT_HANDBOOK.md` | 手册与 README/代码行为核对 |
@@ -380,3 +407,4 @@ git diff --stat
 - 交接记录：`handoff/`
 - 架构决策：`decisions/architecture-decisions.md`
 - 协作协议：`PROTOCOL.md`
+- TokenBox bridge 协议：`../../../tokenbox/docs/tokenbox-bridge-protocol.md`

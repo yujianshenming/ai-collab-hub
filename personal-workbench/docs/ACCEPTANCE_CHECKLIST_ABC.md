@@ -3,7 +3,7 @@
 > 对应提交：`167604d`（A）、`ca6f85d`（B）、`b283c57`（C）  
 > 分支：`codex/personal-workbench-redesign`  
 > 日期：2026-07-16  
-> 事实主文档仍以 [`PROJECT_HANDBOOK.md`](./PROJECT_HANDBOOK.md) 为准。
+> 文档状态：历史验收清单，用于复验 A/B/C；当前事实主文档仍以 [`PROJECT_HANDBOOK.md`](./PROJECT_HANDBOOK.md) 为准。2026-07-24 已同步当前测试与风险状态，清单中的 `[ ]` 是执行时检查项，不代表功能尚未实现。
 
 ## 0. 谁做什么
 

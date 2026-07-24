@@ -32,6 +32,10 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M7 7h10M7 11h10M7 15h6"/></svg>
             周报中心
           </button>
+          <button id="nav-tokenbox" class="nav-item" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/><path d="M18 6h2v2"/></svg>
+            Token 统计
+          </button>
         </div>
 
         <div class="sidebar-label">
@@ -301,6 +305,92 @@
               </div>
               <article id="report-preview" class="weekly-report-document"></article>
             </aside>
+          </div>
+        </section>
+
+        <section id="tokenbox-view" class="tokenbox-view" aria-label="Token 统计">
+          <div class="tokenbox-page-head">
+            <div>
+              <span class="eyebrow">TOKEN USAGE</span>
+              <h1>Token 统计</h1>
+              <p>读取本机 Codex 与 Claude Code 日志，按 TokenBox 的统一账本汇总。</p>
+            </div>
+            <div class="tokenbox-page-actions">
+              <select id="tokenbox-provider" aria-label="Token 来源">
+                <option value="all">全部来源</option>
+                <option value="codex">Codex</option>
+                <option value="claude">Claude Code</option>
+              </select>
+              <select id="tokenbox-range" aria-label="Token 日期范围">
+                <option value="1">今天</option>
+                <option value="7" selected>近 7 天</option>
+                <option value="30">近 30 天</option>
+                <option value="all">全部时间</option>
+              </select>
+              <button id="tokenbox-refresh" class="btn btn-teal" type="button">刷新统计</button>
+            </div>
+          </div>
+
+          <div id="tokenbox-status" class="tokenbox-status" role="status">尚未加载</div>
+
+          <div class="tokenbox-metrics">
+            <article class="tokenbox-metric-card">
+              <span>总 Token</span>
+              <strong id="tokenbox-total-tokens">—</strong>
+              <small>输入、输出与缓存 Token</small>
+            </article>
+            <article class="tokenbox-metric-card">
+              <span>官方估算成本</span>
+              <strong id="tokenbox-official-cost">—</strong>
+              <small>按 TokenBox 价格目录估算</small>
+            </article>
+            <article class="tokenbox-metric-card">
+              <span>请求次数</span>
+              <strong id="tokenbox-requests">—</strong>
+              <small>已纳入账本的请求</small>
+            </article>
+            <article class="tokenbox-metric-card">
+              <span>模型数量</span>
+              <strong id="tokenbox-model-count">—</strong>
+              <small>当前筛选范围内</small>
+            </article>
+          </div>
+
+          <div id="tokenbox-warning-list" class="tokenbox-warning-list" aria-live="polite"></div>
+
+          <div class="tokenbox-grid">
+            <section class="tokenbox-panel">
+              <div class="tokenbox-panel-heading">
+                <div>
+                  <span class="eyebrow">BY MODEL</span>
+                  <h2>模型用量</h2>
+                </div>
+              </div>
+              <div class="tokenbox-table-wrap">
+                <table class="tokenbox-table">
+                  <thead>
+                    <tr><th>模型</th><th>来源</th><th>请求</th><th>Token</th><th>成本</th></tr>
+                  </thead>
+                  <tbody id="tokenbox-models-body"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="tokenbox-panel">
+              <div class="tokenbox-panel-heading">
+                <div>
+                  <span class="eyebrow">BY DAY</span>
+                  <h2>每日用量</h2>
+                </div>
+              </div>
+              <div class="tokenbox-table-wrap">
+                <table class="tokenbox-table">
+                  <thead>
+                    <tr><th>日期</th><th>请求</th><th>输入</th><th>输出</th><th>总 Token</th></tr>
+                  </thead>
+                  <tbody id="tokenbox-daily-body"></tbody>
+                </table>
+              </div>
+            </section>
           </div>
         </section>
 

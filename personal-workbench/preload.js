@@ -46,6 +46,8 @@ contextBridge.exposeInMainWorld("workbench", {
   writeWeeklyReports: (reports) => ipcRenderer.invoke("reports:write-weekly", reports),
   copyWeeklyReport: (payload) => ipcRenderer.invoke("reports:copy-weekly", payload),
   exportWeeklyReport: (payload) => ipcRenderer.invoke("reports:export-weekly", payload),
+  getTokenboxStatus: () => ipcRenderer.invoke("tokenbox:status"),
+  refreshTokenbox: (filter) => ipcRenderer.invoke("tokenbox:refresh", { filter }),
   onDownloadCompleted: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("download-completed", listener);
@@ -107,4 +109,3 @@ contextBridge.exposeInMainWorld("workbench", {
   getSessionToken: () => ipcRenderer.invoke("workbench:get-session-token"),
   cleanupTabResources: (tabId) => ipcRenderer.invoke("tab:cleanup-resources", tabId)
 });
-

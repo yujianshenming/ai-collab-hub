@@ -43,6 +43,17 @@ const inFlightDownloadPaths = new Set();
 const extensionAccessTokens = new Map();
 const extensionCapabilities = new Map();
 const loadedExtensionTokens = new Map();
+const tokenboxBridge = {
+  child: null,
+  path: "",
+  buffer: "",
+  nextId: 1,
+  pending: new Map(),
+  lastError: "",
+  stopping: false
+};
+const TOKENBOX_BRIDGE_REQUEST_TIMEOUT_MS = 120000;
+const TOKENBOX_BRIDGE_MAX_LINE_BYTES = 8 * 1024 * 1024;
 
 // SSE & state sharing structures
 const sessionToken = crypto.randomBytes(16).toString("hex");
@@ -293,6 +304,181 @@ function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
+}
+
+function tokenboxBridgeCandidates() {
+  return [...new Set([
+    process.env.TOKENBOX_BRIDGE_PATH,
+    path.join(app.isPackaged ? process.resourcesPath : __dirname, "sidecars", "tokenbox-bridge.exe"),
+    path.resolve(__dirname, "..", "..", "tokenbox", "src-tauri", "target", "release", "tokenbox-bridge.exe"),
+    path.resolve(__dirname, "..", "..", "tokenbox", "src-tauri", "target", "x86_64-pc-windows-gnu", "release", "tokenbox-bridge.exe")
+  ].filter(Boolean))];
+}
+
+function resolveTokenboxBridgePath() {
+  for (const candidate of tokenboxBridgeCandidates()) {
+    try {
+      if (path.extname(candidate).toLowerCase() === ".exe" && fs.statSync(candidate).isFile()) {
+        return path.resolve(candidate);
+      }
+    } catch {}
+  }
+  return "";
+}
+
+function rejectTokenboxBridgePending(error) {
+  for (const [id, request] of tokenboxBridge.pending) {
+    clearTimeout(request.timer);
+    request.reject(error);
+    tokenboxBridge.pending.delete(id);
+  }
+}
+
+function closeTokenboxBridge() {
+  const child = tokenboxBridge.child;
+  tokenboxBridge.stopping = true;
+  tokenboxBridge.child = null;
+  tokenboxBridge.buffer = "";
+  if (!child) return;
+  rejectTokenboxBridgePending(new Error("TokenBox bridge stopped"));
+  try {
+    child.kill();
+  } catch {}
+}
+
+function handleTokenboxBridgeOutput(chunk) {
+  tokenboxBridge.buffer += String(chunk);
+  if (Buffer.byteLength(tokenboxBridge.buffer, "utf8") > TOKENBOX_BRIDGE_MAX_LINE_BYTES * 2) {
+    tokenboxBridge.lastError = "TokenBox bridge response buffer exceeded the safety limit";
+    closeTokenboxBridge();
+    return;
+  }
+  let newlineIndex;
+  while ((newlineIndex = tokenboxBridge.buffer.indexOf("\n")) >= 0) {
+    const line = tokenboxBridge.buffer.slice(0, newlineIndex).trim();
+    tokenboxBridge.buffer = tokenboxBridge.buffer.slice(newlineIndex + 1);
+    if (!line) continue;
+    if (Buffer.byteLength(line, "utf8") > TOKENBOX_BRIDGE_MAX_LINE_BYTES) {
+      tokenboxBridge.lastError = "TokenBox bridge response line exceeded the safety limit";
+      closeTokenboxBridge();
+      return;
+    }
+    let response;
+    try {
+      response = JSON.parse(line);
+    } catch (error) {
+      tokenboxBridge.lastError = `TokenBox bridge returned invalid JSON: ${error.message}`;
+      continue;
+    }
+    const request = tokenboxBridge.pending.get(response?.id);
+    if (!request) continue;
+    tokenboxBridge.pending.delete(response.id);
+    clearTimeout(request.timer);
+    if (response.ok) request.resolve(response.result);
+    else request.reject(new Error(response.error || "TokenBox bridge request failed"));
+  }
+}
+
+function startTokenboxBridge() {
+  if (tokenboxBridge.child && !tokenboxBridge.child.killed) return tokenboxBridge.child;
+  const bridgePath = resolveTokenboxBridgePath();
+  if (!bridgePath) {
+    throw new Error("找不到 tokenbox-bridge.exe，请先构建 TokenBox sidecar 或设置 TOKENBOX_BRIDGE_PATH");
+  }
+  const child = spawn(bridgePath, [], {
+    cwd: path.dirname(bridgePath),
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
+  });
+  tokenboxBridge.child = child;
+  tokenboxBridge.path = bridgePath;
+  tokenboxBridge.buffer = "";
+  tokenboxBridge.lastError = "";
+  tokenboxBridge.stopping = false;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", handleTokenboxBridgeOutput);
+  child.stderr.on("data", (chunk) => {
+    tokenboxBridge.lastError = String(chunk).trim().slice(-2000);
+  });
+  child.on("error", (error) => {
+    tokenboxBridge.lastError = error.message;
+    if (tokenboxBridge.child === child) {
+      tokenboxBridge.child = null;
+      rejectTokenboxBridgePending(error);
+    }
+  });
+  child.on("exit", (code, signal) => {
+    if (tokenboxBridge.child !== child) return;
+    tokenboxBridge.child = null;
+    if (!tokenboxBridge.stopping && code !== 0) {
+      tokenboxBridge.lastError = `TokenBox bridge exited unexpectedly (${code ?? signal ?? "unknown"})`;
+    }
+    rejectTokenboxBridgePending(new Error(tokenboxBridge.lastError || "TokenBox bridge exited"));
+  });
+  return child;
+}
+
+function requestTokenboxBridge(method, params = {}) {
+  const child = startTokenboxBridge();
+  const id = tokenboxBridge.nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      tokenboxBridge.pending.delete(id);
+      reject(new Error(`TokenBox bridge request timed out: ${method}`));
+    }, TOKENBOX_BRIDGE_REQUEST_TIMEOUT_MS);
+    tokenboxBridge.pending.set(id, { resolve, reject, timer });
+    try {
+      child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
+        if (!error) return;
+        const request = tokenboxBridge.pending.get(id);
+        if (!request) return;
+        clearTimeout(request.timer);
+        tokenboxBridge.pending.delete(id);
+        request.reject(error);
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      tokenboxBridge.pending.delete(id);
+      reject(error);
+    }
+  });
+}
+
+function tokenboxBridgeStatus() {
+  const bridgePath = resolveTokenboxBridgePath();
+  return {
+    available: Boolean(bridgePath),
+    running: Boolean(tokenboxBridge.child && !tokenboxBridge.child.killed),
+    path: bridgePath || tokenboxBridge.path,
+    error: tokenboxBridge.lastError
+  };
+}
+
+function normalizeTokenboxFilter(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("TokenBox filter must be an object");
+  }
+  const normalized = {};
+  const provider = String(value.provider || "").trim().toLowerCase();
+  if (provider && !["all", "codex", "claude", "claude_code"].includes(provider)) {
+    throw new Error("TokenBox provider is not supported");
+  }
+  if (provider && provider !== "all") normalized.provider = provider;
+  for (const field of ["from", "to"]) {
+    if (value[field] === undefined || value[field] === null || value[field] === "") continue;
+    const date = String(value[field]).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new Error(`TokenBox ${field} must use YYYY-MM-DD`);
+    }
+    const [year, month, day] = date.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    if (year < 1 || parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+      throw new Error(`TokenBox ${field} is not a valid date`);
+    }
+    normalized[field] = date;
+  }
+  return normalized;
 }
 
 function setAppMenu() {
@@ -1967,6 +2153,17 @@ function registerIpc() {
   ipcMain.handle("tasks:read-weekly", () => readWeeklyTasks());
   ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
 
+  ipcMain.handle("tokenbox:status", () => tokenboxBridgeStatus());
+  ipcMain.handle("tokenbox:refresh", async (_event, payload = {}) => {
+    try {
+      const filter = normalizeTokenboxFilter(payload && typeof payload === "object" ? payload.filter : {});
+      const result = await requestTokenboxBridge("refresh_dashboard", { filter });
+      return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+
   ipcMain.handle("reports:read-weekly", () => readWeeklyReports());
   ipcMain.handle("reports:write-weekly", (_event, reports) => writeWeeklyReports(reports));
   ipcMain.handle("reports:copy-weekly", (_event, payload = {}) => {
@@ -2334,6 +2531,7 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
+  closeTokenboxBridge();
   stopTerminal();
   stopLocalServer();
   for (const appInfo of runningDesktopApps.values()) {

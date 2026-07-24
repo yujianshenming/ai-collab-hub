@@ -3,7 +3,7 @@
 一个面向 Windows 的 Electron 桌面工作台。把全部工作入口集合进一个应用——常驻浏览器页面、企业微信、Codex / Cursor、终端、文件夹与文档，并用「任务驱动 + 文件总线 + 卡片舱」打通能力训练搭建的端到端流程。
 
 > **定位**：打开工作台 = 完成全部工作，不再开额外的应用。
-> 当前状态：V3.4 稳定能力 + 周报中心首版；当前实现、架构、数据边界和维护规则以 [`docs/PROJECT_HANDBOOK.md`](docs/PROJECT_HANDBOOK.md) 为准。
+> 当前状态：V3.4 稳定能力 + 周报中心首版 + Token 统计首版接入；当前实现、架构、数据边界和维护规则以 [`docs/PROJECT_HANDBOOK.md`](docs/PROJECT_HANDBOOK.md) 为准。
 
 ## 启动
 
@@ -72,6 +72,11 @@ npm start
 - 支持完整周报复制纯文本 + HTML 到企业微信文档；另可单独复制表格（HTML + TSV），便于粘贴到已有表格的首个单元格；支持 HTML / Markdown / DOCX 导出。
 - 周报保存于 Electron `userData/weekly-reports.json`，不写入版本库中的任务数据。
 
+### Token 统计（长期方案首版）
+- 工作台内置 Token 统计视图，按 provider 和日期范围展示总 Token、官方估算成本、请求次数、模型用量与每日用量。
+- 统计由独立 TokenBox Rust sidecar 扫描本机 Codex / Claude Code JSONL，并从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本；工作台不复制解析和计费逻辑。
+- 开发态先构建并 staging sidecar：`npm run build:bridge:stage`；再运行 `npm start` 或 `npm run dist`。未构建 sidecar 时页面会明确提示，不会伪造统计数据。
+
 ## 安全说明
 
 - 使用 `contextIsolation` 与受限的 preload IPC，不向网页暴露 Node.js；网页弹出的新窗口交给系统默认浏览器打开。
@@ -83,6 +88,6 @@ npm start
 
 - **项目主手册（新成员 / 新模型首先阅读）**：`./docs/PROJECT_HANDBOOK.md`
 - 版本路线图：`../personal-workbench-roadmap.md`
-- 回归测试清单（含 16 个已知缺陷登记）：`./regression-checklist.md`
+- 回归测试清单（含 7 个当前待处理风险登记）：`./regression-checklist.md`
 - 各版本规格书：`../personal-workbench-*-spec.md`
 - 项目全景介绍页：`../personal-workbench-overview.html`

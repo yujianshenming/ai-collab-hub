@@ -1,6 +1,7 @@
 # 个人工作台 回归测试清单
 
 > 测试工程师维护 · 2026-06-10 建立
+> 最近同步：2026-07-24；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
 > 适用范围：每次交付（commit/Phase）合入后必须执行。静态部分可在不启动应用的情况下完成；动态部分需启动应用。
 > 启动方式（避开 AttachConsole 崩溃）：不要用 `npm start` 包装器在沙箱终端里启动；用
 > `Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory <项目目录>`
@@ -45,7 +46,7 @@
 ## 3. 扩展
 - [ ] 扩展设置弹窗可打开、可添加/删除行、保存后结果卡片显示成功/失败。
 - [ ] 有 popup 的扩展出现在顶栏；点击在当前标签内打开扩展面板，再点关闭。
-- [ ] **仅在 web/local-web 标签上点扩展按钮**（已知缺陷：非 web 标签激活时点扩展按钮会抛 TypeError，修复前注意）。
+- [ ] 扩展按钮在 web/local-web 标签上可用；非 web 标签点击时应显示“不支持扩展面板”提示且不抛异常。
 - [ ] 「刷新并重新加载扩展」按钮可用。
 - [ ] preload-popup 的 chrome.tabs/chrome.cookies mock 不回归（扩展内能拿到活动标签与 cookie）。
 
@@ -59,7 +60,7 @@
 - [ ] 结束任务：临时文件夹被清理，任务舱隐藏。
 - [ ] 重新打开已完成任务（04ebbb3）：状态回退待处理，taskFolder/chatLogPath/reportPath 保留；再次执行复用同名文件夹，产物不丢失。
 - [ ] 任务舱收起把手进度环、状态栏芯片文案 `n/5` 与当前步骤一致。
-- [ ] 侧边栏脉冲点：评估上传亮评估标签、Hermes 阶段亮 Hermes 标签（注意：当前 `findTabByUrlPart` 对无 url 的标签会抛错，修复前此项与非 web 标签并存时会崩）。
+- [ ] 侧边栏脉冲点：评估上传亮评估标签、Hermes 阶段亮 Hermes 标签；`findTabByUrlPart` 对无 `url` 的标签不抛异常。
 
 ## 5. 文件总线（V3.1）
 - [ ] 活动任务期间任意标签下载 → 文件落任务文件夹（非系统下载目录），toast「已捕获到任务文件夹」；重名追加 ` (2)`。
@@ -68,7 +69,7 @@
 - [ ] 托盘五操作可用：打开 / 定位 / 复制路径 / 裁切（仅图片）/ 删除（带确认），全部不能越出 temp/tasks。
 - [ ] 活动任务期间任意网页点上传 → 弹工作台文件浮层；多选注入成功；「改用系统选择器」fallback 正常；ESC 取消等同用户取消。**（待确认项：`select-file-dialog` 事件在 stock Electron 是否存在，需真机点上传验证）**
 - [ ] 评估页流水线自动注入行为不变（uploadQueue 优先，不弹浮层）。
-- [ ] 图片裁切：默认底部 100px，生成 `_cropped` 新文件，原图保留；偏好（方向/像素）修改后生效；webp 输出为 png。
+- [ ] 图片裁切：默认底部 100px，覆盖原图；偏好（方向/像素）修改后生效；webp 输出为同主名 png。
 
 ## 6. 安全四项（每次交付必测，不得回退）
 - [ ] **composedPath 外点关闭**：任务卡「⋯」菜单内点删除，菜单行为正常、面板不误关（task_system_requirements §1）。
@@ -79,23 +80,14 @@
 
 ---
 
-## 附：已知问题登记（修复后移除）
+## 附：当前未关闭问题登记
 
-> 2026-06-23 V3.4 回归实测：#1 / #2 / #6 已修复并验证通过（详见下表标注），待下次清理时从附表物理移除。
+> 2026-07-24 已移除有代码/回归证据的历史条目 #1、#2、#3、#4、#5、#6、#7、#9、#11。剩余 7 项仍需单独修复或人工确认；不要把它们误写成“已解决”。
 
 | # | 级别 | 描述 | 位置 |
 |---|------|------|------|
-| ~~1~~ | ~~P1~~ ✅已修 | `findTabByUrlPart` 已加 `String(tab.url\|\|"")` 防护，无 url 标签不再抛错；Hermes 阶段实测 13/13 通过（commit 3db281e） | renderer.js |
-| ~~2~~ | ~~P1~~ ✅机制已修 | 旧 `select-file-dialog` 已废弃，改用 CDP `Page.fileChooserOpened` + `DOM.setFileInputFiles` + 系统选择器降级（commit 2eb1a87）；真机点公司平台上传【待人工】 | main.js |
-| 3 | P2 | `DOMNodeRemovedFromDocument` 突变事件已被 Chromium 127+ 移除，删除标签后桌面应用轮询定时器与 CLI 监听器泄漏 | renderer.js:560/685/890 |
-| 4 | P2 | 非 web 标签激活时点击顶栏扩展按钮 TypeError（`extBody` 为 null） | renderer.js:2158 |
-| 5 | P2(待确认) | 全局下载捕获下，任意 .txt/.md/.json 被改名 dialogue.json 并误触发流水线推进 | main.js:651 |
-| ~~6~~ | ~~P3~~ ✅已修 | Hermes 提示词换行已修为真换行（实测确认） | renderer.js |
-| 7 | P3 | 流水线 `prepare` 步骤定义后从未被置为当前步骤（执行后直接 testing，2/5 起步） | renderer.js:1965 |
 | 8 | P2 | 上传拦截 debugger 意外 detach（devtools 抢占）后重开拦截会重复注册 `debugger.on("message")`，fileChooserOpened 双处理、浮层弹两次（原扫描 M2） | main.js `setWebviewFileChooserInterception` |
-| 9 | P2 | renderer 重载/无响应时 `pendingUploadRequests` 条目永久残留（Map 泄漏 + 该次选择悬挂）；建议 webContents destroyed/did-navigate 时清理（原扫描 M3） | main.js `handleFileChooserOpened` |
 | 10 | P2 | 本地服务 38924 端口被占用时 error 回调静默置 null，本地项目标签/token/SSE/HTTP API 全部失效且无提示（原扫描 M5） | main.js `startLocalServer` |
-| 11 | P2 | 删除扩展条目保存后已加载扩展不卸载，需手动「刷新并重新加载」才生效；建议 save 时对差集调用 removeExtension（原扫描 M6） | main.js `extensions:save` |
 | 12 | P3 | 写回用打开预览时读到的 sourceText，预览停留期间 txt 被外部改动会被覆盖（有 .bak 兜底）；建议确认时重读比对（原扫描 L1） | renderer.js `applyTodoWriteback` |
 | 13 | P3 | `swapTabs` 为死代码，拖拽重排已改用 categoryTabs splice 实现，可删除（原扫描 L2） | renderer.js `swapTabs` |
 | 14 | P3 | CLI/白板视图 100ms setTimeout 初始化与「创建后立即删除标签」存在竞态：cleanup 先跑、pty 仍被拉起/resize 监听仍注册（极小窗口）（原扫描 L3） | renderer.js CLI/whiteboard 视图 |

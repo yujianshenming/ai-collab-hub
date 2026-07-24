@@ -299,6 +299,43 @@ button { cursor: pointer; }
   .report-page-head { align-items: flex-start; flex-direction: column; }
   .report-meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+.workspace.tokenbox-active .address-bar,
+.workspace.tokenbox-active .webview-stack { display: none; }
+.tokenbox-view { display: none; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 26px 30px 40px; background: var(--bg-app); }
+.workspace.tokenbox-active .tokenbox-view { display: block; }
+.tokenbox-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; max-width: 1680px; margin: 0 auto 18px; }
+.tokenbox-page-head h1 { margin: 0; color: var(--text-primary); font-size: 25px; letter-spacing: -0.03em; }
+.tokenbox-page-head p { margin: 5px 0 0; color: var(--text-muted); font-size: 12px; }
+.tokenbox-page-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.tokenbox-page-actions select { height: 34px; padding: 0 28px 0 10px; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 9px; font-size: 12px; }
+.tokenbox-status { max-width: 1680px; min-height: 38px; margin: 0 auto 14px; padding: 10px 12px; color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 10px; font-size: 12px; }
+.tokenbox-status[data-state="error"] { color: var(--danger); background: var(--danger-bg); border-color: rgba(220, 38, 38, 0.25); }
+.tokenbox-status[data-state="loading"] { color: var(--accent-strong); background: var(--accent-light); border-color: rgba(13, 148, 136, 0.25); }
+.tokenbox-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; max-width: 1680px; margin: 0 auto 14px; }
+.tokenbox-metric-card { min-width: 0; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 14px; box-shadow: var(--shadow-sm); }
+.tokenbox-metric-card span, .tokenbox-metric-card small { display: block; color: var(--text-muted); font-size: 11px; }
+.tokenbox-metric-card strong { display: block; margin: 9px 0 5px; overflow: hidden; color: var(--text-primary); font-size: 24px; letter-spacing: -0.03em; text-overflow: ellipsis; white-space: nowrap; }
+.tokenbox-warning-list { display: grid; gap: 8px; max-width: 1680px; margin: 0 auto 14px; }
+.tokenbox-warning { padding: 10px 12px; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; font-size: 12px; }
+.tokenbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; max-width: 1680px; margin: 0 auto; }
+.tokenbox-panel { min-width: 0; padding: 18px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 16px; box-shadow: var(--shadow-sm); }
+.tokenbox-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.tokenbox-panel-heading h2 { margin: 0; color: var(--text-primary); font-size: 16px; }
+.tokenbox-table-wrap { overflow: auto; border: 1px solid var(--border-color); border-radius: 11px; }
+.tokenbox-table { width: 100%; min-width: 500px; border-collapse: separate; border-spacing: 0; }
+.tokenbox-table th { padding: 9px 10px; color: var(--text-muted); background: var(--bg-sunken); border-bottom: 1px solid var(--border-color); font-size: 10px; font-weight: 700; text-align: left; white-space: nowrap; }
+.tokenbox-table td { padding: 10px; color: var(--text-secondary); border-bottom: 1px solid var(--border-color); font-size: 11px; vertical-align: top; }
+.tokenbox-table tr:last-child td { border-bottom: 0; }
+.tokenbox-table td:first-child { color: var(--text-primary); font-weight: 700; }
+.tokenbox-table .tokenbox-empty { padding: 22px 10px; color: var(--text-muted); text-align: center; }
+@media (max-width: 1260px) {
+  .tokenbox-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 800px) {
+  .tokenbox-view { padding: 18px 14px 28px; }
+  .tokenbox-page-head { align-items: flex-start; flex-direction: column; }
+  .tokenbox-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .tab-viewport { display: none; width: 100%; height: 100%; position: relative; overflow: hidden; flex-direction: row; }
 .tab-viewport.active { display: flex; }
 .tab-webview { flex: 1 1 auto; min-width: 0; height: 100%; border: 0; background: white; }

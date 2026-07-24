@@ -24,9 +24,10 @@ function pipelineStepIndex(step) {
 // 任务中心作为特殊内置视图的伪标签 id
 const TASK_CENTER_ID = "__taskcenter__";
 const WEEKLY_REPORT_ID = "__weeklyreport__";
+const TOKENBOX_ID = "__tokenbox__";
 
 function isBuiltinViewId(id) {
-  return id === TASK_CENTER_ID || id === WEEKLY_REPORT_ID;
+  return id === TASK_CENTER_ID || id === WEEKLY_REPORT_ID || id === TOKENBOX_ID;
 }
 
 const storageKey = "personal_workbench_tabs";
@@ -107,6 +108,9 @@ let weeklyTasksLoadedSuccessfully = false;
 let weeklyReports = [];
 let weeklyReportsLoadedSuccessfully = false;
 let activeWeeklyReport = null;
+let activeTokenboxSnapshot = null;
+let tokenboxLoading = false;
+let tokenboxRefreshQueued = false;
 let taskTransitionGeneration = 0;
 let taskRailCollapsed = false;
 let pipelineState = {
@@ -205,9 +209,22 @@ const elements = {
   menuReloadButton: document.querySelector("#menu-reload-button"),
   navTaskCenter: document.querySelector("#nav-task-center"),
   navWeeklyReport: document.querySelector("#nav-weekly-report"),
+  navTokenbox: document.querySelector("#nav-tokenbox"),
   taskCenterBadge: document.querySelector("#task-center-badge"),
   taskCenterView: document.querySelector("#task-center-view"),
   weeklyReportView: document.querySelector("#weekly-report-view"),
+  tokenboxView: document.querySelector("#tokenbox-view"),
+  tokenboxProvider: document.querySelector("#tokenbox-provider"),
+  tokenboxRange: document.querySelector("#tokenbox-range"),
+  tokenboxRefresh: document.querySelector("#tokenbox-refresh"),
+  tokenboxStatus: document.querySelector("#tokenbox-status"),
+  tokenboxTotalTokens: document.querySelector("#tokenbox-total-tokens"),
+  tokenboxOfficialCost: document.querySelector("#tokenbox-official-cost"),
+  tokenboxRequests: document.querySelector("#tokenbox-requests"),
+  tokenboxModelCount: document.querySelector("#tokenbox-model-count"),
+  tokenboxWarningList: document.querySelector("#tokenbox-warning-list"),
+  tokenboxModelsBody: document.querySelector("#tokenbox-models-body"),
+  tokenboxDailyBody: document.querySelector("#tokenbox-daily-body"),
   reportGenerate: document.querySelector("#report-generate"),
   reportSave: document.querySelector("#report-save"),
   reportCopyTable: document.querySelector("#report-copy-table"),
@@ -1248,6 +1265,158 @@ function activeWebview() {
   return document.querySelector(`.tab-viewport[data-id="${activeTabId}"] .tab-webview`);
 }
 
+function tokenboxLocalDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function tokenboxDateOffset(days) {
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() + Number(days || 0));
+  return tokenboxLocalDateKey(date);
+}
+
+function tokenboxFilter() {
+  const range = elements.tokenboxRange?.value || "7";
+  const provider = elements.tokenboxProvider?.value || "all";
+  const filter = provider === "all" ? {} : { provider };
+  if (range !== "all") {
+    const days = Math.max(1, Number(range) || 7);
+    filter.from = tokenboxDateOffset(-(days - 1));
+    filter.to = tokenboxLocalDateKey();
+  }
+  return filter;
+}
+
+function formatTokenboxNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? new Intl.NumberFormat("en-US").format(number) : "—";
+}
+
+function formatTokenboxCost(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "—";
+  const number = Number(raw);
+  return Number.isFinite(number) ? `$${number.toFixed(4)}` : raw;
+}
+
+function tokenboxTotalTokens(row = {}) {
+  return ["input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens"]
+    .reduce((total, key) => total + (Number(row[key]) || 0), 0);
+}
+
+function tokenboxProviderLabel(provider) {
+  if (provider === "codex") return "Codex";
+  if (provider === "claude" || provider === "claude_code") return "Claude Code";
+  return provider || "未知来源";
+}
+
+function setTokenboxStatus(message, state = "") {
+  if (!elements.tokenboxStatus) return;
+  elements.tokenboxStatus.textContent = message;
+  if (state) elements.tokenboxStatus.dataset.state = state;
+  else delete elements.tokenboxStatus.dataset.state;
+}
+
+function clearTokenboxTables() {
+  [elements.tokenboxTotalTokens, elements.tokenboxOfficialCost, elements.tokenboxRequests, elements.tokenboxModelCount]
+    .forEach((element) => { if (element) element.textContent = "—"; });
+  if (elements.tokenboxWarningList) elements.tokenboxWarningList.replaceChildren();
+  if (elements.tokenboxModelsBody) elements.tokenboxModelsBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="5">暂无数据</td></tr>';
+  if (elements.tokenboxDailyBody) elements.tokenboxDailyBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="5">暂无数据</td></tr>';
+}
+
+function renderTokenboxSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object") {
+    clearTokenboxTables();
+    return;
+  }
+  activeTokenboxSnapshot = snapshot;
+  const totals = snapshot.totals || {};
+  if (elements.tokenboxTotalTokens) elements.tokenboxTotalTokens.textContent = formatTokenboxNumber(totals.total_tokens);
+  if (elements.tokenboxOfficialCost) elements.tokenboxOfficialCost.textContent = formatTokenboxCost(totals.official_cost);
+  if (elements.tokenboxRequests) elements.tokenboxRequests.textContent = formatTokenboxNumber(totals.requests);
+  if (elements.tokenboxModelCount) elements.tokenboxModelCount.textContent = formatTokenboxNumber(totals.model_count);
+
+  const models = Array.isArray(snapshot.models) ? snapshot.models : [];
+  if (elements.tokenboxModelsBody) {
+    elements.tokenboxModelsBody.innerHTML = models.length
+      ? models.map((row) => {
+        const aliases = Array.isArray(row.raw_aliases) ? row.raw_aliases : [];
+        const actual = row.actual_cost ? `<br><small>实际 ${escapeHtml(formatTokenboxCost(row.actual_cost))}</small>` : "";
+        return `<tr>
+          <td title="${escapeHtml(aliases.join(", "))}">${escapeHtml(row.model || "未知模型")}</td>
+          <td>${escapeHtml(tokenboxProviderLabel(row.provider))}</td>
+          <td>${formatTokenboxNumber(row.requests)}</td>
+          <td>${formatTokenboxNumber(tokenboxTotalTokens(row))}</td>
+          <td>${escapeHtml(formatTokenboxCost(row.official_cost))}${actual}</td>
+        </tr>`;
+      }).join("")
+      : '<tr><td class="tokenbox-empty" colspan="5">当前筛选范围暂无模型用量</td></tr>';
+  }
+
+  const daily = Array.isArray(snapshot.daily) ? snapshot.daily : [];
+  if (elements.tokenboxDailyBody) {
+    elements.tokenboxDailyBody.innerHTML = daily.length
+      ? daily.map((row) => `<tr>
+          <td>${escapeHtml(row.date || "—")}</td>
+          <td>${formatTokenboxNumber(row.requests)}</td>
+          <td>${formatTokenboxNumber(row.input_tokens)}</td>
+          <td>${formatTokenboxNumber(row.output_tokens)}</td>
+          <td>${formatTokenboxNumber(row.total_tokens)}</td>
+        </tr>`).join("")
+      : '<tr><td class="tokenbox-empty" colspan="5">当前筛选范围暂无每日用量</td></tr>';
+  }
+
+  const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
+  if (elements.tokenboxWarningList) {
+    elements.tokenboxWarningList.innerHTML = warnings
+      .filter(Boolean)
+      .map((warning) => `<div class="tokenbox-warning">${escapeHtml(warning)}</div>`)
+      .join("");
+  }
+}
+
+async function refreshTokenbox() {
+  if (tokenboxLoading) {
+    tokenboxRefreshQueued = true;
+    return;
+  }
+  tokenboxLoading = true;
+  tokenboxRefreshQueued = false;
+  setTokenboxStatus("正在扫描本机日志并刷新账本…", "loading");
+  try {
+    const status = await window.workbench.getTokenboxStatus();
+    if (!status?.available) {
+      clearTokenboxTables();
+      throw new Error("未找到 tokenbox-bridge.exe，请先构建 TokenBox sidecar");
+    }
+    const result = await window.workbench.refreshTokenbox(tokenboxFilter());
+    if (!result?.success) throw new Error(result?.error || "TokenBox 统计刷新失败");
+    renderTokenboxSnapshot(result.dashboard);
+    const scan = result.scan || {};
+    const dataAsOf = result.dashboard?.data_as_of ? `，数据截至 ${result.dashboard.data_as_of}` : "";
+    setTokenboxStatus(`已更新：扫描 ${formatTokenboxNumber(scan.files_scanned)} 个文件，新增 ${formatTokenboxNumber(scan.events_added)} 条事件${dataAsOf}`, "success");
+  } catch (error) {
+    setTokenboxStatus(error?.message || String(error), "error");
+  } finally {
+    tokenboxLoading = false;
+    if (tokenboxRefreshQueued && activeTabId === TOKENBOX_ID) void refreshTokenbox();
+  }
+}
+
+function renderTokenboxCenter() {
+  if (!activeTokenboxSnapshot) {
+    clearTokenboxTables();
+    void refreshTokenbox();
+    return;
+  }
+  renderTokenboxSnapshot(activeTokenboxSnapshot);
+}
+
 let isActivatingTab = false;
 function activateTab(id, { autoExpand = true } = {}) {
   if (isActivatingTab) return;
@@ -1255,7 +1424,8 @@ function activateTab(id, { autoExpand = true } = {}) {
   try {
     const isTaskCenter = id === TASK_CENTER_ID;
     const isWeeklyReport = id === WEEKLY_REPORT_ID;
-    const isBuiltinView = isTaskCenter || isWeeklyReport;
+    const isTokenbox = id === TOKENBOX_ID;
+    const isBuiltinView = isTaskCenter || isWeeklyReport || isTokenbox;
     if (isBuiltinView) {
       rightSplitTabId = null;
       bottomSplitTabId = null;
@@ -1294,8 +1464,10 @@ function activateTab(id, { autoExpand = true } = {}) {
 
     elements.workspace.classList.toggle("task-center-active", isTaskCenter);
     elements.workspace.classList.toggle("weekly-report-active", isWeeklyReport);
+    elements.workspace.classList.toggle("tokenbox-active", isTokenbox);
     elements.navTaskCenter?.classList.toggle("active", isTaskCenter);
     elements.navWeeklyReport?.classList.toggle("active", isWeeklyReport);
+    elements.navTokenbox?.classList.toggle("active", isTokenbox);
     document.querySelectorAll(".tab-item").forEach((item) => {
       item.classList.toggle("active", !isBuiltinView && item.dataset.id === id);
       item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
@@ -1333,6 +1505,9 @@ function activateTab(id, { autoExpand = true } = {}) {
     }
     if (isWeeklyReport) {
       renderWeeklyReportCenter();
+    }
+    if (isTokenbox) {
+      renderTokenboxCenter();
     }
     updateActiveTabInfo();
     fitWebviewZoom();
@@ -1383,6 +1558,12 @@ function activateTab(id, { autoExpand = true } = {}) {
 // 顶栏面包屑与地址栏显隐：任务中心隐藏地址栏，webview 标签显示地址栏
 function updateTopbarForActive(tab = null) {
   if (!tab) {
+    if (activeTabId === TOKENBOX_ID) {
+      elements.activeTitle.textContent = "Token 统计";
+      elements.crumbSub.textContent = "本机日志账本 · Codex / Claude Code";
+      elements.addressBar.style.display = "none";
+      return;
+    }
     if (activeTabId === WEEKLY_REPORT_ID) {
       elements.activeTitle.textContent = "周报中心";
       elements.crumbSub.textContent = activeWeeklyReport?.title || "工作内容归档";
@@ -1440,7 +1621,9 @@ function updateActiveTabInfo() {
   if (isBuiltinViewId(activeTabId)) {
     window.workbench.updateActiveTabInfo({
       url: "",
-      title: activeTabId === WEEKLY_REPORT_ID ? "周报中心" : "任务中心"
+      title: activeTabId === WEEKLY_REPORT_ID
+        ? "周报中心"
+        : activeTabId === TOKENBOX_ID ? "Token 统计" : "任务中心"
     });
     return;
   }
@@ -3773,6 +3956,17 @@ function setupWeeklyReportEvents() {
   });
 }
 
+function setupTokenboxEvents() {
+  elements.navTokenbox?.addEventListener("click", () => activateTab(TOKENBOX_ID));
+  const reload = () => {
+    activeTokenboxSnapshot = null;
+    void refreshTokenbox();
+  };
+  elements.tokenboxRefresh?.addEventListener("click", reload);
+  elements.tokenboxProvider?.addEventListener("change", reload);
+  elements.tokenboxRange?.addEventListener("change", reload);
+}
+
 function taskProgressInfo(task) {
   const isActiveTask = pipelineState.active && pipelineState.taskId === task.id;
   if (!isActiveTask && !["running", "evaluating"].includes(task.status)) {
@@ -5796,6 +5990,7 @@ window.workbench.onMenuToggleTerminal(() => toggleTerminal());
 window.workbench.onMenuOpenSettings(openSettings);
 elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
 setupWeeklyReportEvents();
+setupTokenboxEvents();
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
 elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
 elements.btnWritebackTodo?.addEventListener("click", () => handleTodoWriteback());
