@@ -311,7 +311,7 @@ button { cursor: pointer; }
 .tokenbox-status { max-width: 1680px; min-height: 38px; margin: 0 auto 14px; padding: 10px 12px; color: var(--text-secondary); background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 10px; font-size: 12px; }
 .tokenbox-status[data-state="error"] { color: var(--danger); background: var(--danger-bg); border-color: rgba(220, 38, 38, 0.25); }
 .tokenbox-status[data-state="loading"] { color: var(--accent-strong); background: var(--accent-light); border-color: rgba(13, 148, 136, 0.25); }
-.tokenbox-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; max-width: 1680px; margin: 0 auto 14px; }
+.tokenbox-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; max-width: 1680px; margin: 0 auto 14px; }
 .tokenbox-metric-card { min-width: 0; padding: 16px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 14px; box-shadow: var(--shadow-sm); }
 .tokenbox-metric-card span, .tokenbox-metric-card small { display: block; color: var(--text-muted); font-size: 11px; }
 .tokenbox-metric-card strong { display: block; margin: 9px 0 5px; overflow: hidden; color: var(--text-primary); font-size: 24px; letter-spacing: -0.03em; text-overflow: ellipsis; white-space: nowrap; }
@@ -328,6 +328,19 @@ button { cursor: pointer; }
 .tokenbox-table tr:last-child td { border-bottom: 0; }
 .tokenbox-table td:first-child { color: var(--text-primary); font-weight: 700; }
 .tokenbox-table .tokenbox-empty { padding: 22px 10px; color: var(--text-muted); text-align: center; }
+.tokenbox-panel-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.tokenbox-inline-status { min-height: 28px; margin: -3px 0 10px; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.tokenbox-inline-status[data-state="loading"] { color: var(--accent-strong); }
+.tokenbox-inline-status[data-state="success"] { color: var(--ok); }
+.tokenbox-inline-status[data-state="warning"] { color: var(--warn); }
+.tokenbox-inline-status[data-state="error"] { color: var(--danger); }
+.tokenbox-proof { min-height: 108px; margin: 0; padding: 12px; overflow: auto; color: var(--text-secondary); background: var(--bg-sunken); border: 1px solid var(--border-color); border-radius: 10px; font: 11px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; }
+.tokenbox-model-link { max-width: 260px; padding: 0; overflow: hidden; color: var(--text-primary); background: transparent; border: 0; font: inherit; font-weight: 700; text-align: left; text-overflow: ellipsis; text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 3px; white-space: nowrap; cursor: pointer; }
+.tokenbox-model-link:hover { color: var(--accent-strong); }
+.tokenbox-evidence-panel { max-width: 1680px; margin: 14px auto 0; }
+.tokenbox-operations-grid { margin-top: 14px; }
+.tokenbox-reconcile-state[data-state="PASS"] { color: var(--ok); font-weight: 700; }
+.tokenbox-reconcile-state[data-state="ATTENTION"] { color: var(--warn); font-weight: 700; }
 @media (max-width: 1260px) {
   .tokenbox-grid { grid-template-columns: 1fr; }
 }

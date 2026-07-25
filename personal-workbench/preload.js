@@ -47,7 +47,16 @@ contextBridge.exposeInMainWorld("workbench", {
   copyWeeklyReport: (payload) => ipcRenderer.invoke("reports:copy-weekly", payload),
   exportWeeklyReport: (payload) => ipcRenderer.invoke("reports:export-weekly", payload),
   getTokenboxStatus: () => ipcRenderer.invoke("tokenbox:status"),
+  backupTokenboxDatabase: () => ipcRenderer.invoke("tokenbox:backup"),
+  rebuildTokenboxLedger: (provider) => ipcRenderer.invoke("tokenbox:rebuild", { provider }),
   refreshTokenbox: (filter) => ipcRenderer.invoke("tokenbox:refresh", { filter }),
+  getTokenboxEvidence: (payload) => ipcRenderer.invoke("tokenbox:evidence", payload),
+  exportTokenboxDashboard: (payload) => ipcRenderer.invoke("tokenbox:export-dashboard", payload),
+  getTokenboxAudit: (filter) => ipcRenderer.invoke("tokenbox:audit", { filter }),
+  exportTokenboxAudit: (payload) => ipcRenderer.invoke("tokenbox:export-audit", payload),
+  importTokenboxRelay: (payload) => ipcRenderer.invoke("tokenbox:relay-import", payload),
+  getTokenboxReconciliation: (filter) => ipcRenderer.invoke("tokenbox:reconciliation", { filter }),
+  exportTokenboxReconciliation: (payload) => ipcRenderer.invoke("tokenbox:export-reconciliation", payload),
   onDownloadCompleted: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("download-completed", listener);
@@ -74,6 +83,13 @@ contextBridge.exposeInMainWorld("workbench", {
   selectFolder: () => ipcRenderer.invoke("dialog:select-folder"),
   selectFile: () => ipcRenderer.invoke("dialog:select-file"),
   registerLocalApp: (tabId, baseDir) => ipcRenderer.invoke("local-apps:register", tabId, baseDir),
+  getLocalAppToken: (tabId) => ipcRenderer.invoke("local-apps:get-token", tabId),
+  getLocalServerStatus: () => ipcRenderer.invoke("local-server:status"),
+  onLocalServerStatus: (callback) => {
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on("local-server:status", listener);
+    return () => ipcRenderer.removeListener("local-server:status", listener);
+  },
   launchDesktopApp: (tabId, exePath, cwd, embedMode, rect) => ipcRenderer.invoke("desktop-app:launch", tabId, exePath, cwd, embedMode, rect),
   getDesktopAppStatus: (tabId) => ipcRenderer.invoke("desktop-app:status", tabId),
   killDesktopApp: (tabId) => ipcRenderer.invoke("desktop-app:kill", tabId),
@@ -106,6 +122,5 @@ contextBridge.exposeInMainWorld("workbench", {
     return () => ipcRenderer.removeListener(channel, listener);
   },
   updateTabsList: (tabs) => ipcRenderer.send("tabs:list-update", tabs),
-  getSessionToken: () => ipcRenderer.invoke("workbench:get-session-token"),
   cleanupTabResources: (tabId) => ipcRenderer.invoke("tab:cleanup-resources", tabId)
 });

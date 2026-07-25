@@ -51,7 +51,7 @@ test("isCardsArtifactName only matches cards.md", () => {
   assert.equal(helpers.isCardsArtifactName("cards.txt"), false);
 });
 
-test("taskArtifactsFromPathsAndFiles prefers existing paths", () => {
+test("taskArtifactsFromPathsAndFiles marks stale saved paths as missing", () => {
   const artifacts = helpers.taskArtifactsFromPathsAndFiles({
     chatLogPath: "C:/tasks/t1/dialogue.json",
     reportPath: "C:/tasks/t1/eval_report.pdf"
@@ -59,12 +59,24 @@ test("taskArtifactsFromPathsAndFiles prefers existing paths", () => {
     { name: "cards.md", path: "C:/tasks/t1/cards.md" },
     { name: "other.txt", path: "C:/tasks/t1/other.txt" }
   ]);
-  assert.equal(artifacts.chat.ready, true);
-  assert.equal(artifacts.chat.path, "C:/tasks/t1/dialogue.json");
-  assert.equal(artifacts.report.ready, true);
-  assert.equal(artifacts.report.path, "C:/tasks/t1/eval_report.pdf");
+  assert.equal(artifacts.chat.ready, false);
+  assert.equal(artifacts.chat.path, "");
+  assert.equal(artifacts.report.ready, false);
+  assert.equal(artifacts.report.path, "");
   assert.equal(artifacts.cards.ready, true);
   assert.equal(artifacts.cards.path, "C:/tasks/t1/cards.md");
+});
+
+test("taskArtifactsFromPathsAndFiles keeps a saved path ready only when the file exists", () => {
+  const artifacts = helpers.taskArtifactsFromPathsAndFiles({
+    chatLogPath: "C:/tasks/t1/dialogue.json",
+    reportPath: "C:/tasks/t1/eval_report.pdf"
+  }, [
+    { name: "dialogue.json", path: "C:/tasks/t1/dialogue.json" },
+    { name: "eval_report.pdf", path: "C:/tasks/t1/eval_report.pdf" }
+  ]);
+  assert.equal(artifacts.chat.ready, true);
+  assert.equal(artifacts.report.ready, true);
 });
 
 test("taskArtifactsFromPathsAndFiles discovers files when paths empty", () => {

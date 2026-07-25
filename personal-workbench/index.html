@@ -328,6 +328,8 @@
                 <option value="all">全部时间</option>
               </select>
               <button id="tokenbox-refresh" class="btn btn-teal" type="button">刷新统计</button>
+              <button id="tokenbox-export-json" class="btn btn-ghost" type="button">导出 JSON</button>
+              <button id="tokenbox-export-csv" class="btn btn-ghost" type="button">导出 CSV</button>
             </div>
           </div>
 
@@ -345,6 +347,11 @@
               <small>按 TokenBox 价格目录估算</small>
             </article>
             <article class="tokenbox-metric-card">
+              <span>中转站实际成本</span>
+              <strong id="tokenbox-actual-cost">—</strong>
+              <small>已导入账单的实际金额</small>
+            </article>
+            <article class="tokenbox-metric-card">
               <span>请求次数</span>
               <strong id="tokenbox-requests">—</strong>
               <small>已纳入账本的请求</small>
@@ -353,6 +360,16 @@
               <span>模型数量</span>
               <strong id="tokenbox-model-count">—</strong>
               <small>当前筛选范围内</small>
+            </article>
+            <article class="tokenbox-metric-card">
+              <span>计费输入</span>
+              <strong id="tokenbox-billable-input">—</strong>
+              <small>输入 + 缓存写 + 缓存读</small>
+            </article>
+            <article class="tokenbox-metric-card">
+              <span>未定价模型</span>
+              <strong id="tokenbox-unpriced-count">—</strong>
+              <small>Token 保留，金额待补目录</small>
             </article>
           </div>
 
@@ -392,6 +409,63 @@
               </div>
             </section>
           </div>
+
+          <div class="tokenbox-grid tokenbox-operations-grid">
+            <section class="tokenbox-panel">
+              <div class="tokenbox-panel-heading">
+                <div>
+                  <span class="eyebrow">SOURCE AUDIT</span>
+                  <h2>源日志 / SQLite 审计</h2>
+                </div>
+                <div class="tokenbox-panel-actions">
+                  <button id="tokenbox-backup" class="icon-button" type="button">备份 SQLite</button>
+                  <button id="tokenbox-rebuild" class="btn btn-ghost" type="button">重建账本</button>
+                  <button id="tokenbox-audit" class="btn btn-ghost" type="button">运行审计</button>
+                  <button id="tokenbox-export-audit-json" class="icon-button" type="button">JSON</button>
+                  <button id="tokenbox-export-audit-md" class="icon-button" type="button">MD</button>
+                </div>
+              </div>
+              <div id="tokenbox-audit-status" class="tokenbox-inline-status">尚未审计</div>
+              <pre id="tokenbox-audit-summary" class="tokenbox-proof">等待源日志审计。</pre>
+            </section>
+            <section class="tokenbox-panel">
+              <div class="tokenbox-panel-heading">
+                <div>
+                  <span class="eyebrow">RELAY LEDGER</span>
+                  <h2>中转站导入与对账</h2>
+                </div>
+                <div class="tokenbox-panel-actions">
+                  <input id="tokenbox-relay-file" type="file" accept=".json,.csv,application/json,text/csv" hidden>
+                  <button id="tokenbox-relay-import" class="btn btn-ghost" type="button">导入 JSON/CSV</button>
+                  <button id="tokenbox-relay-reconcile" class="btn btn-ghost" type="button">刷新对账</button>
+                  <button id="tokenbox-export-reconciliation" class="icon-button" type="button">导出</button>
+                </div>
+              </div>
+              <div id="tokenbox-reconciliation-status" class="tokenbox-inline-status">尚未导入中转站账单</div>
+              <div class="tokenbox-table-wrap">
+                <table class="tokenbox-table">
+                  <thead><tr><th>日期</th><th>模型</th><th>来源</th><th>本地 Token</th><th>中转站 Token</th><th>差异</th><th>状态</th></tr></thead>
+                  <tbody id="tokenbox-reconciliation-body"><tr><td class="tokenbox-empty" colspan="7">暂无对账记录</td></tr></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <section class="tokenbox-panel tokenbox-evidence-panel">
+            <div class="tokenbox-panel-heading">
+              <div>
+                <span class="eyebrow">EVENT EVIDENCE</span>
+                <h2 id="tokenbox-evidence-title">事件级证据</h2>
+              </div>
+              <small>点击模型行查看 event_id、source hash、offset 与价格行</small>
+            </div>
+            <div class="tokenbox-table-wrap">
+              <table class="tokenbox-table">
+                <thead><tr><th>时间</th><th>模型</th><th>Token</th><th>官方金额</th><th>实际金额</th><th>event_id</th><th>source / offset</th></tr></thead>
+                <tbody id="tokenbox-evidence-body"><tr><td class="tokenbox-empty" colspan="7">选择模型后显示证据</td></tr></tbody>
+              </table>
+            </div>
+          </section>
         </section>
 
         <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>

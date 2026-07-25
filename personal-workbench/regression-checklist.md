@@ -87,9 +87,24 @@
 | # | 级别 | 描述 | 位置 |
 |---|------|------|------|
 | 8 | P2 | 上传拦截 debugger 意外 detach（devtools 抢占）后重开拦截会重复注册 `debugger.on("message")`，fileChooserOpened 双处理、浮层弹两次（原扫描 M2） | main.js `setWebviewFileChooserInterception` |
-| 10 | P2 | 本地服务 38924 端口被占用时 error 回调静默置 null，本地项目标签/token/SSE/HTTP API 全部失效且无提示（原扫描 M5） | main.js `startLocalServer` |
 | 12 | P3 | 写回用打开预览时读到的 sourceText，预览停留期间 txt 被外部改动会被覆盖（有 .bak 兜底）；建议确认时重读比对（原扫描 L1） | renderer.js `applyTodoWriteback` |
 | 13 | P3 | `swapTabs` 为死代码，拖拽重排已改用 categoryTabs splice 实现，可删除（原扫描 L2） | renderer.js `swapTabs` |
 | 14 | P3 | CLI/白板视图 100ms setTimeout 初始化与「创建后立即删除标签」存在竞态：cleanup 先跑、pty 仍被拉起/resize 监听仍注册（极小窗口）（原扫描 L3） | renderer.js CLI/whiteboard 视图 |
 | 15 | P3 | `fallbackSystemChooser` 中 `dialog.showOpenDialog(mainWindow ?? undefined, ...)` 首参传 undefined，建议改条件分支传参（原扫描 L4） | main.js `fallbackSystemChooser` |
 | 16 | P3 | `serveFile` 中 existsSync 与 readFile 之间竞态会把已删除文件回 500 而非 404（仅状态码语义）（原扫描 L5） | main.js `serveFile` |
+
+## 7. Adversarial review closure ? 2026-07-25
+
+- [x] SEC-01 desktop launch uses canonical executable validation plus a persisted main-process allowlist.
+- [x] SEC-03 todo path writes are dialog-owned and read/write paths are canonical existing `.txt` files.
+- [x] COR-01 historical reports filter tasks by ISO period and retain orphan source rows.
+- [x] SEC-04 local webviews receive per-tab scoped tokens; the full session token is not exposed in renderer preload.
+- [x] SEC-05 cookie requests require an explicit HTTP(S) URL.
+- [x] SEC-06 upload injection accepts only task-folder files or main-process approved picker paths.
+- [x] COR-02 completed imports get `completedAt`; purge ignores records without that timestamp.
+- [x] COR-03 same-lane reorder preserves running/paused/evaluating status.
+- [x] COR-04 rename/delete retargets or clears stored artifact paths.
+- [x] COR-05 artifact badges follow the current folder scan and stale paths show missing.
+- [x] ARC-02 fixed-port startup errors are reported through IPC and a renderer toast.
+
+Evidence: `npm test` and `npm run test:e2e`.

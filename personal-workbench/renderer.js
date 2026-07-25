@@ -111,6 +111,9 @@ let activeWeeklyReport = null;
 let activeTokenboxSnapshot = null;
 let tokenboxLoading = false;
 let tokenboxRefreshQueued = false;
+let activeTokenboxAudit = null;
+let activeTokenboxReconciliation = null;
+let tokenboxOperationLoading = false;
 let taskTransitionGeneration = 0;
 let taskRailCollapsed = false;
 let pipelineState = {
@@ -217,14 +220,34 @@ const elements = {
   tokenboxProvider: document.querySelector("#tokenbox-provider"),
   tokenboxRange: document.querySelector("#tokenbox-range"),
   tokenboxRefresh: document.querySelector("#tokenbox-refresh"),
+  tokenboxExportJson: document.querySelector("#tokenbox-export-json"),
+  tokenboxExportCsv: document.querySelector("#tokenbox-export-csv"),
   tokenboxStatus: document.querySelector("#tokenbox-status"),
   tokenboxTotalTokens: document.querySelector("#tokenbox-total-tokens"),
   tokenboxOfficialCost: document.querySelector("#tokenbox-official-cost"),
+  tokenboxActualCost: document.querySelector("#tokenbox-actual-cost"),
   tokenboxRequests: document.querySelector("#tokenbox-requests"),
   tokenboxModelCount: document.querySelector("#tokenbox-model-count"),
+  tokenboxBillableInput: document.querySelector("#tokenbox-billable-input"),
+  tokenboxUnpricedCount: document.querySelector("#tokenbox-unpriced-count"),
   tokenboxWarningList: document.querySelector("#tokenbox-warning-list"),
   tokenboxModelsBody: document.querySelector("#tokenbox-models-body"),
   tokenboxDailyBody: document.querySelector("#tokenbox-daily-body"),
+  tokenboxBackup: document.querySelector("#tokenbox-backup"),
+  tokenboxRebuild: document.querySelector("#tokenbox-rebuild"),
+  tokenboxAudit: document.querySelector("#tokenbox-audit"),
+  tokenboxExportAuditJson: document.querySelector("#tokenbox-export-audit-json"),
+  tokenboxExportAuditMd: document.querySelector("#tokenbox-export-audit-md"),
+  tokenboxAuditStatus: document.querySelector("#tokenbox-audit-status"),
+  tokenboxAuditSummary: document.querySelector("#tokenbox-audit-summary"),
+  tokenboxRelayFile: document.querySelector("#tokenbox-relay-file"),
+  tokenboxRelayImport: document.querySelector("#tokenbox-relay-import"),
+  tokenboxRelayReconcile: document.querySelector("#tokenbox-relay-reconcile"),
+  tokenboxExportReconciliation: document.querySelector("#tokenbox-export-reconciliation"),
+  tokenboxReconciliationStatus: document.querySelector("#tokenbox-reconciliation-status"),
+  tokenboxReconciliationBody: document.querySelector("#tokenbox-reconciliation-body"),
+  tokenboxEvidenceTitle: document.querySelector("#tokenbox-evidence-title"),
+  tokenboxEvidenceBody: document.querySelector("#tokenbox-evidence-body"),
   reportGenerate: document.querySelector("#report-generate"),
   reportSave: document.querySelector("#report-save"),
   reportCopyTable: document.querySelector("#report-copy-table"),
@@ -673,9 +696,9 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     placeholder.textContent = "正在启动网页工作区…";
     viewport.append(placeholder);
   } else if (type === "web" || type === "local-web") {
-    if (type === "local-web" && tab.localPath) {
-      window.workbench.registerLocalApp(tab.id, tab.localPath);
-    }
+    const localAppRegistration = type === "local-web" && tab.localPath
+      ? window.workbench.registerLocalApp(tab.id, tab.localPath)
+      : Promise.resolve(true);
 
     const webview = document.createElement("webview");
     webview.className = "tab-webview";
@@ -699,7 +722,8 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
       fitWebviewZoom();
       const currentUrl = webview.getURL() || tab.url || "";
       if (isRegisteredLocalAppUrl(tab, currentUrl)) {
-        window.workbench.getSessionToken().then((token) => {
+        Promise.resolve(localAppRegistration).catch(() => false).then(() => window.workbench.getLocalAppToken(tab.id)).then((token) => {
+          if (!token) return;
           webview.executeJavaScript(`window.__workbenchSessionToken = ${JSON.stringify(token)};`).catch(() => {});
         });
       }
@@ -1304,7 +1328,16 @@ function formatTokenboxCost(value) {
 }
 
 function tokenboxTotalTokens(row = {}) {
+  if (row.total_tokens !== undefined && row.total_tokens !== null) return row.total_tokens;
   return ["input_tokens", "output_tokens", "cache_write_tokens", "cache_read_tokens"]
+    .reduce((total, key) => total + (Number(row[key]) || 0), 0);
+}
+
+function tokenboxBillableInputTokens(row = {}) {
+  if (row.billable_input_tokens !== undefined && row.billable_input_tokens !== null) {
+    return row.billable_input_tokens;
+  }
+  return ["input_tokens", "cache_write_tokens", "cache_read_tokens"]
     .reduce((total, key) => total + (Number(row[key]) || 0), 0);
 }
 
@@ -1322,11 +1355,13 @@ function setTokenboxStatus(message, state = "") {
 }
 
 function clearTokenboxTables() {
-  [elements.tokenboxTotalTokens, elements.tokenboxOfficialCost, elements.tokenboxRequests, elements.tokenboxModelCount]
+  [elements.tokenboxTotalTokens, elements.tokenboxOfficialCost, elements.tokenboxActualCost, elements.tokenboxRequests, elements.tokenboxModelCount, elements.tokenboxBillableInput, elements.tokenboxUnpricedCount]
     .forEach((element) => { if (element) element.textContent = "—"; });
   if (elements.tokenboxWarningList) elements.tokenboxWarningList.replaceChildren();
   if (elements.tokenboxModelsBody) elements.tokenboxModelsBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="5">暂无数据</td></tr>';
   if (elements.tokenboxDailyBody) elements.tokenboxDailyBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="5">暂无数据</td></tr>';
+  if (elements.tokenboxEvidenceBody) elements.tokenboxEvidenceBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="7">选择模型后显示证据</td></tr>';
+  if (elements.tokenboxReconciliationBody) elements.tokenboxReconciliationBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="7">暂无对账记录</td></tr>';
 }
 
 function renderTokenboxSnapshot(snapshot) {
@@ -1338,8 +1373,13 @@ function renderTokenboxSnapshot(snapshot) {
   const totals = snapshot.totals || {};
   if (elements.tokenboxTotalTokens) elements.tokenboxTotalTokens.textContent = formatTokenboxNumber(totals.total_tokens);
   if (elements.tokenboxOfficialCost) elements.tokenboxOfficialCost.textContent = formatTokenboxCost(totals.official_cost);
+  if (elements.tokenboxActualCost) elements.tokenboxActualCost.textContent = formatTokenboxCost(totals.actual_cost);
   if (elements.tokenboxRequests) elements.tokenboxRequests.textContent = formatTokenboxNumber(totals.requests);
   if (elements.tokenboxModelCount) elements.tokenboxModelCount.textContent = formatTokenboxNumber(totals.model_count);
+  if (elements.tokenboxBillableInput) elements.tokenboxBillableInput.textContent = formatTokenboxNumber(
+    totals.billable_input_tokens ?? tokenboxBillableInputTokens(totals)
+  );
+  if (elements.tokenboxUnpricedCount) elements.tokenboxUnpricedCount.textContent = formatTokenboxNumber(totals.unknown_model_count);
 
   const models = Array.isArray(snapshot.models) ? snapshot.models : [];
   if (elements.tokenboxModelsBody) {
@@ -1347,8 +1387,9 @@ function renderTokenboxSnapshot(snapshot) {
       ? models.map((row) => {
         const aliases = Array.isArray(row.raw_aliases) ? row.raw_aliases : [];
         const actual = row.actual_cost ? `<br><small>实际 ${escapeHtml(formatTokenboxCost(row.actual_cost))}</small>` : "";
+        const provider = row.provider === "Codex" ? "codex" : "claude_code";
         return `<tr>
-          <td title="${escapeHtml(aliases.join(", "))}">${escapeHtml(row.model || "未知模型")}</td>
+          <td title="${escapeHtml(aliases.join(", "))}"><button class="tokenbox-model-link" type="button" data-tokenbox-model="${escapeHtml(row.model || "")}" data-tokenbox-provider="${provider}">${escapeHtml(row.model || "未知模型")}</button></td>
           <td>${escapeHtml(tokenboxProviderLabel(row.provider))}</td>
           <td>${formatTokenboxNumber(row.requests)}</td>
           <td>${formatTokenboxNumber(tokenboxTotalTokens(row))}</td>
@@ -1356,6 +1397,11 @@ function renderTokenboxSnapshot(snapshot) {
         </tr>`;
       }).join("")
       : '<tr><td class="tokenbox-empty" colspan="5">当前筛选范围暂无模型用量</td></tr>';
+    elements.tokenboxModelsBody.querySelectorAll("[data-tokenbox-model]").forEach((button) => {
+      button.addEventListener("click", () => {
+        void loadTokenboxEvidence(button.dataset.tokenboxModel || "", button.dataset.tokenboxProvider || "");
+      });
+    });
   }
 
   const daily = Array.isArray(snapshot.daily) ? snapshot.daily : [];
@@ -1380,6 +1426,185 @@ function renderTokenboxSnapshot(snapshot) {
   }
 }
 
+function setTokenboxInlineStatus(element, message, state = "") {
+  if (!element) return;
+  element.textContent = message;
+  if (state) element.dataset.state = state;
+  else delete element.dataset.state;
+}
+
+function downloadTokenboxText(content, filename, mime = "text/plain;charset=utf-8") {
+  const blob = new Blob([String(content ?? "")], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename || "tokenbox-export.txt";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+async function exportTokenboxDashboard(format) {
+  const result = await window.workbench.exportTokenboxDashboard({ filter: tokenboxFilter(), format });
+  if (!result?.success) throw new Error(result?.error || "TokenBox 看板导出失败");
+  downloadTokenboxText(result.content, result.filename || `tokenbox-dashboard.${format}`, format === "json" ? "application/json;charset=utf-8" : "text/csv;charset=utf-8");
+  setTokenboxStatus(`已导出当前筛选的 ${format.toUpperCase()} 看板`, "success");
+}
+
+function renderTokenboxEvidence(evidence) {
+  if (!elements.tokenboxEvidenceBody) return;
+  const rows = Array.isArray(evidence) ? evidence : [];
+  elements.tokenboxEvidenceBody.innerHTML = rows.length
+    ? rows.map((item) => `<tr>
+        <td>${escapeHtml(item.timestamp || "—")}</td>
+        <td>${escapeHtml(item.model_normalized || item.model_raw || "未知模型")}</td>
+        <td>${formatTokenboxNumber(item.total_tokens)}</td>
+        <td>${escapeHtml(formatTokenboxCost(item.official_cost))}</td>
+        <td>${escapeHtml(formatTokenboxCost(item.actual_cost))}</td>
+        <td><code>${escapeHtml(item.event_id || "")}</code></td>
+        <td><code>${escapeHtml(item.source_file_hash || "")}</code><br><small>offset ${formatTokenboxNumber(item.source_offset)}</small></td>
+      </tr>`).join("")
+    : '<tr><td class="tokenbox-empty" colspan="7">当前模型没有事件级证据</td></tr>';
+}
+
+async function loadTokenboxEvidence(model, provider) {
+  if (!model) return;
+  setTokenboxInlineStatus(elements.tokenboxStatus, `正在读取 ${model} 的事件级证据…`, "loading");
+  try {
+    const result = await window.workbench.getTokenboxEvidence({
+      filter: tokenboxFilter(),
+      model,
+      provider
+    });
+    if (!result?.success) throw new Error(result?.error || "TokenBox 证据查询失败");
+    if (elements.tokenboxEvidenceTitle) elements.tokenboxEvidenceTitle.textContent = `${model} · 事件级证据`;
+    renderTokenboxEvidence(result.evidence);
+    setTokenboxStatus(`已加载 ${formatTokenboxNumber(result.evidence?.length || 0)} 条 ${model} 证据`, "success");
+  } catch (error) {
+    setTokenboxStatus(error?.message || String(error), "error");
+  }
+}
+
+function renderTokenboxAudit(audit) {
+  activeTokenboxAudit = audit || null;
+  if (!elements.tokenboxAuditSummary) return;
+  if (!audit) {
+    elements.tokenboxAuditSummary.textContent = "等待源日志审计。";
+    return;
+  }
+  const lines = [
+    `结果: ${audit.status || "—"}`,
+    `source events: ${formatTokenboxNumber(audit.source_unique_events)} · ledger events: ${formatTokenboxNumber(audit.database_events)}`,
+    `event ID: missing ${formatTokenboxNumber(audit.missing_event_ids)} · extra ${formatTokenboxNumber(audit.extra_event_ids)} · field mismatch ${formatTokenboxNumber(audit.field_mismatches)}`,
+    `source total: ${formatTokenboxNumber(audit.source_totals?.total_tokens)} · ledger total: ${formatTokenboxNumber(audit.database_totals?.total_tokens)}`,
+    `pending bytes: ${formatTokenboxNumber(audit.pending_bytes)} · unstable files: ${formatTokenboxNumber(audit.unstable_files)}`,
+    `raw rows: ${formatTokenboxNumber(audit.source_raw_usage_rows)} · duplicate snapshots collapsed: ${formatTokenboxNumber(audit.duplicate_rows_collapsed)}`
+  ];
+  elements.tokenboxAuditSummary.textContent = lines.join("\n");
+}
+
+async function runTokenboxAudit() {
+  if (tokenboxOperationLoading) return;
+  tokenboxOperationLoading = true;
+  setTokenboxInlineStatus(elements.tokenboxAuditStatus, "正在从源日志重新读取并核对 SQLite…", "loading");
+  try {
+    const result = await window.workbench.getTokenboxAudit(tokenboxFilter());
+    if (!result?.success) throw new Error(result?.error || "TokenBox 审计失败");
+    renderTokenboxAudit(result.audit);
+    setTokenboxInlineStatus(elements.tokenboxAuditStatus, `审计结果：${result.audit?.status || "—"}`, result.audit?.status === "PASS" ? "success" : "warning");
+  } catch (error) {
+    setTokenboxInlineStatus(elements.tokenboxAuditStatus, error?.message || String(error), "error");
+  } finally {
+    tokenboxOperationLoading = false;
+  }
+}
+
+async function backupTokenboxDatabase() {
+  const result = await window.workbench.backupTokenboxDatabase();
+  if (!result?.success) throw new Error(result?.error || "TokenBox SQLite 备份失败");
+  setTokenboxInlineStatus(elements.tokenboxAuditStatus, `已创建 SQLite 备份：${result.backup_path || "已完成"}`, "success");
+}
+
+async function rebuildTokenboxLedger() {
+  if (tokenboxOperationLoading) return;
+  if (!window.confirm("将先备份 SQLite，再从本机 Codex / Claude Code 日志重建派生账本。继续吗？")) return;
+  tokenboxOperationLoading = true;
+  setTokenboxInlineStatus(elements.tokenboxAuditStatus, "正在备份并重建 TokenBox 账本…", "loading");
+  try {
+    const result = await window.workbench.rebuildTokenboxLedger();
+    if (!result?.success) throw new Error(result?.error || "TokenBox 账本重建失败");
+    await refreshTokenbox();
+    setTokenboxInlineStatus(elements.tokenboxAuditStatus, `账本已重建，备份：${result.rebuild?.backup_path || "已创建"}`, "success");
+  } catch (error) {
+    setTokenboxInlineStatus(elements.tokenboxAuditStatus, error?.message || String(error), "error");
+  } finally {
+    tokenboxOperationLoading = false;
+  }
+}
+
+async function exportTokenboxAudit(format) {
+  const result = await window.workbench.exportTokenboxAudit({ filter: tokenboxFilter(), format });
+  if (!result?.success) throw new Error(result?.error || "TokenBox 审计导出失败");
+  downloadTokenboxText(result.content, result.filename || `tokenbox-audit.${format}`, format === "json" ? "application/json;charset=utf-8" : "text/markdown;charset=utf-8");
+  setTokenboxInlineStatus(elements.tokenboxAuditStatus, `已导出完整 ${format.toUpperCase()} 审计证据`, "success");
+}
+
+function renderTokenboxReconciliation(summary) {
+  activeTokenboxReconciliation = summary || null;
+  if (elements.tokenboxActualCost && summary?.relay_actual_cost !== undefined) {
+    elements.tokenboxActualCost.textContent = formatTokenboxCost(summary.relay_actual_cost);
+  }
+  if (!elements.tokenboxReconciliationBody) return;
+  const rows = Array.isArray(summary?.rows) ? summary.rows : [];
+  elements.tokenboxReconciliationBody.innerHTML = rows.length
+    ? rows.slice(0, 100).map((row) => `<tr>
+        <td>${escapeHtml(row.date || "—")}</td>
+        <td>${escapeHtml(row.model || "未知模型")}</td>
+        <td>${escapeHtml(tokenboxProviderLabel(row.provider))}</td>
+        <td>${formatTokenboxNumber(row.local?.total_tokens)}</td>
+        <td>${formatTokenboxNumber(row.relay?.total_tokens)}</td>
+        <td>${formatTokenboxNumber(row.token_delta?.total_tokens)}</td>
+        <td><span class="tokenbox-reconcile-state" data-state="${escapeHtml(row.status || "ATTENTION")}">${escapeHtml(row.status || "ATTENTION")}</span></td>
+      </tr>`).join("")
+    : '<tr><td class="tokenbox-empty" colspan="7">筛选范围内暂无中转站对账记录</td></tr>';
+  const warning = Array.isArray(summary?.warnings) && summary.warnings.length ? ` · ${summary.warnings.join("；")}` : "";
+  setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, `对账：${summary?.status || "EMPTY"} · Token 差异 ${formatTokenboxNumber(summary?.token_delta?.total_tokens)}${warning}`, summary?.status === "PASS" ? "success" : "warning");
+}
+
+async function refreshTokenboxReconciliation() {
+  const result = await window.workbench.getTokenboxReconciliation(tokenboxFilter());
+  if (!result?.success) throw new Error(result?.error || "TokenBox 中转站对账查询失败");
+  renderTokenboxReconciliation(result.reconciliation);
+}
+
+async function importTokenboxRelay() {
+  const file = elements.tokenboxRelayFile?.files?.[0];
+  if (!file) return;
+  if (file.size > 50 * 1024 * 1024) {
+    setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, "中转站文件超过 50 MB", "error");
+    return;
+  }
+  setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, `正在导入 ${file.name}…`, "loading");
+  try {
+    const result = await window.workbench.importTokenboxRelay({ content: await file.text(), sourceName: file.name, format: "auto" });
+    if (!result?.success) throw new Error(result?.error || "TokenBox 中转站导入失败");
+    await refreshTokenboxReconciliation();
+    setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, `已导入 ${formatTokenboxNumber(result.import?.records_imported)} 条记录`, "success");
+  } catch (error) {
+    setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error");
+  } finally {
+    if (elements.tokenboxRelayFile) elements.tokenboxRelayFile.value = "";
+  }
+}
+
+async function exportTokenboxReconciliation() {
+  const result = await window.workbench.exportTokenboxReconciliation({ filter: tokenboxFilter(), format: "json" });
+  if (!result?.success) throw new Error(result?.error || "TokenBox 对账导出失败");
+  downloadTokenboxText(result.content, result.filename || "tokenbox-reconciliation.json", "application/json;charset=utf-8");
+  setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, "已导出对账证据", "success");
+}
+
 async function refreshTokenbox() {
   if (tokenboxLoading) {
     tokenboxRefreshQueued = true;
@@ -1400,6 +1625,9 @@ async function refreshTokenbox() {
     const scan = result.scan || {};
     const dataAsOf = result.dashboard?.data_as_of ? `，数据截至 ${result.dashboard.data_as_of}` : "";
     setTokenboxStatus(`已更新：扫描 ${formatTokenboxNumber(scan.files_scanned)} 个文件，新增 ${formatTokenboxNumber(scan.events_added)} 条事件${dataAsOf}`, "success");
+    void refreshTokenboxReconciliation().catch((error) => {
+      setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error");
+    });
   } catch (error) {
     setTokenboxStatus(error?.message || String(error), "error");
   } finally {
@@ -1860,6 +2088,11 @@ function laneStatusForDrop(lane) {
   return "pending";
 }
 
+function taskStatusForDrop(task, lane) {
+  const currentStatus = String(task?.status || "pending");
+  return taskLaneForStatus(currentStatus) === lane ? currentStatus : laneStatusForDrop(lane);
+}
+
 function compareTasksForLane(a, b) {
   const dueA = String(a?.dueDate || "");
   const dueB = String(b?.dueDate || "");
@@ -1879,12 +2112,9 @@ function sortTasksForLane(tasks) {
     .map((entry) => entry.task);
 }
 
-// completed 任务的完成归属周：completedAt > updatedAt > dueDate；都没有则本周不删
+// completed 任务的完成归属周只读取 completedAt；缺失时间戳的历史记录保留。
 function completedOwnershipWeek(task) {
-  return isoWeekKeyFromIsoTimestamp(task?.completedAt)
-    || isoWeekKeyFromIsoTimestamp(task?.updatedAt)
-    || isoWeekKeyFromYmd(task?.dueDate)
-    || "";
+  return isoWeekKeyFromIsoTimestamp(task?.completedAt) || "";
 }
 
 function shouldPurgeCompletedTask(task, currentWeekKey = isoWeekKeyFromDate(new Date())) {
@@ -1916,6 +2146,7 @@ window.defaultDueDateForWeek = defaultDueDateForWeek;
 window.normalizeDueDate = normalizeDueDate;
 window.taskLaneForStatus = taskLaneForStatus;
 window.laneStatusForDrop = laneStatusForDrop;
+window.taskStatusForDrop = taskStatusForDrop;
 window.sortTasksForLane = sortTasksForLane;
 window.shouldPurgeCompletedTask = shouldPurgeCompletedTask;
 window.purgeCompletedFromPreviousWeeks = purgeCompletedFromPreviousWeeks;
@@ -1947,6 +2178,11 @@ function isCardsArtifactName(name) {
   return /^cards\.md$/i.test(String(name || ""));
 }
 
+function artifactPathEquals(left, right) {
+  const normalize = (value) => String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  return Boolean(left && right) && normalize(left) === normalize(right);
+}
+
 // 根据已有路径 + 文件夹文件列表推导三类产物徽章（chat / report / cards）
 function taskArtifactsFromPathsAndFiles(paths = {}, files = []) {
   const list = Array.isArray(files) ? files : [];
@@ -1958,12 +2194,14 @@ function taskArtifactsFromPathsAndFiles(paths = {}, files = []) {
     return { name, path: String(entry?.path || ""), mtime: entry?.mtime, size: entry?.size };
   });
 
-  const chatFile = normalized.find((entry) => isChatArtifactName(entry.name));
-  const reportFile = normalized.find((entry) => isReportArtifactName(entry.name));
+  const chatFile = normalized.find((entry) => artifactPathEquals(entry.path, paths.chatLogPath))
+    || normalized.find((entry) => isChatArtifactName(entry.name));
+  const reportFile = normalized.find((entry) => artifactPathEquals(entry.path, paths.reportPath))
+    || normalized.find((entry) => isReportArtifactName(entry.name));
   const cardsFile = normalized.find((entry) => isCardsArtifactName(entry.name));
 
-  const chatPath = String(paths.chatLogPath || "") || chatFile?.path || "";
-  const reportPath = String(paths.reportPath || "") || reportFile?.path || "";
+  const chatPath = chatFile?.path || "";
+  const reportPath = reportFile?.path || "";
   const cardsPath = cardsFile?.path || "";
 
   return {
@@ -1986,6 +2224,7 @@ function taskArtifactsFromPathsAndFiles(paths = {}, files = []) {
 }
 
 window.taskArtifactsFromPathsAndFiles = taskArtifactsFromPathsAndFiles;
+window.artifactPathEquals = artifactPathEquals;
 window.isChatArtifactName = isChatArtifactName;
 window.isReportArtifactName = isReportArtifactName;
 window.isCardsArtifactName = isCardsArtifactName;
@@ -2587,6 +2826,20 @@ function railActionButton({ title, svg, onClick, danger = false }) {
   return button;
 }
 
+async function syncTaskArtifactPathAfterFileAction(previousPath, nextPath = "") {
+  const affected = weeklyTasks.filter((task) =>
+    pathLikeEqual(task.chatLogPath, previousPath) || pathLikeEqual(task.reportPath, previousPath)
+  );
+  for (const task of affected) {
+    const patch = {};
+    if (pathLikeEqual(task.chatLogPath, previousPath)) patch.chatLogPath = nextPath;
+    if (pathLikeEqual(task.reportPath, previousPath)) patch.reportPath = nextPath;
+    if (Object.keys(patch).length) await updateTaskFields(task.id, patch);
+    taskArtifactCache.delete(task.id);
+    scheduleArtifactRefresh(task.id, { force: true });
+  }
+}
+
 async function runTaskFileAction(action, file) {
   if (action === "copy") {
     try {
@@ -2624,6 +2877,7 @@ async function runTaskFileAction(action, file) {
     }
     const result = await window.workbench.taskFileAction("rename", file.path, { newName: trimmed });
     if (result?.ok) {
+      await syncTaskArtifactPathAfterFileAction(file.path, result.path || "");
       showToast(`已重命名为 ${result.name || trimmed}`, "success");
       refreshRailTray();
     } else {
@@ -2637,6 +2891,7 @@ async function runTaskFileAction(action, file) {
   if (!ok) {
     showToast(result?.error ? `文件操作失败：${result.error}` : "文件操作失败（文件可能已不存在）", "error");
   } else if (action === "delete") {
+    await syncTaskArtifactPathAfterFileAction(file.path, "");
     showToast(`已删除 ${file.name}`, "success");
   }
   if (action === "delete") refreshRailTray();
@@ -3162,7 +3417,7 @@ function normalizeWeeklyTask(task = {}) {
   const status = task.status || "pending";
   const completedAtRaw = String(task.completedAt || "").trim();
   const completedAt = status === "completed"
-    ? (completedAtRaw || "")
+    ? (completedAtRaw || new Date().toISOString())
     : "";
   return {
     id: task.id || `task-${Date.now()}`,
@@ -3265,9 +3520,12 @@ async function persistWeeklyTasks() {
 
 async function loadWeeklyTasks() {
   try {
-    weeklyTasks = (await window.workbench.readWeeklyTasks()).map(normalizeWeeklyTask);
+    const rawTasks = await window.workbench.readWeeklyTasks();
+    const importedCompletedNeedStamp = Array.isArray(rawTasks)
+      && rawTasks.some((task) => String(task?.status || "") === "completed" && !String(task?.completedAt || "").trim());
+    weeklyTasks = (Array.isArray(rawTasks) ? rawTasks : []).map(normalizeWeeklyTask);
     weeklyTasksLoadedSuccessfully = true;
-    let reconciled = false;
+    let reconciled = importedCompletedNeedStamp;
     const retainedTasks = [];
     for (const task of weeklyTasks) {
       if (task.deletePending) {
@@ -3493,14 +3751,26 @@ function reportRowFromTask(task, existingRow = null) {
   });
 }
 
-function generateReportRowsFromTasks(report) {
-  const existingByTaskId = new Map(
-    report.rows.filter((row) => row.sourceTaskId).map((row) => [row.sourceTaskId, row])
-  );
-  const generated = weeklyTasks.map((task) => reportRowFromTask(task, existingByTaskId.get(task.id)));
-  const manualRows = report.rows.filter((row) => !row.sourceTaskId);
-  return [...generated, ...manualRows];
+function taskBelongsToReportPeriod(task, periodKey) {
+  const explicitPeriod = String(task?.periodKey || "").trim();
+  if (explicitPeriod) return explicitPeriod === periodKey;
+  return isoWeekKeyFromYmd(task?.dueDate) === periodKey;
 }
+
+function generateReportRowsFromTasks(report) {
+  const rows = Array.isArray(report?.rows) ? report.rows : [];
+  const existingByTaskId = new Map(
+    rows.filter((row) => row.sourceTaskId).map((row) => [row.sourceTaskId, row])
+  );
+  const reportTasks = weeklyTasks.filter((task) => taskBelongsToReportPeriod(task, report.periodKey));
+  const generated = reportTasks.map((task) => reportRowFromTask(task, existingByTaskId.get(task.id)));
+  const generatedIds = new Set(reportTasks.map((task) => task.id));
+  const orphanSourceRows = rows.filter((row) => row.sourceTaskId && !generatedIds.has(row.sourceTaskId));
+  const manualRows = rows.filter((row) => !row.sourceTaskId);
+  return [...generated, ...orphanSourceRows, ...manualRows];
+}
+
+window.taskBelongsToReportPeriod = taskBelongsToReportPeriod;
 
 function markWeeklyReportDirty() {
   weeklyReportDirty = true;
@@ -3965,6 +4235,31 @@ function setupTokenboxEvents() {
   elements.tokenboxRefresh?.addEventListener("click", reload);
   elements.tokenboxProvider?.addEventListener("change", reload);
   elements.tokenboxRange?.addEventListener("change", reload);
+  elements.tokenboxBackup?.addEventListener("click", () => {
+    void backupTokenboxDatabase().catch((error) => setTokenboxInlineStatus(elements.tokenboxAuditStatus, error?.message || String(error), "error"));
+  });
+  elements.tokenboxRebuild?.addEventListener("click", () => void rebuildTokenboxLedger());
+  elements.tokenboxExportJson?.addEventListener("click", () => {
+    void exportTokenboxDashboard("json").catch((error) => setTokenboxStatus(error?.message || String(error), "error"));
+  });
+  elements.tokenboxExportCsv?.addEventListener("click", () => {
+    void exportTokenboxDashboard("csv").catch((error) => setTokenboxStatus(error?.message || String(error), "error"));
+  });
+  elements.tokenboxAudit?.addEventListener("click", () => void runTokenboxAudit());
+  elements.tokenboxExportAuditJson?.addEventListener("click", () => {
+    void exportTokenboxAudit("json").catch((error) => setTokenboxInlineStatus(elements.tokenboxAuditStatus, error?.message || String(error), "error"));
+  });
+  elements.tokenboxExportAuditMd?.addEventListener("click", () => {
+    void exportTokenboxAudit("md").catch((error) => setTokenboxInlineStatus(elements.tokenboxAuditStatus, error?.message || String(error), "error"));
+  });
+  elements.tokenboxRelayImport?.addEventListener("click", () => elements.tokenboxRelayFile?.click());
+  elements.tokenboxRelayFile?.addEventListener("change", () => void importTokenboxRelay());
+  elements.tokenboxRelayReconcile?.addEventListener("click", () => {
+    void refreshTokenboxReconciliation().catch((error) => setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error"));
+  });
+  elements.tokenboxExportReconciliation?.addEventListener("click", () => {
+    void exportTokenboxReconciliation().catch((error) => setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error"));
+  });
 }
 
 function taskProgressInfo(task) {
@@ -4255,13 +4550,17 @@ async function refreshTaskArtifacts(taskId, { force = false } = {}) {
   });
   patchTaskCardArtifacts(taskId, badges);
 
-  // 路径为空且发现标准文件时写回；已有路径不覆盖
+  // 文件夹扫描是产物路径的事实来源：发现新路径时 retarget，磁盘已删除时清空旧路径。
   const pathPatch = {};
-  if (!current.chatLogPath && badges.chat.ready && badges.chat.path) {
+  if (badges.chat.ready && badges.chat.path && !artifactPathEquals(current.chatLogPath, badges.chat.path)) {
     pathPatch.chatLogPath = badges.chat.path;
+  } else if (current.chatLogPath && !badges.chat.ready) {
+    pathPatch.chatLogPath = "";
   }
-  if (!current.reportPath && badges.report.ready && badges.report.path) {
+  if (badges.report.ready && badges.report.path && !artifactPathEquals(current.reportPath, badges.report.path)) {
     pathPatch.reportPath = badges.report.path;
+  } else if (current.reportPath && !badges.report.ready) {
+    pathPatch.reportPath = "";
   }
   if (Object.keys(pathPatch).length) {
     await updateTaskFields(taskId, pathPatch);
@@ -4528,15 +4827,15 @@ function setupTaskLaneDragAndDrop() {
 async function applyTaskCardDrop({ taskId, targetLane, beforeId = null, afterId = null }) {
   const task = weeklyTasks.find((candidate) => candidate.id === taskId);
   if (!task || !targetLane) return;
+  const fromLane = taskLaneForStatus(task.status);
 
   // 活动流水线任务跨区/重排前先暂停，避免假运行
-  if (pipelineState.active && pipelineState.taskId === taskId) {
+  if (fromLane !== targetLane && pipelineState.active && pipelineState.taskId === taskId) {
     await pauseTaskAutomation(taskId);
   }
 
-  const nextStatus = laneStatusForDrop(targetLane);
-  const fromLane = taskLaneForStatus(task.status);
-  const statusChanged = fromLane !== targetLane || task.status !== nextStatus;
+  const nextStatus = taskStatusForDrop(task, targetLane);
+  const statusChanged = task.status !== nextStatus;
 
   // 目标区内的任务顺序（不含被拖任务）
   const laneTasks = sortTasksForLane(
@@ -6178,6 +6477,15 @@ function showToast(message, type = "success") {
     setTimeout(() => toast.remove(), 300);
   }, 2500);
 }
+
+let lastLocalServerError = "";
+function handleLocalServerStatus(status = {}) {
+  const error = String(status.error || "");
+  if (!error || error === lastLocalServerError) return;
+  lastLocalServerError = error;
+  showToast(`本地服务端口 ${status.port || 38924} 启动失败：${error}`, "error");
+}
+
 document.querySelector("#terminal-close").addEventListener("click", () => toggleTerminal(false));
 elements.rightSidebarClose.addEventListener("click", () => toggleRightSidebar(false));
 elements.bottomSidebarClose.addEventListener("click", () => toggleBottomSidebar(false));
@@ -6808,6 +7116,8 @@ setSidebarCollapsed(localStorage.getItem(sidebarStorageKey) === "true");
 window.workbench.getWorkbenchPrefs().then((prefs) => {
   applyWorkbenchTheme(prefs?.theme);
 }).catch(() => {});
+window.workbench.onLocalServerStatus(handleLocalServerStatus);
+window.workbench.getLocalServerStatus().then(handleLocalServerStatus).catch(() => {});
 loadWeeklyTasks().then(() => loadWeeklyReports());
 window.workbench.onDownloadCompleted(handleDownloadCompleted);
 window.workbench.onUploadChooseFiles(handleUploadChooseFiles);

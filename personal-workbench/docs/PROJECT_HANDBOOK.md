@@ -84,7 +84,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 平台字段试注入 | 预研 / 辅助能力 | `platformFieldMap`、`platform:test-inject` |
 | 主题 | 已实现 | `sky`、`morning`、`night` |
 | 周报中心首版 | 已实现 | `__weeklyreport__`、历史周次、模板姓名/标题、编辑器、预览、HTML/Markdown/DOCX 导出和表格复制 |
-| Token 统计 | 已接入协议，构建 sidecar 后可用 | `__tokenbox__`、TokenBox Rust sidecar、Codex/Claude Code 日志扫描、模型/日期筛选和账本汇总 |
+| Token 统计 | 已实现，构建 sidecar 后可用 | `__tokenbox__`、TokenBox Rust sidecar、Codex/Claude Code 日志扫描、模型/日期筛选、证据审计、导出和 relay 对账 |
 | 直接上传企业微信/腾讯文档 | 未实现 | 当前使用 HTML/纯文本剪贴板或 DOCX 文件导出 |
 
 ### 周报中心首版行为
@@ -138,7 +138,7 @@ flowchart LR
 - 创建主窗口，配置 `contextIsolation: true`、`nodeIntegration: false` 和 `webviewTag`。
 - 管理 Electron session、下载、文件系统、任务目录、本地 HTTP 服务、终端 PTY、CLI 和桌面应用进程。
 - 负责所有需要系统权限的操作：读写文件、打开目录、系统文件选择器、剪贴板、导出文件。
-- 启动并管理 TokenBox sidecar；仅允许固定的 `refresh_dashboard` 请求经过 `tokenbox:refresh` IPC，不把任意命令、路径或方法暴露给 renderer。
+- 启动并管理 TokenBox sidecar；TokenBox IPC 每个入口绑定固定 gateway method，不把任意命令、路径或 method 转发给 renderer。
 - 通过 IPC 验证任务路径、扩展能力和本地服务 Token，不把 Node.js 直接暴露给网页。
 
 #### `preload.js`：主窗口的最小桥接层
@@ -260,10 +260,12 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 ### 5.5 Token 统计与 TokenBox 账本
 
 - 工作台不解析原始日志，也不在 renderer 内复制计费规则；`main.js` 启动 `tokenbox-bridge.exe`，通过 JSONL stdin/stdout 调用 TokenBox 的 Rust 核心。
-- 当前首个方法是 `refresh_dashboard`：sidecar 先增量扫描 Codex / Claude Code JSONL，再从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本，返回扫描摘要与 `DashboardSnapshot`。
-- renderer 只提交 provider、from、to 三个筛选字段，展示总 Token、官方估算成本、请求次数、模型用量和每日用量；未识别模型和扫描警告保留显示。
-- sidecar 不是 HTTP 服务，不接收任意文件路径、shell 命令或原始提示词；工作台的 preload 只暴露 `getTokenboxStatus` 与 `refreshTokenbox`。
+- sidecar 通过 JSONL gateway 暴露 `refresh_dashboard`、`get_dashboard`、`get_evidence`、`export_dashboard`、`get_audit_summary`、`export_audit_report`、`import_relay`、`get_reconciliation`、`backup_database`、`rebuild_usage_ledger` 和对应导出接口；`refresh_dashboard` 先增量扫描 Codex / Claude Code JSONL，再从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本。
+- renderer 只提交 provider、from、to、model、format 等白名单参数，展示总 Token、billable input、官方估算成本、中转站实际金额、请求次数、模型用量、每日用量、事件级 evidence、源日志/SQLite 审计和 relay 逐字段对账；未识别模型和扫描警告保留显示，并提供 SQLite 备份和带备份的派生账本重建。
+- sidecar 不是 HTTP 服务，不接收任意文件路径、shell 命令或 prompt/response/tool 内容；relay 导入只写规范化账单字段与 source hash。工作台 preload 暴露固定 TokenBox 操作，不暴露任意 method 或命令转发。
 - 开发态可从 `../../tokenbox/src-tauri/target/release/tokenbox-bridge.exe` 发现 sidecar；打包态使用 `resources/sidecars/tokenbox-bridge.exe`。运行 `npm run build:bridge:stage` 后再 `npm run dist` 才会把统计能力放进安装包。
+
+`npm run build:bridge` uses `scripts/build-tokenbox-bridge.js`: it selects MSVC when `link.exe` exists, otherwise the installed GNU Rust toolchain plus `TOKENBOX_MINGW_BIN` or a WinGet MinGW package.
 
 ## 6. 任务与文件数据流
 
@@ -285,10 +287,19 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 - 本地 HTTP 服务默认监听 `38924`，敏感路由需要 session Token。
 - `local-apps` 静态服务和 `temp/tasks` IPC 必须进行绝对路径边界检查，不能只用字符串前缀比较。
 - 扩展 API 按扩展 ID、manifest 权限和 host permission 门控；修复扩展问题时不能把权限扩大到 `<all_urls>`。
-- TokenBox sidecar 只从固定候选路径启动，并且要求文件扩展名为 `.exe`；renderer 不能指定 sidecar 路径、方法名或启动参数。sidecar 的 stdout 只承载 JSONL 协议，stderr 只作为诊断信息。
+- TokenBox sidecar 只从固定候选路径启动，并且要求文件扩展名为 `.exe`；renderer 不能指定 sidecar 路径、方法名或启动参数。sidecar 的 stdout 只承载 JSONL 协议，stderr 只作为诊断信息。relay content 在主进程和 Rust gateway 两侧均限制为 50 MiB。
 - 所有用户路径、Cookie、Token、扩展目录和调试日志都不应写进 Markdown、测试夹具或 Git 提交。
 
 安全相关代码变更必须至少运行静态安全回归、HTTP 安全 E2E，并记录结果；不能只凭“页面看起来正常”结案。
+
+### 7.1 Adversarial review remediation (2026-07-25)
+
+- Desktop application launch is main-process gated by canonical realpath, approved extension, and a persisted allowlist populated only by the file picker or dropped-file registration.
+- `prefs:set-workbench` cannot set `todoFilePath`; the main process accepts only a canonical existing `.txt` selected by the dialog for read/write.
+- Upload injection accepts canonical files inside the captured active task folder or paths approved by the main-process picker; cookie HTTP access requires an explicit `http`/`https` URL.
+- Local webviews receive a per-tab scoped token with no cookie route; the full session token is not exposed through the renderer preload.
+- Weekly report generation filters tasks by `periodKey` and retains orphan source rows. Completed imports receive `completedAt`; same-lane reorder preserves status.
+- Artifact refresh treats disk state as authoritative, retargets renamed paths, clears deleted paths, and the fixed-port local server reports startup failures through IPC and a toast.
 
 ## 8. 测试与验收
 
@@ -301,7 +312,7 @@ npm run test:e2e
 npm run test:all
 npm run pack
 npm run dist
-npm run build:bridge:stage  # 需要本机 Rust Windows linker
+npm run build:bridge:stage  # 自动选择 MSVC 或 GNU toolchain
 ```
 
 当前 E2E 覆盖：启动冒烟、卡片舱、P1 缺陷、HTTP 安全、主题和 webview 生命周期、下载归档、任务重启恢复、任务状态/子任务、周报生成与持久化。
@@ -380,6 +391,8 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-25 | feat | 完成 TokenBox headless JSONL gateway 与工作台扩展：模型事件证据、源日志/SQLite 审计、JSON/CSV 导出、中转站导入和逐字段对账；Rust core 继续拥有扫描、去重、游标、Decimal 计价和账本规则 | `../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs`、`../../tokenbox/src-tauri/src/commands/mod.rs`、`../../tokenbox/src-tauri/src/storage/mod.rs`、`main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm test`（81/81）；`npm run test:all`；`npm run build:bridge:stage`；TokenBox `npm run build`；桥接 UI smoke（2,495 Token / 3 models / audit PASS） |
+| 2026-07-25 | fix | Apply the 2026-07-24 adversarial review: IPC path/token boundaries, report period/orphan preservation, completion timestamps, same-lane reorder, artifact lifecycle, and local server status | `main.js`, `preload.js`, `renderer.js`, `tests/adversarial-fix-regression.test.js` | `npm test`; `npm run test:e2e` |
 | 2026-07-24 | docs/chore | 完成洁癖收尾：同步当前稳定基线与工作区状态，清理已关闭回归登记，标记历史计划与验收清单，明确 E2E 挂起和 sidecar linker 阻塞；确认运行时个人数据、E2E 夹具与本地 agent 配置边界 | `README.md`、`.gitignore`、`docs/PROJECT_HANDBOOK.md`、`docs/FEATURE_PLAN_THREE.md`、`docs/ACCEPTANCE_CHECKLIST_ABC.md`、`regression-checklist.md` | `npm run check`；`npm test`（69/69）；`npm run pack`；只读 Git/残留盘点 |
 | 2026-07-22 | feat/refactor | 接入长期 Token 统计方案：TokenBox 增加 headless JSONL sidecar，工作台通过白名单 IPC 展示模型/日期筛选、账本汇总和扫描警告；补充 sidecar staging 与契约测试 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css`、`package.json`、`scripts/stage-tokenbox-bridge.js`、`tests/tokenbox-integration-contract.test.js`、`../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs` | `npm test`（69 项）；TokenBox `npm run build`；`cargo fmt --check`；真实 bridge 构建待本机 linker |
 | 2026-07-17 | fix | 删除任务确认弹窗加宽并补内边距/换行，避免说明文字被裁切 | `index.html`、`style.css`、`docs/PROJECT_HANDBOOK.md` | 打开删除确认，长任务名说明完整可见 |

@@ -34,6 +34,8 @@ let activeTaskStep = "idle";
 let activeTaskSchool = "";
 let activeTaskCourse = "";
 const localAppsMap = new Map();
+const localAppAccessTokens = new Map();
+const localAppTokensByTabId = new Map();
 const runningDesktopApps = new Map();
 const tabPtyProcesses = new Map();
 const embeddedWindows = new Map();
@@ -224,6 +226,11 @@ function handleCommandLineArgs(args) {
       const stat = fs.statSync(targetPath);
       isDirectory = stat.isDirectory();
       if (stat.isFile()) {
+        if (DESKTOP_APP_EXTENSIONS.has(path.extname(targetPath).toLowerCase())) {
+          const approvedPath = approveDesktopAppPath(targetPath);
+          if (!approvedPath) return;
+          targetPath = approvedPath;
+        }
         const lowerPath = targetPath.toLowerCase();
         if (lowerPath.endsWith(".md") || lowerPath.endsWith(".txt") || lowerPath.endsWith(".json")) {
           try {
@@ -248,12 +255,23 @@ const localServerPort = 38924;
 const extensionApiBaseUrl = "https://cloudapi.polymas.com";
 const extensionAuthCookieUrl = "https://hike-teaching-center.polymas.com/";
 const extensionAuthCookieName = "ai-poly";
+const LOCAL_APP_ALLOWED_ROUTES = new Set([
+  "/events",
+  "/broadcast",
+  "/state",
+  "/tabs",
+  "/active-tab",
+  "/active-task"
+]);
+const DESKTOP_APP_EXTENSIONS = new Set([".exe", ".com", ".bat", ".cmd"]);
+const desktopAppAllowlist = new Set();
 const downloadRoot = process.env.PERSONAL_WORKBENCH_DOWNLOAD_ROOT
   ? path.resolve(process.env.PERSONAL_WORKBENCH_DOWNLOAD_ROOT)
   : path.join(__dirname, "temp");
 const weeklyTasksPath = process.env.PERSONAL_WORKBENCH_WEEKLY_TASKS_PATH
   ? path.resolve(process.env.PERSONAL_WORKBENCH_WEEKLY_TASKS_PATH)
   : path.join(__dirname, "..", "tasks", "weekly_tasks.json");
+let localServerStatus = { port: localServerPort, running: false, error: "" };
 
 function weeklyReportsPath() {
   return path.join(app.getPath("userData"), "weekly-reports.json");
@@ -304,6 +322,67 @@ function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
+}
+
+function updateLocalServerStatus(patch = {}) {
+  localServerStatus = { ...localServerStatus, ...patch, port: localServerPort };
+  sendToRenderer("local-server:status", { ...localServerStatus });
+}
+
+function desktopAppAllowlistPath() {
+  return path.join(app.getPath("userData"), "desktop-app-allowlist.json");
+}
+
+function desktopAppPathKey(filePath) {
+  return path.normalize(String(filePath || "")).toLowerCase();
+}
+
+function canonicalDesktopAppPath(candidate) {
+  const raw = String(candidate || "").trim();
+  if (!raw || !path.isAbsolute(raw)) return "";
+  try {
+    const realPath = fs.realpathSync(raw);
+    const stat = fs.statSync(realPath);
+    if (!stat.isFile() || !DESKTOP_APP_EXTENSIONS.has(path.extname(realPath).toLowerCase())) return "";
+    return realPath;
+  } catch {
+    return "";
+  }
+}
+
+function loadDesktopAppAllowlist() {
+  desktopAppAllowlist.clear();
+  try {
+    const saved = JSON.parse(fs.readFileSync(desktopAppAllowlistPath(), "utf8"));
+    if (!Array.isArray(saved)) return;
+    for (const candidate of saved) {
+      const realPath = canonicalDesktopAppPath(candidate);
+      if (realPath) desktopAppAllowlist.add(desktopAppPathKey(realPath));
+    }
+  } catch {}
+}
+
+function saveDesktopAppAllowlist() {
+  try {
+    const entries = [...desktopAppAllowlist].sort();
+    fs.mkdirSync(path.dirname(desktopAppAllowlistPath()), { recursive: true });
+    fs.writeFileSync(desktopAppAllowlistPath(), JSON.stringify(entries, null, 2), "utf8");
+  } catch (error) {
+    console.warn("保存桌面程序登记表失败:", error);
+  }
+}
+
+function approveDesktopAppPath(candidate) {
+  const realPath = canonicalDesktopAppPath(candidate);
+  if (!realPath) return "";
+  desktopAppAllowlist.add(desktopAppPathKey(realPath));
+  saveDesktopAppAllowlist();
+  return realPath;
+}
+
+function isApprovedDesktopAppPath(candidate) {
+  const realPath = canonicalDesktopAppPath(candidate);
+  return realPath && desktopAppAllowlist.has(desktopAppPathKey(realPath)) ? realPath : "";
 }
 
 function tokenboxBridgeCandidates() {
@@ -481,6 +560,45 @@ function normalizeTokenboxFilter(value) {
   return normalized;
 }
 
+function normalizeTokenboxFormat(value, allowed) {
+  const format = String(value || "").trim().toLowerCase();
+  if (!allowed.includes(format)) {
+    throw new Error(`TokenBox format must be one of ${allowed.join(", ")}`);
+  }
+  return format;
+}
+
+function normalizeTokenboxModel(value) {
+  const model = String(value || "").trim();
+  if (!model) throw new Error("TokenBox model is required");
+  if (model.length > 256) throw new Error("TokenBox model is too long");
+  return model;
+}
+
+function normalizeTokenboxProvider(value, { allowEmpty = true } = {}) {
+  const provider = String(value || "").trim().toLowerCase();
+  if (!provider && allowEmpty) return "";
+  if (!["all", "codex", "claude", "claude_code"].includes(provider)) {
+    throw new Error("TokenBox provider is not supported");
+  }
+  return provider;
+}
+
+function normalizeTokenboxSourceName(value) {
+  const sourceName = String(value || "").trim();
+  if (sourceName.length > 512) throw new Error("TokenBox source name is too long");
+  return sourceName;
+}
+
+async function callTokenboxBridge(method, params = {}) {
+  try {
+    const result = await requestTokenboxBridge(method, params);
+    return { success: true, ...result };
+  } catch (error) {
+    return { success: false, error: error?.message || String(error) };
+  }
+}
+
 function setAppMenu() {
   const template = [
     {
@@ -575,10 +693,12 @@ function canLoadInWebview(url) {
 // 任一环节异常 → 降级为主进程系统选择器注入，保证上传按钮不会点了没反应。
 const webviewContentsSet = new Set();
 const pendingUploadRequests = new Map();
+const approvedUploadPaths = new Map();
 const debuggerMessageHandlers = new WeakMap();
 const appAttachedDebuggers = new WeakSet();
 let uploadRequestSeq = 0;
 let uploadInterceptionEnabled = false;
+const UPLOAD_APPROVAL_TTL_MS = 2 * 60 * 1000;
 
 function setWebviewFileChooserInterception(contents, enabled) {
   if (contents.isDestroyed()) return;
@@ -648,6 +768,54 @@ async function injectUploadFiles(contents, backendNodeId, paths) {
   return { ok: true, injected: paths.length };
 }
 
+function uploadPathKey(filePath) {
+  return path.normalize(String(filePath || "")).toLowerCase();
+}
+
+function canonicalUploadFilePath(candidate) {
+  const raw = String(candidate || "").trim();
+  if (!raw) return "";
+  try {
+    const realPath = fs.realpathSync(raw);
+    return fs.statSync(realPath).isFile() ? realPath : "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberApprovedUploadPaths(paths = []) {
+  const now = Date.now();
+  for (const candidate of Array.isArray(paths) ? paths : []) {
+    const realPath = canonicalUploadFilePath(candidate);
+    if (realPath) approvedUploadPaths.set(uploadPathKey(realPath), { path: realPath, approvedAt: now });
+  }
+}
+
+function cleanupApprovedUploadPaths() {
+  const cutoff = Date.now() - UPLOAD_APPROVAL_TTL_MS;
+  for (const [key, entry] of approvedUploadPaths) {
+    if (!entry || entry.approvedAt < cutoff || !fs.existsSync(entry.path)) approvedUploadPaths.delete(key);
+  }
+}
+
+function validateUploadPaths(paths, taskFolder = "") {
+  if (!Array.isArray(paths)) return { ok: false, error: "上传路径必须是数组" };
+  if (!paths.length) return { ok: true, paths: [] };
+  cleanupApprovedUploadPaths();
+  const accepted = [];
+  for (const candidate of paths) {
+    const realPath = canonicalUploadFilePath(candidate);
+    if (!realPath) return { ok: false, error: "上传文件不存在或不是文件" };
+    const insideTaskFolder = Boolean(taskFolder && resolveContainedRealPath(taskFolder, realPath));
+    const approval = approvedUploadPaths.get(uploadPathKey(realPath));
+    if (!insideTaskFolder && !approval) {
+      return { ok: false, error: "上传文件未通过工作台文件选择或当前任务目录校验" };
+    }
+    accepted.push(realPath);
+  }
+  return { ok: true, paths: accepted };
+}
+
 // 降级路径：浮层流程不可用时，直接弹系统选择器并注入，绝不让上传点击无响应
 async function fallbackSystemChooser(contents, backendNodeId, mode) {
   try {
@@ -655,7 +823,9 @@ async function fallbackSystemChooser(contents, backendNodeId, mode) {
     if (mode === "selectMultiple") properties.push("multiSelections");
     const result = await dialog.showOpenDialog(mainWindow ?? undefined, { properties });
     if (result.canceled || !result.filePaths.length) return;
-    await injectUploadFiles(contents, backendNodeId, result.filePaths);
+    rememberApprovedUploadPaths(result.filePaths);
+    const validated = validateUploadPaths(result.filePaths, activeTaskFolder);
+    if (validated.ok) await injectUploadFiles(contents, backendNodeId, validated.paths);
   } catch (error) {
     console.error("上传降级系统选择器失败:", error);
   }
@@ -670,7 +840,12 @@ function handleFileChooserOpened(contents, params = {}) {
   }
   uploadRequestSeq += 1;
   const requestId = uploadRequestSeq;
-  pendingUploadRequests.set(requestId, { contents, backendNodeId, mode: params.mode });
+  pendingUploadRequests.set(requestId, {
+    contents,
+    backendNodeId,
+    mode: params.mode,
+    taskFolder: activeTaskFolder
+  });
   try {
     sendToRenderer("upload:choose-files", { requestId, mode: params.mode || "selectSingle" });
   } catch (error) {
@@ -682,7 +857,7 @@ function handleFileChooserOpened(contents, params = {}) {
 
 async function getWorkbenchCookies(details = {}) {
   const filter = { ...details };
-  if (!filter.url && /^https?:\/\//i.test(activeTabInfo.url)) filter.url = activeTabInfo.url;
+  if (!/^https?:\/\//i.test(String(filter.url || ""))) return [];
   try {
     return await workbenchSession().cookies.get(filter);
   } catch {
@@ -810,6 +985,8 @@ function serveFile(res, filePath) {
 
 function tokenCanAccessRoute(token, route) {
   if (token === sessionToken) return true;
+  const localAppCapabilities = localAppAccessTokens.get(token);
+  if (localAppCapabilities) return localAppCapabilities.routes.has(route);
   const capabilities = extensionAccessTokens.get(token);
   if (!capabilities) return false;
   if (route === "/active-tab") return Boolean(capabilities.tabs);
@@ -875,6 +1052,7 @@ function getRequestBody(req) {
 
 function startLocalServer() {
   if (localServer) return;
+  updateLocalServerStatus({ running: false, error: "" });
 
   localServer = http.createServer((req, res) => {
     void (async () => {
@@ -939,16 +1117,30 @@ function startLocalServer() {
 
     if (parsedUrl.pathname === "/cookies") {
       const filter = {};
-      const url = parsedUrl.searchParams.get("url");
+      const url = String(parsedUrl.searchParams.get("url") || "").trim();
       const name = parsedUrl.searchParams.get("name");
-      if (url) filter.url = url;
+      if (!/^https?:\/\//i.test(url)) {
+        sendJson(res, 400, { error: "Cookie URL is required and must use http or https" });
+        return;
+      }
+      try {
+        const parsedCookieUrl = new URL(url);
+        if (!["http:", "https:"].includes(parsedCookieUrl.protocol) || !parsedCookieUrl.hostname) {
+          sendJson(res, 400, { error: "Cookie URL is invalid" });
+          return;
+        }
+      } catch {
+        sendJson(res, 400, { error: "Cookie URL is invalid" });
+        return;
+      }
+      filter.url = url;
       if (name) filter.name = name;
       const scopedCapabilities = token === sessionToken ? null : extensionAccessTokens.get(token);
       if (scopedCapabilities && !extensionCanAccessUrl(scopedCapabilities, url)) {
         sendJson(res, 403, { error: "Cookie host permission denied" });
         return;
       }
-      const cookies = await getWorkbenchCookies(filter);
+      const cookies = await workbenchSession().cookies.get(filter);
       extensionDebugLog("local-server:cookies", {
         url: filter.url || "",
         name: filter.name || "",
@@ -1070,10 +1262,16 @@ function startLocalServer() {
 
   localServer.on("error", (error) => {
     extensionDebugLog("local-server:error", { port: localServerPort, error: error?.message || String(error) });
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
+    }
+    updateLocalServerStatus({ running: false, error: error?.message || String(error) });
     localServer = null;
   });
   localServer.listen(localServerPort, "127.0.0.1", () => {
     extensionDebugLog("local-server:listening", { port: localServerPort });
+    updateLocalServerStatus({ running: true, error: "" });
   });
 
   heartbeatInterval = setInterval(() => {
@@ -1100,9 +1298,13 @@ function stopLocalServer() {
     } catch (e) {}
   });
   sseClients.length = 0;
-  if (!localServer) return;
+  if (!localServer) {
+    updateLocalServerStatus({ running: false });
+    return;
+  }
   localServer.close();
   localServer = null;
+  updateLocalServerStatus({ running: false });
 }
 
 
@@ -1272,6 +1474,25 @@ function loadWorkbenchPrefs() {
   } catch {
     return normalizeWorkbenchPrefs();
   }
+}
+
+function resolveConfiguredPathCandidate(candidate) {
+  const raw = String(candidate || "").trim();
+  if (!raw || path.extname(raw).toLowerCase() !== ".txt") return "";
+  try {
+    const realPath = fs.realpathSync(raw);
+    return fs.statSync(realPath).isFile() ? realPath : "";
+  } catch {
+    return "";
+  }
+}
+
+function resolveConfiguredTodoFilePath() {
+  const candidate = String(loadWorkbenchPrefs().todoFilePath || "").trim();
+  if (!candidate) return { path: "", error: "not-configured" };
+  if (path.extname(candidate).toLowerCase() !== ".txt") return { path: "", error: "invalid-file-type" };
+  const resolved = resolveConfiguredPathCandidate(candidate);
+  return resolved ? { path: resolved, error: "" } : { path: "", error: "not-found" };
 }
 
 // temp/tasks 防穿越校验：合法返回绝对路径，否则返回 null（所有任务文件 IPC 统一走这里）
@@ -1816,7 +2037,7 @@ function registerIpc() {
     allTabs = list;
     broadcastToSse("tab-list-changed", allTabs);
   });
-  ipcMain.handle("workbench:get-session-token", () => sessionToken);
+  ipcMain.handle("local-server:status", () => ({ ...localServerStatus }));
   ipcMain.handle("tab:cleanup-resources", (_event, tabId) => {
     const appInfo = runningDesktopApps.get(tabId);
     if (appInfo) {
@@ -1832,6 +2053,11 @@ function registerIpc() {
       embeddedWindowPendingRects.delete(tabId);
       runningDesktopApps.delete(tabId);
     }
+    const localId = String(tabId || "");
+    localAppsMap.delete(localId);
+    const localToken = localAppTokensByTabId.get(localId);
+    if (localToken) localAppAccessTokens.delete(localToken);
+    localAppTokensByTabId.delete(localId);
     const ptyProcess = tabPtyProcesses.get(tabId);
     if (ptyProcess) {
       try {
@@ -1873,7 +2099,9 @@ function registerIpc() {
     pendingUploadRequests.delete(Number(requestId));
     if (request.contents.isDestroyed()) return { ok: false, error: "页面已关闭" };
     try {
-      return await injectUploadFiles(request.contents, request.backendNodeId, paths);
+      const validated = validateUploadPaths(paths, request.taskFolder);
+      if (!validated.ok) return validated;
+      return await injectUploadFiles(request.contents, request.backendNodeId, validated.paths);
     } catch (error) {
       console.error("上传文件注入失败:", error);
       return { ok: false, error: error.message };
@@ -1935,13 +2163,18 @@ function registerIpc() {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ["openFile", "multiSelections"]
     });
-    return result.canceled ? [] : result.filePaths;
+    if (result.canceled) return [];
+    rememberApprovedUploadPaths(result.filePaths);
+    return result.filePaths;
   });
   // 工作台偏好：读取 / 保存（持久化到 userData）
   ipcMain.handle("prefs:get-workbench", () => loadWorkbenchPrefs());
   ipcMain.handle("prefs:set-workbench", (_event, prefs) => {
-    // 合并保存：renderer 只传部分字段时不丢其余偏好（如 todoFilePath）
-    return saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), ...prefs });
+    // todoFilePath 只由主进程文件选择器写入，renderer 传入的同名字段一律忽略。
+    const current = loadWorkbenchPrefs();
+    const next = prefs && typeof prefs === "object" && !Array.isArray(prefs) ? { ...prefs } : {};
+    delete next.todoFilePath;
+    return saveWorkbenchPrefs({ ...current, ...next, todoFilePath: current.todoFilePath });
   });
   // 选择待做任务.txt：系统对话框定位后写入偏好，之后一键直读
   ipcMain.handle("dialog:pick-todo-file", async () => {
@@ -1950,16 +2183,18 @@ function registerIpc() {
       filters: [{ name: "文本文件", extensions: ["txt"] }]
     });
     if (result.canceled || !result.filePaths.length) return "";
-    const picked = result.filePaths[0];
-    saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), todoFilePath: picked });
-    return picked;
+    const picked = String(result.filePaths[0] || "");
+    const resolved = path.extname(picked).toLowerCase() === ".txt" ? resolveConfiguredPathCandidate(picked) : "";
+    if (!resolved) return "";
+    saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), todoFilePath: resolved });
+    return resolved;
   });
   // 读取待做任务.txt：只允许读偏好中登记的这一个路径；UTF-8 + BOM 兼容；
   // 出现替换字符（U+FFFD）视为非 UTF-8 编码，提示用户转存，不做 GBK 转码（范围外）
   ipcMain.handle("tasks:read-todo-file", () => {
-    const todoPath = loadWorkbenchPrefs().todoFilePath;
-    if (!todoPath) return { ok: false, error: "not-configured" };
-    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    const resolved = resolveConfiguredTodoFilePath();
+    const todoPath = resolved.path;
+    if (!todoPath) return { ok: false, error: resolved.error };
     let text;
     try {
       text = fs.readFileSync(todoPath, "utf8");
@@ -2027,9 +2262,9 @@ function registerIpc() {
   // 写回待做任务.txt：只允许写偏好中登记的那一个 txt 路径 + 同目录 .bak（每次覆盖，保留最近一次）；
   // renderer 负责生成完整新文本（BOM/换行风格已在纯函数中保持），这里不做内容加工
   ipcMain.handle("tasks:write-todo-file", (_event, newText) => {
-    const todoPath = loadWorkbenchPrefs().todoFilePath;
-    if (!todoPath) return { ok: false, error: "not-configured" };
-    if (!fs.existsSync(todoPath)) return { ok: false, error: "not-found", path: todoPath };
+    const resolved = resolveConfiguredTodoFilePath();
+    const todoPath = resolved.path;
+    if (!todoPath) return { ok: false, error: resolved.error };
     if (typeof newText !== "string" || !newText.trim()) return { ok: false, error: "写回内容为空，已取消" };
     const backupPath = `${todoPath}.bak`;
     try {
@@ -2128,7 +2363,7 @@ function registerIpc() {
       } catch (error) {
         return { ok: false, error: `重命名失败: ${error.message}` };
       }
-      return { ok: true, path: destResolved, name: path.basename(destResolved) };
+      return { ok: true, previousPath: target, path: destResolved, name: path.basename(destResolved) };
     }
     return { ok: false, error: "未知操作" };
   });
@@ -2154,11 +2389,106 @@ function registerIpc() {
   ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
 
   ipcMain.handle("tokenbox:status", () => tokenboxBridgeStatus());
+  ipcMain.handle("tokenbox:backup", async () => callTokenboxBridge("backup_database", {}));
+  ipcMain.handle("tokenbox:rebuild", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const provider = normalizeTokenboxProvider(body.provider);
+      return await callTokenboxBridge("rebuild_usage_ledger", {
+        ...(provider && provider !== "all" ? { provider } : {})
+      });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
   ipcMain.handle("tokenbox:refresh", async (_event, payload = {}) => {
     try {
       const filter = normalizeTokenboxFilter(payload && typeof payload === "object" ? payload.filter : {});
       const result = await requestTokenboxBridge("refresh_dashboard", { filter });
       return { success: true, ...result };
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:evidence", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const filter = normalizeTokenboxFilter(body.filter || {});
+      const model = normalizeTokenboxModel(body.model);
+      const provider = normalizeTokenboxProvider(body.provider);
+      return await callTokenboxBridge("get_evidence", {
+        filter,
+        model,
+        ...(provider && provider !== "all" ? { provider } : {})
+      });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:export-dashboard", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const filter = normalizeTokenboxFilter(body.filter || {});
+      const format = normalizeTokenboxFormat(body.format, ["json", "csv"]);
+      return await callTokenboxBridge("export_dashboard", { filter, format });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:audit", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const filter = normalizeTokenboxFilter(body.filter || {});
+      return await callTokenboxBridge("get_audit_summary", { filter });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:export-audit", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const filter = normalizeTokenboxFilter(body.filter || {});
+      const format = normalizeTokenboxFormat(body.format, ["json", "md"]);
+      return await callTokenboxBridge("export_audit_report", { filter, format });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:relay-import", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      if (typeof body.content !== "string" || !body.content.trim()) {
+        throw new Error("TokenBox relay content is required");
+      }
+      if (Buffer.byteLength(body.content, "utf8") > 50 * 1024 * 1024) {
+        throw new Error("TokenBox relay file exceeds 50 MB");
+      }
+      const format = body.format ? normalizeTokenboxFormat(body.format, ["auto", "json", "csv"]) : "auto";
+      const sourceName = normalizeTokenboxSourceName(body.sourceName);
+      return await callTokenboxBridge("import_relay", {
+        content: body.content,
+        format,
+        source_name: sourceName
+      });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:reconciliation", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const filter = normalizeTokenboxFilter(body.filter || {});
+      return await callTokenboxBridge("get_reconciliation", { filter });
+    } catch (error) {
+      return { success: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle("tokenbox:export-reconciliation", async (_event, payload = {}) => {
+    try {
+      const body = payload && typeof payload === "object" ? payload : {};
+      const filter = normalizeTokenboxFilter(body.filter || {});
+      const format = normalizeTokenboxFormat(body.format, ["json", "csv"]);
+      return await callTokenboxBridge("export_reconciliation", { filter, format });
     } catch (error) {
       return { success: false, error: error?.message || String(error) };
     }
@@ -2244,26 +2574,48 @@ function registerIpc() {
 
   ipcMain.handle("dialog:select-file", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ["openFile"]
+      properties: ["openFile"],
+      filters: [{ name: "Desktop applications", extensions: ["exe", "com", "bat", "cmd"] }]
     });
     if (result.canceled) return null;
-    return result.filePaths[0];
+    return approveDesktopAppPath(result.filePaths[0]) || null;
   });
 
   ipcMain.handle("local-apps:register", (_event, tabId, baseDir) => {
-    if (tabId && baseDir) {
-      try {
-        const realBaseDir = fs.realpathSync(String(baseDir));
-        if (!fs.statSync(realBaseDir).isDirectory()) return false;
-        localAppsMap.set(String(tabId), realBaseDir);
-      } catch {
-        return false;
-      }
+    if (!tabId || !baseDir) return false;
+    try {
+      const realBaseDir = fs.realpathSync(String(baseDir));
+      if (!fs.statSync(realBaseDir).isDirectory()) return false;
+      localAppsMap.set(String(tabId), realBaseDir);
+      const id = String(tabId);
+      const previousToken = localAppTokensByTabId.get(id);
+      if (previousToken) localAppAccessTokens.delete(previousToken);
+      const token = crypto.randomBytes(24).toString("hex");
+      localAppTokensByTabId.set(id, token);
+      localAppAccessTokens.set(token, { tabId: id, routes: LOCAL_APP_ALLOWED_ROUTES });
+    } catch {
+      return false;
     }
     return true;
   });
 
+  ipcMain.handle("local-apps:get-token", (_event, tabId) => {
+    const token = localAppTokensByTabId.get(String(tabId || ""));
+    return token && localAppAccessTokens.has(token) ? token : "";
+  });
+
   ipcMain.handle("desktop-app:launch", async (_event, tabId, exePath, cwd, embedMode, rect) => {
+    const approvedExePath = isApprovedDesktopAppPath(exePath);
+    if (!approvedExePath) {
+      return { success: false, error: "桌面程序必须先通过工作台文件选择器或拖入登记" };
+    }
+    let approvedCwd = path.dirname(approvedExePath);
+    if (cwd) {
+      try {
+        const realCwd = fs.realpathSync(String(cwd));
+        if (fs.statSync(realCwd).isDirectory()) approvedCwd = realCwd;
+      } catch {}
+    }
     const existing = runningDesktopApps.get(tabId);
     if (existing) {
       try {
@@ -2275,7 +2627,7 @@ function registerIpc() {
           const parentHwnd = buffer.length === 8 
             ? buffer.readBigInt64LE(0).toString() 
             : buffer.readInt32LE(0).toString();
-          bindWindow(tabId, existing.pid, exePath, parentHwnd, rect);
+          bindWindow(tabId, existing.pid, approvedExePath, parentHwnd, rect);
         }
         
         return { success: true, pid: existing.pid };
@@ -2289,15 +2641,9 @@ function registerIpc() {
 
     try {
       const options = {};
-      if (cwd && fs.existsSync(cwd)) {
-        options.cwd = cwd;
-      } else {
-        try {
-          options.cwd = path.dirname(exePath);
-        } catch {}
-      }
+      options.cwd = approvedCwd;
 
-      const child = spawn(exePath, [], {
+      const child = spawn(approvedExePath, [], {
         ...options,
         detached: false,
         stdio: "ignore"
@@ -2339,7 +2685,7 @@ function registerIpc() {
         const parentHwnd = buffer.length === 8 
           ? buffer.readBigInt64LE(0).toString() 
           : buffer.readInt32LE(0).toString();
-        bindWindow(tabId, child.pid, exePath, parentHwnd, rect);
+        bindWindow(tabId, child.pid, approvedExePath, parentHwnd, rect);
       }
 
       return { success: true, pid: child.pid };
@@ -2487,6 +2833,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  loadDesktopAppAllowlist();
   setAppMenu();
   registerIpc();
   installEmbedHeaderFilter();

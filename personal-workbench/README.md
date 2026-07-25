@@ -75,6 +75,8 @@ npm start
 ### Token 统计（长期方案首版）
 - 工作台内置 Token 统计视图，按 provider 和日期范围展示总 Token、官方估算成本、请求次数、模型用量与每日用量。
 - 统计由独立 TokenBox Rust sidecar 扫描本机 Codex / Claude Code JSONL，并从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本；工作台不复制解析和计费逻辑。
+- 统计视图还提供事件级 evidence、源日志/SQLite 审计、JSON/CSV 看板导出、中转站 JSON/CSV 导入与逐字段 Token 对账；官方估算与中转站实际金额分栏显示，未定价模型保留 Token 并显示状态，并提供 SQLite 备份和带备份的派生账本重建。
+- sidecar 使用 JSONL gateway contract（`ping`、`refresh_dashboard`、`get_evidence`、`get_audit_summary`、`import_relay`、`get_reconciliation` 等），宿主只传 provider/date/model/filter，不传任意源文件路径或会话正文。
 - 开发态先构建并 staging sidecar：`npm run build:bridge:stage`；再运行 `npm start` 或 `npm run dist`。未构建 sidecar 时页面会明确提示，不会伪造统计数据。
 
 ## 安全说明

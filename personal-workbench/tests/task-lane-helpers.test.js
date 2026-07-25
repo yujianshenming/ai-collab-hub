@@ -55,6 +55,13 @@ test("laneStatusForDrop maps lanes to statuses", () => {
   assert.equal(helpers.taskLaneForStatus("completed"), "done");
 });
 
+test("same-lane drop preserves the task's active status", () => {
+  assert.equal(helpers.taskStatusForDrop({ status: "running" }, "active"), "running");
+  assert.equal(helpers.taskStatusForDrop({ status: "paused" }, "active"), "paused");
+  assert.equal(helpers.taskStatusForDrop({ status: "evaluating" }, "active"), "evaluating");
+  assert.equal(helpers.taskStatusForDrop({ status: "pending" }, "done"), "completed");
+});
+
 test("sortTasksForLane orders by dueDate then sortKey then school/course", () => {
   const sorted = helpers.sortTasksForLane([
     { id: "c", dueDate: "2026-07-20", sortKey: 0, school: "B", course: "1" },
