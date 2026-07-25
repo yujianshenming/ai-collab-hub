@@ -54,7 +54,10 @@ test("安全① resolveTaskPath 与 cleanupTaskFolder 在 main.js 中真实存�
 function makeStaticGuard(baseDir) {
   return (relPath) => {
     const resolvedBase = path.resolve(baseDir);
-    const targetPath = path.resolve(resolvedBase, relPath);
+    // Windows 反斜杠在 POSIX 上不是路径分隔符；测试向量先归一化，避免 Linux CI 假阴性。
+    // 生产路径在 Windows 宿主由 path.resolve 原生处理反斜杠。
+    const normalizedRel = String(relPath || "").replace(/\\/g, "/");
+    const targetPath = path.resolve(resolvedBase, normalizedRel);
     const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : `${resolvedBase}${path.sep}`;
     return targetPath !== resolvedBase && !targetPath.startsWith(baseWithSep) ? "403" : "ok";
   };
@@ -75,6 +78,8 @@ test("安全② serveFile 与 local-apps 边界判定在 main.js 真实存在", 
   assert.match(mainSrc, /function serveFile\(res, filePath\)/);
   assert.match(mainSrc, /targetPath !== resolvedBase && !targetPath\.startsWith\(baseWithSep\)/);
   assert.match(mainSrc, /sendJson\(res, 403, \{ error: "Access denied" \}\)/);
+  assert.match(mainSrc, /function resolveContainedRealPath\(baseDir, candidatePath\)/);
+  assert.match(mainSrc, /fs\.realpathSync\(candidatePath\)/);
 });
 
 // ============ 安全③：本地 HTTP API 鉴权（401） ============
@@ -87,14 +92,14 @@ test("安全③ 七条敏感路由要求 token，否则 401", () => {
     assert.ok(routes.includes(`"${r}"`), `secureRoutes 缺少 ${r}`);
   }
   // token 不匹配返回 401
-  assert.match(mainSrc, /if \(token !== sessionToken\)/);
+  assert.match(mainSrc, /if \(!tokenCanAccessRoute\(token, parsedUrl\.pathname\)\)/);
   assert.match(mainSrc, /res\.writeHead\(401/);
 });
 
 // ============ 安全④：token 注入白名单 + composedPath 外点关闭 ============
-test("安全④ token 仅注入 local-web / 本地回环页面（白名单）", () => {
-  // 注入条件门控：type === "local-web" || isLocalLoopbackUrl(currentUrl)
-  assert.match(rendererSrc, /if \(type === "local-web" \|\| isLocalLoopbackUrl\(currentUrl\)\)/);
+test("安全④ token 仅注入当前标签注册的本地项目地址", () => {
+  assert.match(rendererSrc, /if \(isRegisteredLocalAppUrl\(tab, currentUrl\)\)/);
+  assert.match(rendererSrc, /parsed\.pathname\.startsWith\(`\/local-apps\/\$\{encodeURIComponent\(tab\.id\)\}\/`\)/);
   // isLocalLoopbackUrl 仅放行 localhost / 127.0.0.1
   assert.match(rendererSrc, /\["localhost", "127\.0\.0\.1"\]\.includes\(parsed\.hostname\)/);
   // 不存在无差别注入（旧 bug：dom-ready 对所有 webview 注入）
@@ -147,16 +152,15 @@ test("V3.4修复② readTabs 调用过滤并持久化清理后列表", () => {
 });
 
 // ============ V3.4 修复③：托盘悬停抖动 CSS（绝对定位 + visibility/opacity，几何零变化） ============
-test("V3.4修复③ 托盘操作区改为绝对定位 + visibility/opacity 切换（无几何变化）", () => {
+test("V3.4修复③ 托盘操作区无几何抖动且键盘可达", () => {
   // .rail-artifact 提供定位上下文
   assert.match(styleSrc, /\.rail-artifact \{ position: relative; \}/);
   // .ra-actions 绝对定位
   assert.match(styleSrc, /\.rail-artifact \.ra-actions \{[\s\S]*?position: absolute;[\s\S]*?\}/);
-  // 默认 visibility:hidden + opacity:0，hover 显示
-  assert.match(styleSrc, /\.rail-artifact \.ra-actions \{[\s\S]*?visibility: hidden;[\s\S]*?opacity: 0;[\s\S]*?\}/);
-  assert.match(styleSrc, /\.rail-artifact:hover \.ra-actions \{ visibility: visible; opacity: 1; \}/);
+  assert.match(styleSrc, /\.rail-artifact \.ra-actions \{[\s\S]*?opacity: 0;[\s\S]*?pointer-events: none;[\s\S]*?\}/);
+  assert.match(styleSrc, /\.rail-artifact:focus-within \.ra-actions \{ opacity: 1; pointer-events: auto; \}/);
   // 徽章用 visibility 隐藏（保留盒模型占位），不再 display:none
-  assert.match(styleSrc, /\.rail-artifact:hover \.ra-badge \{ visibility: hidden; \}/);
+  assert.match(styleSrc, /\.rail-artifact:focus-within \.ra-badge \{ visibility: hidden; \}/);
   // 旧 bug 写法（display:none ↔ inline-flex 切换）已移除
   assert.doesNotMatch(styleSrc, /\.rail-artifact:hover \.ra-actions \{ display: inline-flex; \}/);
   assert.doesNotMatch(styleSrc, /\.rail-artifact:hover \.ra-badge \{ display: none; \}/);

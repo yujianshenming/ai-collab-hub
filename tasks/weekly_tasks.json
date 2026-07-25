@@ -1,54 +1,312 @@
 [
   {
-    "id": "task-1780650299096",
-    "school": "河南职业技术学院",
-    "course": "工程机器人现场编程",
-    "taskType": "capability-setup",
-    "quantity": 5,
-    "status": "completed",
-    "owner": "李姝琦",
+    "id": "task-1783405406777-0",
+    "school": "佳木斯大学",
+    "course": "职业卫生与职业医学",
+    "taskType": "capability-acceptance",
+    "quantity": 3,
+    "status": "unsubmitted",
+    "owner": "陈向泊",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      },
+      {
+        "index": 2,
+        "status": "done"
+      },
+      {
+        "index": 3,
+        "status": "done"
+      }
+    ],
     "chatLogPath": "",
     "reportPath": "",
     "taskFolder": "",
-    "step": "testing"
+    "step": "testing",
+    "cardCopied": {}
   },
   {
-    "id": "task-1780650321123",
-    "school": "西安理工大学",
-    "course": "生物医用材料",
+    "id": "task-1783405406777-2",
+    "school": "广东药科大学",
+    "course": "医学人文导论",
     "taskType": "capability-setup",
-    "quantity": 5,
+    "quantity": 4,
     "status": "completed",
-    "owner": "赵俞蓉",
+    "owner": "杨雨时",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      },
+      {
+        "index": 2,
+        "status": "done"
+      },
+      {
+        "index": 3,
+        "status": "done"
+      },
+      {
+        "index": 4,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "C:\\Users\\24391\\Documents\\ai-collab-hub\\personal-workbench\\temp\\tasks\\task-1783405406777-2_广东药科大学_医学人文导论",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783405406777-3",
+    "school": "南开大学",
+    "course": "改变世界的化学",
+    "taskType": "capability-edit",
+    "quantity": 1,
+    "status": "completed",
+    "owner": "李安琪",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
     "chatLogPath": "",
     "reportPath": "",
     "taskFolder": "",
-    "step": "testing"
+    "step": "testing",
+    "cardCopied": {}
   },
   {
-    "id": "task-1780650341199",
-    "school": "安徽中医药大学",
-    "course": "经络腧穴学",
+    "id": "task-1783405406777-4",
+    "school": "西安交通大学第二附属医院",
+    "course": "耳鼻喉",
+    "taskType": "",
+    "quantity": 1,
+    "status": "completed",
+    "owner": "修改",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783405406777-5",
+    "school": "贵州大学",
+    "course": "兽医微生物学",
+    "taskType": "capability-acceptance",
+    "quantity": 1,
+    "status": "pending",
+    "owner": "伍玉炜",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "pending"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783405406777-6",
+    "school": "贵州大学",
+    "course": "设计初步二",
+    "taskType": "grading-acceptance",
+    "quantity": 1,
+    "status": "completed",
+    "owner": "郭佳佳",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783405406777-7",
+    "school": "北京邮电大学",
+    "course": "软件安全",
+    "taskType": "grading-acceptance",
+    "quantity": 1,
+    "status": "completed",
+    "owner": "李安琪",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783414357818-0",
+    "school": "河北师范大学",
+    "course": "数据结构与算法",
     "taskType": "capability-setup",
     "quantity": 2,
-    "status": "pending",
-    "owner": "李漫1",
+    "status": "completed",
+    "owner": "马双",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      },
+      {
+        "index": 2,
+        "status": "done"
+      }
+    ],
     "chatLogPath": "",
     "reportPath": "",
-    "taskFolder": "",
-    "step": "testing"
+    "taskFolder": "C:\\Users\\24391\\Documents\\ai-collab-hub\\personal-workbench\\temp\\tasks\\task-1783414357818-0_河北师范大学_数据结构与算法",
+    "step": "testing",
+    "cardCopied": {}
   },
   {
-    "id": "task-1780650363177",
-    "school": "佳木斯大学",
-    "course": "医学遗传学",
+    "id": "task-1783502459878-0",
+    "school": "内蒙古科技大学",
+    "course": "生物信息学",
     "taskType": "capability-edit",
-    "quantity": 8,
-    "status": "pending",
-    "owner": "姜唯一",
+    "quantity": 1,
+    "status": "completed",
+    "owner": "马双",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
     "chatLogPath": "",
     "reportPath": "",
     "taskFolder": "",
-    "step": "testing"
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783502459878-1",
+    "school": "南京师范大学",
+    "course": "环境监测",
+    "taskType": "capability-setup",
+    "quantity": 1,
+    "status": "pending",
+    "owner": "陆诗怡",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "pending"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783502459878-2",
+    "school": "白城师范学院",
+    "course": "辽金历史",
+    "taskType": "capability-setup",
+    "quantity": 1,
+    "status": "unsubmitted",
+    "owner": "陆诗怡",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783562280108-0",
+    "school": "天津科技大学",
+    "course": "AI+环境工程智慧云链课程群",
+    "taskType": "capability-setup",
+    "quantity": 1,
+    "status": "completed",
+    "owner": "姜唯一",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
+  },
+  {
+    "id": "task-1783665641889-0",
+    "school": "河南师范大学",
+    "course": "中国武术导论",
+    "taskType": "capability-edit",
+    "quantity": 1,
+    "status": "unsubmitted",
+    "owner": "陆诗怡",
+    "weekday": "",
+    "note": "",
+    "subtasks": [
+      {
+        "index": 1,
+        "status": "done"
+      }
+    ],
+    "chatLogPath": "",
+    "reportPath": "",
+    "taskFolder": "",
+    "step": "testing",
+    "cardCopied": {}
   }
 ]

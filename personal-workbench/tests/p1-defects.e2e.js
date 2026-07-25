@@ -5,8 +5,10 @@
 const path = require("path");
 const fs = require("fs");
 const { _electron: electron } = require("playwright-core");
+const { isolateWeeklyTasks } = require("./e2e-isolation");
 
 const ROOT = path.join(__dirname, "..");
+isolateWeeklyTasks("p1-e2e");
 const electronPath = path.join(ROOT, "node_modules", "electron", "dist", "electron.exe");
 
 const checks = [];

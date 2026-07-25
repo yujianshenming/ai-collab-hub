@@ -3,9 +3,19 @@
 一个面向 Windows 的 Electron 桌面工作台。把全部工作入口集合进一个应用——常驻浏览器页面、企业微信、Codex / Cursor、终端、文件夹与文档，并用「任务驱动 + 文件总线 + 卡片舱」打通能力训练搭建的端到端流程。
 
 > **定位**：打开工作台 = 完成全部工作，不再开额外的应用。
-> 当前版本：V3.4（已交付，详见仓库根目录 `personal-workbench-roadmap.md`）。
+> 当前状态：V3.4 稳定能力 + 周报中心首版 + Token 统计首版接入；当前实现、架构、数据边界和维护规则以 [`docs/PROJECT_HANDBOOK.md`](docs/PROJECT_HANDBOOK.md) 为准。
 
 ## 启动
+
+### 日常使用（推荐）
+
+双击桌面 **`打开个人工作台.vbs`**。
+
+- 无常驻黑窗；工作台与启动脚本进程分离，关掉启动器不会关掉应用。
+- 在项目目录执行 `electron.exe .`，加载本应用（不要只双击 `electron.exe`）。
+- 不生成 `personal-workbench-launch.log`；桌面不再保留 `.cmd` / `.ps1` 启动器。
+
+### 开发启动
 
 ```powershell
 cd personal-workbench
@@ -15,7 +25,7 @@ npm start
 
 > Windows 沙箱/包装器下若遇到 `node-pty` 的 `AttachConsole failed` 闪退，改用独立进程启动：
 > ```powershell
-> Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory <项目目录>
+> Start-Process .\node_modules\electron\dist\electron.exe -ArgumentList "." -WorkingDirectory <项目目录>
 > ```
 
 ## 功能总览
@@ -36,24 +46,38 @@ npm start
 
 ### 文件总线（V3.1）
 - 活动任务期间全局下载自动落到任务文件夹（重名追加序号）；无活动任务时下载行为不变。
-- 文件托盘基于 `fs.watch` 实时刷新；托盘五操作：打开 / 定位 / 复制路径 / 裁切（仅图片）/ 删除。
+- 文件托盘基于 `fs.watch` 实时刷新；托盘操作：打开 / 定位 / 复制路径 / 重命名 / 裁切（仅图片）/ 删除。
 - 网页上传自动注入任务文件，支持「改用系统选择器」fallback。
-- 图片底部裁切一键去水印（默认底部约 100px，生成 `_cropped` 新文件，原图保留）。
+- 图片裁切去水印（默认底部约 100px）会**覆盖原图**；`webp` 源因编码限制输出为同主文件名的 `.png` 并删除原 `.webp`。
 
 ### 任务源头（V3.2，验收通过）
 - 解析桌面「待做任务.txt」导入为任务卡（带预览 dialog）。
 - 未提交状态、子任务进度环。
 
-### 可靠性 + 写回（V3.3，验证中）
+### 可靠性 + 写回（V3.3，已合入 master）
 - 文件总线 6 缺陷清零、上传拦截改用 CDP 重做、按来源域名门控下载归档。
 - 任务状态写回「待做任务.txt」（预览 + 备份 + 反向安全合并）。
 
-### 平台填写助手「卡片舱」（V3.4，已提交）
+### 平台填写助手「卡片舱」（V3.4，回归验收通过，待补真机上传验证）
 - 解析任务文件夹下的 `cards.md`（Hermes 能力训练五项制产出）为结构化卡片包。
 - 任务舱「卡片」区逐字段一键复制（卡片名称 / 建议轮次 / 阶段描述 / 开场白 / 提示词，及任务描述/封面图描述/评价标准/测试人格）。
 - 流式「逐项填写」模式：高亮下一个未复制字段，把多次「选中-切页-定位-粘贴」压缩成逐项点击；已复制状态持久化。
 - 开场白超 200 字符标红徽章；提示词复制为代码块内原文（不含围栏）。
-- 平台表单注入预研铺垫（`platformFieldMap` 选择器映射 + 单字段试注入），全自动填卡列入 V3.5。
+- 平台表单注入预研铺垫（`platformFieldMap` 选择器映射 + 单字段试注入）；V3.5 将重点增强任务、文件、页面、报告之间的协作，建设强辅助工作台，自动化只作为辅助能力，不追求全自动填卡。
+
+### 周报中心（首版）
+- 从当前任务生成独立周报快照，不反向修改任务数据。
+- 支持周报表格、非量化事项、产品需求 / Bug / 卡点 / 疑问的手动编辑。
+- 支持历史周次切换、上一周/下一周，以及默认姓名/标题模板（工作台偏好）。
+- 支持完整周报复制纯文本 + HTML 到企业微信文档；另可单独复制表格（HTML + TSV），便于粘贴到已有表格的首个单元格；支持 HTML / Markdown / DOCX 导出。
+- 周报保存于 Electron `userData/weekly-reports.json`，不写入版本库中的任务数据。
+
+### Token 统计（长期方案首版）
+- 工作台内置 Token 统计视图，按 provider 和日期范围展示总 Token、官方估算成本、请求次数、模型用量与每日用量。
+- 统计由独立 TokenBox Rust sidecar 扫描本机 Codex / Claude Code JSONL，并从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本；工作台不复制解析和计费逻辑。
+- 统计视图还提供事件级 evidence、源日志/SQLite 审计、JSON/CSV 看板导出、中转站 JSON/CSV 导入与逐字段 Token 对账；官方估算与中转站实际金额分栏显示，未定价模型保留 Token 并显示状态，并提供 SQLite 备份和带备份的派生账本重建。
+- sidecar 使用 JSONL gateway contract（`ping`、`refresh_dashboard`、`get_evidence`、`get_audit_summary`、`import_relay`、`get_reconciliation` 等），宿主只传 provider/date/model/filter，不传任意源文件路径或会话正文。
+- 开发态先构建并 staging sidecar：`npm run build:bridge:stage`；再运行 `npm start` 或 `npm run dist`。未构建 sidecar 时页面会明确提示，不会伪造统计数据。
 
 ## 安全说明
 
@@ -64,7 +88,8 @@ npm start
 
 ## 相关文档
 
+- **项目主手册（新成员 / 新模型首先阅读）**：`./docs/PROJECT_HANDBOOK.md`
 - 版本路线图：`../personal-workbench-roadmap.md`
-- 回归测试清单（含 16 个已知缺陷登记）：`./regression-checklist.md`
+- 回归测试清单（含 7 个当前待处理风险登记）：`./regression-checklist.md`
 - 各版本规格书：`../personal-workbench-*-spec.md`
 - 项目全景介绍页：`../personal-workbench-overview.html`

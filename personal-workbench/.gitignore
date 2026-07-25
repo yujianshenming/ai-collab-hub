@@ -1,6 +1,8 @@
 node_modules/
+.claude/
 electron.stdout.log
 electron.stderr.log
 temp/
 build-output/
+sidecars/*.exe
 reproduce.ps1

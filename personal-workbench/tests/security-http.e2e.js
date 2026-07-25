@@ -1,14 +1,18 @@
 // V3.4 安全 HTTP 运行时验证（测试工程师）—— 回归清单 §6 鉴权 + 静态路径穿越
 // 启动真实应用，对本地服务 127.0.0.1:38924 发请求：
 //   - 七条敏感路由无 token → 401
-//   - 带正确 token → 200（token 经页面 getSessionToken 取得）
+//   - 注册 local-app 后取得 per-tab scoped token → 200
 //   - /local-apps 未注册 tabId → 404；..%2F 穿越 → 403/404（不泄露文件）
 // 跑法：node tests/security-http.e2e.js
 const path = require("path");
 const http = require("http");
+const fs = require("fs");
+const os = require("os");
 const { _electron: electron } = require("playwright-core");
+const { isolateWeeklyTasks } = require("./e2e-isolation");
 
 const ROOT = path.join(__dirname, "..");
+isolateWeeklyTasks("security-e2e");
 const electronPath = path.join(ROOT, "node_modules", "electron", "dist", "electron.exe");
 const PORT = 38924;
 
@@ -32,6 +36,7 @@ function httpGet(p) {
 
 (async () => {
   let app;
+  let fixtureRoot = "";
   try {
     app = await electron.launch({ executablePath: electronPath, args: ["."], cwd: ROOT });
     const page = await app.firstWindow({ timeout: 30000 });
@@ -47,17 +52,6 @@ function httpGet(p) {
     }
     record("敏感路由无 token 全部 401", all401, JSON.stringify(codes));
 
-    // 取真实 token（主进程通过 IPC 暴露给页面）
-    const token = await page.evaluate(() => window.workbench.getSessionToken());
-    record("页面可取得 sessionToken", typeof token === "string" && token.length > 0, `len=${token ? token.length : 0}`);
-
-    if (token) {
-      const ok = await httpGet(`/tabs?token=${encodeURIComponent(token)}`);
-      record("带正确 token 访问 /tabs 返回 200", ok.status === 200, `status=${ok.status}`);
-      const bad = await httpGet(`/tabs?token=wrong_${token}`);
-      record("错误 token 访问 /tabs 仍 401", bad.status === 401, `status=${bad.status}`);
-    }
-
     // 静态服务：未注册 tabId → 404（不泄露）
     const unreg = await httpGet("/local-apps/nonexistent-tab/index.html");
     record("未注册 local-app tabId 返回 404", unreg.status === 404, `status=${unreg.status}`);
@@ -66,10 +60,38 @@ function httpGet(p) {
     const trav = await httpGet("/local-apps/nonexistent-tab/..%2F..%2F..%2Fmain.js");
     record("路径穿越请求不返回 200（不泄露文件）", trav.status !== 200, `status=${trav.status}`);
 
+    const malformed = await httpGet("/local-apps/nonexistent-tab/%");
+    record("畸形 URL 编码返回 400", malformed.status === 400, `status=${malformed.status}`);
+    record("畸形 URL 后主窗口仍可响应", (await page.evaluate(() => document.readyState).catch(() => "")) === "complete");
+
+    fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "workbench-local-app-security-"));
+    const baseDir = path.join(fixtureRoot, "base");
+    const outsideDir = path.join(fixtureRoot, "outside");
+    fs.mkdirSync(baseDir);
+    fs.mkdirSync(outsideDir);
+    fs.writeFileSync(path.join(baseDir, "index.html"), "ok");
+    fs.writeFileSync(path.join(outsideDir, "secret.txt"), "must-not-leak");
+    fs.symlinkSync(outsideDir, path.join(baseDir, "escape"), "junction");
+    const registered = await page.evaluate((dir) => window.workbench.registerLocalApp("security-link-tab", dir), baseDir);
+    record("本地项目安全夹具注册成功", registered === true);
+    const token = await page.evaluate(() => window.workbench.getLocalAppToken("security-link-tab"));
+    record("本地项目取得 scoped token", typeof token === "string" && token.length > 0, `len=${token ? token.length : 0}`);
+    if (token) {
+      const ok = await httpGet(`/tabs?token=${encodeURIComponent(token)}`);
+      record("scoped token 访问 /tabs 返回 200", ok.status === 200, `status=${ok.status}`);
+      const cookies = await httpGet(`/cookies?token=${encodeURIComponent(token)}`);
+      record("scoped token 访问 /cookies 返回 401", cookies.status === 401, `status=${cookies.status}`);
+      const bad = await httpGet(`/tabs?token=wrong_${token}`);
+      record("错误 token 访问 /tabs 仍 401", bad.status === 401, `status=${bad.status}`);
+    }
+    const linked = await httpGet("/local-apps/security-link-tab/escape/secret.txt");
+    record("联接目录不能越界读取文件", linked.status === 403 && !linked.body.includes("must-not-leak"), `status=${linked.status}`);
+
   } catch (e) {
     record("安全 HTTP e2e 执行", false, String(e && e.stack || e));
   } finally {
     if (app) await app.close().catch(() => {});
+    if (fixtureRoot) fs.rmSync(fixtureRoot, { recursive: true, force: true });
   }
 
   const failed = checks.filter((c) => !c.ok);
