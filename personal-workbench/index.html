@@ -347,11 +347,6 @@
               <small>按 TokenBox 价格目录估算</small>
             </article>
             <article class="tokenbox-metric-card">
-              <span>中转站实际成本</span>
-              <strong id="tokenbox-actual-cost">—</strong>
-              <small>已导入账单的实际金额</small>
-            </article>
-            <article class="tokenbox-metric-card">
               <span>请求次数</span>
               <strong id="tokenbox-requests">—</strong>
               <small>已纳入账本的请求</small>
@@ -375,6 +370,35 @@
 
           <div id="tokenbox-warning-list" class="tokenbox-warning-list" aria-live="polite"></div>
 
+          <div class="tokenbox-grid tokenbox-chart-grid">
+            <section class="tokenbox-panel tokenbox-chart-panel">
+              <div class="tokenbox-panel-heading">
+                <div>
+                  <span class="eyebrow">TOKEN TREND</span>
+                  <h2>每日 Token 趋势</h2>
+                </div>
+                <small id="tokenbox-trend-summary" class="tokenbox-chart-summary">等待统计数据</small>
+              </div>
+              <div id="tokenbox-trend-chart" class="tokenbox-chart-canvas" role="img" aria-label="每日 Token 趋势图">
+                <div class="tokenbox-chart-empty">刷新后显示趋势</div>
+              </div>
+            </section>
+            <section class="tokenbox-panel tokenbox-chart-panel">
+              <div class="tokenbox-panel-heading">
+                <div>
+                  <span class="eyebrow">MODEL SHARE</span>
+                  <h2>模型用量占比</h2>
+                </div>
+              </div>
+              <div class="tokenbox-donut-layout">
+                <div id="tokenbox-model-chart" class="tokenbox-model-chart" role="img" aria-label="模型 Token 用量占比图">
+                  <div class="tokenbox-chart-empty">刷新后显示占比</div>
+                </div>
+                <div id="tokenbox-model-legend" class="tokenbox-model-legend" aria-label="模型用量图例"></div>
+              </div>
+            </section>
+          </div>
+
           <div class="tokenbox-grid">
             <section class="tokenbox-panel">
               <div class="tokenbox-panel-heading">
@@ -386,7 +410,7 @@
               <div class="tokenbox-table-wrap">
                 <table class="tokenbox-table">
                   <thead>
-                    <tr><th>模型</th><th>来源</th><th>请求</th><th>Token</th><th>成本</th></tr>
+                    <tr><th>模型</th><th>来源</th><th>请求</th><th>Token</th><th>官方估算</th></tr>
                   </thead>
                   <tbody id="tokenbox-models-body"></tbody>
                 </table>
@@ -428,27 +452,6 @@
               <div id="tokenbox-audit-status" class="tokenbox-inline-status">尚未审计</div>
               <pre id="tokenbox-audit-summary" class="tokenbox-proof">等待源日志审计。</pre>
             </section>
-            <section class="tokenbox-panel">
-              <div class="tokenbox-panel-heading">
-                <div>
-                  <span class="eyebrow">RELAY LEDGER</span>
-                  <h2>中转站导入与对账</h2>
-                </div>
-                <div class="tokenbox-panel-actions">
-                  <input id="tokenbox-relay-file" type="file" accept=".json,.csv,application/json,text/csv" hidden>
-                  <button id="tokenbox-relay-import" class="btn btn-ghost" type="button">导入 JSON/CSV</button>
-                  <button id="tokenbox-relay-reconcile" class="btn btn-ghost" type="button">刷新对账</button>
-                  <button id="tokenbox-export-reconciliation" class="icon-button" type="button">导出</button>
-                </div>
-              </div>
-              <div id="tokenbox-reconciliation-status" class="tokenbox-inline-status">尚未导入中转站账单</div>
-              <div class="tokenbox-table-wrap">
-                <table class="tokenbox-table">
-                  <thead><tr><th>日期</th><th>模型</th><th>来源</th><th>本地 Token</th><th>中转站 Token</th><th>差异</th><th>状态</th></tr></thead>
-                  <tbody id="tokenbox-reconciliation-body"><tr><td class="tokenbox-empty" colspan="7">暂无对账记录</td></tr></tbody>
-                </table>
-              </div>
-            </section>
           </div>
 
           <section class="tokenbox-panel tokenbox-evidence-panel">
@@ -461,8 +464,8 @@
             </div>
             <div class="tokenbox-table-wrap">
               <table class="tokenbox-table">
-                <thead><tr><th>时间</th><th>模型</th><th>Token</th><th>官方金额</th><th>实际金额</th><th>event_id</th><th>source / offset</th></tr></thead>
-                <tbody id="tokenbox-evidence-body"><tr><td class="tokenbox-empty" colspan="7">选择模型后显示证据</td></tr></tbody>
+                <thead><tr><th>时间</th><th>模型</th><th>Token</th><th>官方金额</th><th>event_id</th><th>source / offset</th></tr></thead>
+                <tbody id="tokenbox-evidence-body"><tr><td class="tokenbox-empty" colspan="6">选择模型后显示证据</td></tr></tbody>
               </table>
             </div>
           </section>

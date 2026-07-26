@@ -6,8 +6,8 @@
   "scripts": {
     "start": "electron .",
     "check": "node --check main.js && node --check preload.js && node --check preload-popup.js && node --check renderer.js && node --check weekly-report-docx.js",
-    "test": "npm run check && node --test tests/parse-cards-document.test.js tests/parse-todo-lines.test.js tests/security-v34-regression.test.js tests/popup-compat-regression.test.js tests/theme-lifecycle-regression.test.js tests/adversarial-regression.test.js tests/adversarial-fix-regression.test.js tests/weekly-report-docx.test.js tests/weekly-report-helpers.test.js tests/task-filter-helpers.test.js tests/task-artifact-helpers.test.js tests/task-lane-helpers.test.js tests/tokenbox-integration-contract.test.js",
-    "test:e2e": "node tests/smoke.e2e.js && node tests/cards-bay.e2e.js && node tests/p1-defects.e2e.js && node tests/security-http.e2e.js && node tests/theme-memory.e2e.js && node tests/download-routing.e2e.js && node tests/task-persistence.e2e.js && node tests/task-controls.e2e.js && node tests/weekly-report.e2e.js",
+    "test": "npm run check && node tests/reconcile-dom-ipc.js && node --test tests/parse-cards-document.test.js tests/parse-todo-lines.test.js tests/security-v34-regression.test.js tests/popup-compat-regression.test.js tests/theme-lifecycle-regression.test.js tests/adversarial-regression.test.js tests/adversarial-fix-regression.test.js tests/weekly-report-docx.test.js tests/weekly-report-helpers.test.js tests/task-filter-helpers.test.js tests/task-artifact-helpers.test.js tests/task-lane-helpers.test.js tests/tokenbox-integration-contract.test.js",
+    "test:e2e": "node tests/smoke.e2e.js && node tests/cards-bay.e2e.js && node tests/p1-defects.e2e.js && node tests/security-http.e2e.js && node tests/theme-memory.e2e.js && node tests/download-routing.e2e.js && node tests/task-persistence.e2e.js && node tests/task-controls.e2e.js && node tests/subtask-switching.e2e.js && node tests/tokenbox-charts.e2e.js && node tests/weekly-report.e2e.js",
     "test:all": "npm test && npm run test:e2e",
     "pack": "electron-builder --dir",
     "build:bridge": "node scripts/build-tokenbox-bridge.js --bin tokenbox-bridge",

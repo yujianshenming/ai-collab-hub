@@ -584,12 +584,6 @@ function normalizeTokenboxProvider(value, { allowEmpty = true } = {}) {
   return provider;
 }
 
-function normalizeTokenboxSourceName(value) {
-  const sourceName = String(value || "").trim();
-  if (sourceName.length > 512) throw new Error("TokenBox source name is too long");
-  return sourceName;
-}
-
 async function callTokenboxBridge(method, params = {}) {
   try {
     const result = await requestTokenboxBridge(method, params);
@@ -2454,46 +2448,6 @@ function registerIpc() {
       return { success: false, error: error?.message || String(error) };
     }
   });
-  ipcMain.handle("tokenbox:relay-import", async (_event, payload = {}) => {
-    try {
-      const body = payload && typeof payload === "object" ? payload : {};
-      if (typeof body.content !== "string" || !body.content.trim()) {
-        throw new Error("TokenBox relay content is required");
-      }
-      if (Buffer.byteLength(body.content, "utf8") > 50 * 1024 * 1024) {
-        throw new Error("TokenBox relay file exceeds 50 MB");
-      }
-      const format = body.format ? normalizeTokenboxFormat(body.format, ["auto", "json", "csv"]) : "auto";
-      const sourceName = normalizeTokenboxSourceName(body.sourceName);
-      return await callTokenboxBridge("import_relay", {
-        content: body.content,
-        format,
-        source_name: sourceName
-      });
-    } catch (error) {
-      return { success: false, error: error?.message || String(error) };
-    }
-  });
-  ipcMain.handle("tokenbox:reconciliation", async (_event, payload = {}) => {
-    try {
-      const body = payload && typeof payload === "object" ? payload : {};
-      const filter = normalizeTokenboxFilter(body.filter || {});
-      return await callTokenboxBridge("get_reconciliation", { filter });
-    } catch (error) {
-      return { success: false, error: error?.message || String(error) };
-    }
-  });
-  ipcMain.handle("tokenbox:export-reconciliation", async (_event, payload = {}) => {
-    try {
-      const body = payload && typeof payload === "object" ? payload : {};
-      const filter = normalizeTokenboxFilter(body.filter || {});
-      const format = normalizeTokenboxFormat(body.format, ["json", "csv"]);
-      return await callTokenboxBridge("export_reconciliation", { filter, format });
-    } catch (error) {
-      return { success: false, error: error?.message || String(error) };
-    }
-  });
-
   ipcMain.handle("reports:read-weekly", () => readWeeklyReports());
   ipcMain.handle("reports:write-weekly", (_event, reports) => writeWeeklyReports(reports));
   ipcMain.handle("reports:copy-weekly", (_event, payload = {}) => {

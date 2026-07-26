@@ -54,9 +54,6 @@ contextBridge.exposeInMainWorld("workbench", {
   exportTokenboxDashboard: (payload) => ipcRenderer.invoke("tokenbox:export-dashboard", payload),
   getTokenboxAudit: (filter) => ipcRenderer.invoke("tokenbox:audit", { filter }),
   exportTokenboxAudit: (payload) => ipcRenderer.invoke("tokenbox:export-audit", payload),
-  importTokenboxRelay: (payload) => ipcRenderer.invoke("tokenbox:relay-import", payload),
-  getTokenboxReconciliation: (filter) => ipcRenderer.invoke("tokenbox:reconciliation", { filter }),
-  exportTokenboxReconciliation: (payload) => ipcRenderer.invoke("tokenbox:export-reconciliation", payload),
   onDownloadCompleted: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("download-completed", listener);
