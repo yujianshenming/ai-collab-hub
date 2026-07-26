@@ -4,10 +4,10 @@
 
 - 最后更新：2026-07-26
 - 项目类型：Windows Electron 桌面应用
-- 代码入口：`main.js`、`preload.js`、`renderer.js`
-- 当前工作分支：`codex/refactor-workbench`
-- 上一稳定基线：`95b798d`（`origin/master`）
-- 本次检查点：2026-07-26 未提交工作区（多子任务切换修复、Token 图表与洁癖收尾）
+- 代码入口：`main.js`、`preload.js`、`task-state-engine.js`、`renderer.js`
+- 当前工作分支：`codex/task-state-engine`
+- 上一稳定基线：`4ba454a`（`origin/master`，PR #3）
+- 本次检查点：2026-07-26 未提交工作区（任务状态引擎、报告阶段状态修正与 GitHub CI）
 
 ## 1. 新成员 / 新模型先读什么
 
@@ -72,7 +72,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | CLI / 桌面应用标签 | 已实现 | `main.js` 的 CLI PTY 与桌面进程管理 |
 | 任务中心 | 已实现 | 任务卡、搜索筛选、归档、跨区拖拽改状态、完成时限、跨周清理已完成 |
 | 五步任务流水线 | 已实现 | `PIPELINE_STEPS`、任务舱、下载/报告事件 |
-| 任务暂停、继续、子任务 | 已实现并有 E2E | `startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
+| 任务暂停、继续、子任务 | 已实现并有状态机单测/E2E | `task-state-engine.js`、`startTaskAutomation`、`pauseTaskAutomation`、`resumeTaskAutomation` |
 | 任务筛选 / 搜索 / 归档 | 已实现 | `matchesTaskQuery`、`filterTasks`、任务中心 filter bar、卡片归档菜单 |
 | 任务跨区拖拽 / 时限 / 周清理 | 已实现 | 三区拖拽改 status；`dueDate` 默认本周日；`purgeCompletedFromPreviousWeeks` |
 | 文件总线 | 已实现 | 下载归档、上传注入、任务文件托盘（打开/定位/复制/重命名/裁切/删除）、图片裁切覆盖原图 |
@@ -106,6 +106,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 ```mermaid
 flowchart LR
   UI[renderer.js + index.html + style.css]
+  STATE[task-state-engine.js]
   PRELOAD[preload.js / preload-popup.js]
   MAIN[Electron main.js]
   WEB[常驻 webview / Chrome 扩展页面]
@@ -119,6 +120,7 @@ flowchart LR
   LOGS[Codex / Claude Code JSONL 日志]
 
   UI -->|受限 API| PRELOAD
+  UI -->|纯事件 / 不可变结果| STATE
   PRELOAD -->|IPC| MAIN
   UI --> WEB
   MAIN --> DATA
@@ -155,9 +157,16 @@ flowchart LR
 
 #### `renderer.js`：界面状态与业务编排
 
-- 管理标签、内置任务中心、内置周报中心、Token 统计视图、任务状态、任务舱、卡片复制状态和 UI 事件。
+- 管理标签、内置任务中心、内置周报中心、Token 统计视图、任务舱、卡片复制状态和 UI 事件；父子任务状态变化委托给 `task-state-engine.js`。
 - 任务数据和周报数据都通过 `window.workbench` 读写；renderer 不直接访问文件系统。
 - `TASK_CENTER_ID`、`WEEKLY_REPORT_ID` 和 `TOKENBOX_ID` 是内置视图 ID，不能当成普通网页标签创建 webview。
+
+#### `task-state-engine.js`：纯任务状态内核
+
+- 同时以浏览器全局 `window.TaskStateEngine` 和 CommonJS 模块暴露，`index.html` 必须在 `renderer.js` 之前加载。
+- 用 `transitionTask(task, event)` 统一处理 `start-subtask`、`resume-subtask`、`pause-subtask`、`complete-subtask`、`set-task-status` 和 `recover-startup`。
+- 转换不修改输入对象；返回新的任务快照、活动子任务索引、终态标记或稳定错误码。
+- `taskStateViolations` 检查多运行子任务、活动父任务缺少运行子任务、非活动父任务仍有运行子任务，以及完成父任务仍有未完成子任务。
 
 ## 5. 关键数据与持久化
 
@@ -217,7 +226,17 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 }
 ```
 
-任务状态包括 `pending`、`running`、`evaluating`、`paused`、`unsubmitted`、`completed`。应用重启时会把未恢复的 `running/evaluating` 任务收敛为 `paused`，避免假装仍在执行。
+任务状态包括 `pending`、`running`、`evaluating`、`paused`、`unsubmitted`、`completed`；子任务状态包括 `pending`、`running`、`paused`、`done`、`unconfirmed`。
+
+`task-state-engine.js` 保持以下不变量：
+
+- 一个父任务最多只有一个 `running` 子任务。
+- `running/evaluating` 父任务必须对应一个 `running` 子任务。
+- `pending/paused/unsubmitted/completed` 父任务不能遗留 `running` 子任务。
+- `completed` 父任务的全部子任务必须为 `done`。
+- 完成一个子任务时，其他子任务状态保持原样；只有全部子任务为 `done` 时父任务才进入 `completed`。
+
+应用重启时，`recover-startup` 会把遗留的 `running/evaluating` 父任务和 `running` 子任务收敛为 `paused`，并修复历史 `completed + unfinished child` 数据。恢复操作幂等；写盘前 `persistWeeklyTasks` 再检查不变量，异常组合不会覆盖任务文件；`updateTaskFields` 在持久化失败时恢复原内存快照，避免界面卡在不可写状态。
 
 可选字段 `archived`（默认 `false`）只影响任务中心默认列表与「写回待做任务」；归档不改变 `status`、不删除任务文件夹、不清除 `chatLogPath`/`reportPath`。默认列表隐藏已归档任务；状态 chip「已归档」才显示。写回「待做任务.txt」时不会把归档任务写回。
 
@@ -274,7 +293,7 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 3. 符合来源域名和流水线步骤的下载进入任务文件夹；没有活动任务时回到系统 Downloads 行为。
 4. `fs.watch` 观察活动任务文件夹，任务舱读取 `dialogue.json`、`eval_report.pdf`、`cards.md` 等产物。
 5. 任务中心异步 `listTaskFiles` 回扫未归档任务的产物徽章（对话/报告/卡片）；路径为空且发现标准文件名时可写回 `chatLogPath`/`reportPath`，已有路径不覆盖。
-6. 评估报告下载完成：renderer 前台 toast；若主窗口未聚焦，主进程发系统 `Notification`（仅活动任务 `type=report`）。
+6. 评估报告下载完成：流水线推进到 `report`，活动父任务保持 `running`；用户结束当前子任务后才根据子任务结果更新父任务。renderer 前台 toast；若主窗口未聚焦，主进程发系统 `Notification`（仅活动任务 `type=report`）。
 7. 上传通过 CDP 文件选择器拦截，把已选文件注入网页；系统文件选择器作为降级路径。
 8. 任务舱托盘可对任务夹内文件重命名（`tasks:file-action` + `resolveTaskPath`）；图片裁切覆盖原路径（先写临时文件再 rename；`webp` 输出为同主名 `.png` 并删除原文件）。
 9. 任务结束后按用户选择清理临时任务目录；任务记录保留必要的状态和产物路径。
@@ -317,7 +336,9 @@ npm run build:bridge:stage  # 自动选择 MSVC 或 GNU toolchain
 
 当前 E2E 覆盖：启动冒烟、卡片舱、P1 缺陷、HTTP 安全、主题和 webview 生命周期、下载归档、任务重启恢复、任务状态/多子任务切换、Token 图表、周报生成与持久化。
 
-2026-07-26 洁癖收尾核对结果：`npm run test:all` 完整通过（81/81 单测、DOM/IPC 机器检查和全部 Electron E2E）；`npm run pack` 通过，GNU Rust 构建的 `tokenbox-bridge.exe` 已进入打包资源。完整 E2E 使用固定端口 `38924`，执行前先关闭日常工作台实例，避免测试连接到旧实例。
+`.github/workflows/personal-workbench-ci.yml` 在 Pull Request 与 `master` 推送时运行两个 Windows job：`npm test` 和完整 `npm run test:e2e`。工作流使用 Node.js 22，第三方 Actions 固定到完整提交 SHA；`tests/ci-workflow-contract.test.js` 防止关键 job、权限或固定版本约束被意外移除。
+
+2026-07-26 任务状态引擎迭代核对结果：`npm run test:all` 完整通过（95/95 静态/单元测试、DOM/IPC 机器检查和全部 Electron E2E）；`npm run pack` 通过，`task-state-engine.js` 已进入 `app.asar`，`tokenbox-bridge.exe` 已进入打包资源。完整 E2E 使用固定端口 `38924`，执行前先关闭日常工作台实例，避免测试连接到旧实例。
 
 人工验收仍然重要的场景：
 
@@ -334,7 +355,7 @@ npm run build:bridge:stage  # 自动选择 MSVC 或 GNU toolchain
 
 ### 分支与提交
 
-- 功能开发、缺陷修复和重构使用 `codex/<topic>` 分支；本项目当前使用 `codex/refactor-workbench`。
+- 功能开发、缺陷修复和重构使用 `codex/<topic>` 分支；本项目当前使用 `codex/task-state-engine`。
 - 提交信息使用简短前缀：`feat:`、`fix:`、`refactor:`、`test:`、`docs:`、`chore:`。
 - 一个提交应能说明一个可回滚的逻辑单元；如果代码、测试和文档属于同一功能，可以放在同一提交。
 - 发布或交接前创建可读 tag，例如 `personal-workbench-stable-YYYY-MM-DD`。
@@ -384,13 +405,15 @@ git diff --stat
 
 1. A/B/C 与近期拖拽/托盘/裁切修复已落地；继续人工验收企业微信粘贴、Windows 后台报告通知、裁切覆盖与拖拽收尾。
 2. 处理 `regression-checklist.md` 中仍未关闭的真实浏览器和上传边界风险。
-3. 在不改变 IPC 的前提下拆分任务状态、文件总线、扩展兼容和报告生成模块。
-4. 只有在真实需求明确后，才评估企业微信/腾讯文档的官方接口或导出格式。
+3. 任务状态已拆为纯状态内核；下一步在不改变 IPC 的前提下拆分文件总线、扩展兼容和报告生成模块。
+4. 建立任务/子任务与 TokenBox 会话的元数据关联，让任务卡和周报可汇总官方 Token 估算。
+5. 只有在真实需求明确后，才评估企业微信/腾讯文档的官方接口或导出格式。
 
 ## 11. 变更记录
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-26 | refactor/test/ci | 抽离纯 `task-state-engine.js`，统一父子任务转换、启动恢复、写盘不变量和失败回滚；报告下载只推进流水线，结束子任务后再决定父任务；新增状态机单测、持久化/下载路由 E2E 与 Windows GitHub CI | `task-state-engine.js`、`renderer.js`、`index.html`、`tests/task-state-engine.test.js`、`tests/task-persistence.e2e.js`、`tests/download-routing.e2e.js`、`tests/ci-workflow-contract.test.js`、`.github/workflows/personal-workbench-ci.yml` | `npm run test:all`（95/95 + 全部 Electron E2E）；`npm run pack`；`app.asar`/sidecar 资源核对 |
 | 2026-07-26 | chore/test | 洁癖收尾：同步当前分支、基线、E2E 与 sidecar 状态；修正 popup 全量会话令牌的过期清单；增强 DOM/IPC 机器检查的重复 id、`sendToRenderer` 与 Token 图表覆盖，并接入 `npm test` | `docs/PROJECT_HANDBOOK.md`、`regression-checklist.md`、`tests/reconcile-dom-ipc.js`、`package.json`、`README.md` | `npm run test:all`；`npm run pack`；`git diff --check` |
 | 2026-07-26 | refactor/feat | 精简 Token 统计：移除外部账单导入、实际金额和差异核对的页面与 IPC；新增每日 Token 趋势折线图、模型用量占比圆环图及图例 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css`、`tests/tokenbox-integration-contract.test.js`、`tests/tokenbox-charts.e2e.js` | `npm test`；`node tests/tokenbox-charts.e2e.js`；`npm run test:e2e` |
 | 2026-07-26 | fix | 修复多子任务状态机：暂停当前子任务后可启动另一子任务；继续操作绑定到指定子任务；子任务完成状态独立持久化；启动时迁移历史 `paused + running child` 残留状态 | `renderer.js`、`style.css`、`tests/subtask-switching.e2e.js`、`package.json` | `npm test`（81/81）；`npm run test:e2e`；新增 3 个真实 Electron 回归场景 |

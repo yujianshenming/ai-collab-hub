@@ -3,7 +3,7 @@
 一个面向 Windows 的 Electron 桌面工作台。把全部工作入口集合进一个应用——常驻浏览器页面、企业微信、Codex / Cursor、终端、文件夹与文档，并用「任务驱动 + 文件总线 + 卡片舱」打通能力训练搭建的端到端流程。
 
 > **定位**：打开工作台 = 完成全部工作，不再开额外的应用。
-> 当前状态：V3.4 稳定能力 + 周报中心首版 + Token 统计首版接入；当前实现、架构、数据边界和维护规则以 [`docs/PROJECT_HANDBOOK.md`](docs/PROJECT_HANDBOOK.md) 为准。
+> 当前状态：V3.4 稳定能力 + 周报中心首版 + Token 统计首版 + 独立任务状态引擎与 GitHub CI；当前实现、架构、数据边界和维护规则以 [`docs/PROJECT_HANDBOOK.md`](docs/PROJECT_HANDBOOK.md) 为准。
 
 ## 启动
 
@@ -43,6 +43,8 @@ npm start
 - 任务卡列表 + 居中表单 dialog（学校/课程必填校验）。
 - **流水线五步模型**：准备 → 本地测试 → 评估上传 → 捕获报告 → 完成；任务舱与状态栏芯片同步进度。
 - 任务暂停 / 继续（带防冲突拦截）、结束任务清理临时文件夹、重新打开已完成任务复用同名文件夹。
+- 多子任务由独立 `task-state-engine.js` 驱动：每个父任务最多一个运行子任务；暂停后可切换；单项完成状态独立保留；全部子任务完成后父任务才完成。
+- 异常退出后的 `running/evaluating` 状态在启动时统一恢复为 `paused`；任务写盘前检查父子状态不变量，校验失败时同步回滚内存变更。
 
 ### 文件总线（V3.1）
 - 活动任务期间全局下载自动落到任务文件夹（重名追加序号）；无活动任务时下载行为不变。
@@ -78,6 +80,20 @@ npm start
 - 统计视图还提供事件级 evidence、源日志/SQLite 审计、JSON/CSV 看板导出；未定价模型保留 Token 并显示状态，并提供 SQLite 备份和带备份的派生账本重建。
 - sidecar 使用 JSONL gateway contract（`ping`、`refresh_dashboard`、`get_evidence`、`get_audit_summary`、`export_dashboard` 等），宿主只传 provider/date/model/filter，不传任意源文件路径或会话正文。
 - 开发态先构建并 staging sidecar：`npm run build:bridge:stage`；再运行 `npm start` 或 `npm run dist`。未构建 sidecar 时页面会明确提示，不会伪造统计数据。
+
+## 开发验证
+
+```powershell
+cd personal-workbench
+npm test
+npm run test:e2e
+npm run test:all
+npm run pack
+```
+
+- `npm test` 包含语法、DOM/IPC 对账、任务状态机、CI 契约及其他单元/静态回归。
+- `.github/workflows/personal-workbench-ci.yml` 在 Pull Request 和 `master` 推送时使用 Windows + Node.js 22 运行 `npm test` 与完整 Electron E2E。
+- Electron E2E 使用隔离的用户目录、任务文件和下载目录，不读取版本库外的个人任务数据。
 
 ## 安全说明
 
