@@ -21,9 +21,20 @@ let info = [];
 // ========== 1. DOM 对账 ==========
 // 收集 index.html 中所有 id（含静态 + 模板字符串里出现的 id="..."）
 const htmlIds = new Set();
-for (const m of indexSrc.matchAll(/\bid="([^"]+)"/g)) htmlIds.add(m[1]);
+const staticHtmlIdCounts = new Map();
+for (const m of indexSrc.matchAll(/\bid="([^"]+)"/g)) {
+  htmlIds.add(m[1]);
+  staticHtmlIdCounts.set(m[1], (staticHtmlIdCounts.get(m[1]) || 0) + 1);
+}
 // renderer.js 动态 innerHTML 模板里也会声明 id（如任务卡片），一并收集（id="..." 与 id='...'）
 for (const m of rendererSrc.matchAll(/\bid=["'`]([^"'`$]+)["'`]/g)) htmlIds.add(m[1]);
+
+const duplicateStaticHtmlIds = [...staticHtmlIdCounts.entries()]
+  .filter(([, count]) => count > 1)
+  .map(([id]) => id);
+if (duplicateStaticHtmlIds.length) {
+  problems.push(`[DOM] index.html 存在重复静态 id: ${duplicateStaticHtmlIds.join(", ")}`);
+}
 
 // 收集 renderer.js 中所有 querySelector("#id") / getElementById("id") 静态字面量引用
 const referencedIds = new Map(); // id -> 出现次数
@@ -48,7 +59,8 @@ if (missingDomIds.length) {
 // 重点核查回归清单点名的几个 id（rightSidebarBody 前科、卡片舱新增）
 const criticalIds = [
   "right-sidebar-body", "task-center-view", "nav-task-center", "sb-terminal",
-  "rail-cards", "rail-cards-stream", "rail-cards-reparse"
+  "rail-cards", "rail-cards-stream", "rail-cards-reparse",
+  "tokenbox-trend-chart", "tokenbox-model-chart", "tokenbox-model-legend"
 ];
 const criticalMissing = criticalIds.filter((id) => !htmlIds.has(id));
 if (criticalMissing.length) {
@@ -65,9 +77,14 @@ for (const m of mainSrc.matchAll(/ipcMain\.(?:handle|on)\(\s*["'`]([^"'`]+)["'`]
 // main 主动发往渲染端的通道（webContents.send / mainWindow.webContents.send / event.sender.send 等）
 const mainSendChannels = new Set();
 for (const m of mainSrc.matchAll(/\.send\(\s*["'`]([^"'`$]+)["'`]/g)) mainSendChannels.add(m[1]);
+for (const m of mainSrc.matchAll(/sendToRenderer\(\s*["'`]([^"'`$]+)["'`]/g)) mainSendChannels.add(m[1]);
 // 动态频道（带模板变量，如 desktop-app:embedded-bound:${tabId}）单独收集前缀
 const mainDynamicSendPrefixes = new Set();
 for (const m of mainSrc.matchAll(/\.send\(\s*[`]([^`]*\$\{[^`]*)[`]/g)) {
+  const prefix = m[1].split("${")[0];
+  if (prefix) mainDynamicSendPrefixes.add(prefix);
+}
+for (const m of mainSrc.matchAll(/sendToRenderer\(\s*[`]([^`]*\$\{[^`]*)[`]/g)) {
   const prefix = m[1].split("${")[0];
   if (prefix) mainDynamicSendPrefixes.add(prefix);
 }
@@ -82,13 +99,8 @@ collectInvokeSend(preloadPopupSrc);
 
 // preload：ipcRenderer.on 监听的通道（接收 main 主动推送）
 const preloadOnChannels = new Set();
-const preloadOnDynamicPrefixes = new Set();
 const collectOn = (src) => {
   for (const m of src.matchAll(/ipcRenderer\.on\(\s*["'`]([^"'`$]+)["'`]/g)) preloadOnChannels.add(m[1]);
-  // 动态频道：const channel = `desktop-app:status-change:${tabId}`; ipcRenderer.on(channel, ...)
-  for (const m of src.matchAll(/[`]([a-zA-Z0-9_:-]*?):\$\{[^`]*[`]/g)) {
-    preloadOnDynamicPrefixes.add(m[1] + ":");
-  }
 };
 collectOn(preloadSrc);
 collectOn(preloadPopupSrc);
@@ -130,17 +142,18 @@ if (onNoSender.length) {
   info.push(`[IPC] preload on 监听的静态通道均有 main send 对应。`);
 }
 
-// 2d. 回归清单点名的 popup 专用通道不得删除
-const popupRequired = ["workbench:get-active-tab-info", "workbench:get-cookies", "workbench:get-session-token"];
+// 2d. 回归清单点名的 popup 专用通道保持最小暴露面
+const popupRequired = ["workbench:get-active-tab-info", "workbench:get-cookies"];
 const popupMissing = popupRequired.filter((ch) => !mainChannels.has(ch));
 if (popupMissing.length) {
   problems.push(`[IPC] popup 必需通道在 main 缺失: ${popupMissing.join(", ")}`);
 } else {
   info.push(`[IPC] popup 必需通道齐全: ${popupRequired.join(", ")}`);
 }
-// preload-popup 真实用到这些通道
-const popupUsed = popupRequired.filter((ch) => preloadPopupSrc.includes(ch));
-info.push(`[IPC] preload-popup 引用 popup 通道: ${popupUsed.join(", ")}`);
+if (preloadPopupSrc.includes("workbench:get-session-token")) {
+  problems.push("[IPC] preload-popup 重新引用了已撤销的全量会话令牌通道");
+}
+info.push(`[IPC] preload-popup 引用 popup 通道: ${popupRequired.join(", ")}`);
 
 // ========== 输出 ==========
 console.log("===== 机器对账结果 (DOM + IPC 三端) =====\n");

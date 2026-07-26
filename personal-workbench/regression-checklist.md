@@ -1,7 +1,7 @@
 # 个人工作台 回归测试清单
 
 > 测试工程师维护 · 2026-06-10 建立
-> 最近同步：2026-07-24；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
+> 最近同步：2026-07-26；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
 > 适用范围：每次交付（commit/Phase）合入后必须执行。静态部分可在不启动应用的情况下完成；动态部分需启动应用。
 > 启动方式（避开 AttachConsole 崩溃）：不要用 `npm start` 包装器在沙箱终端里启动；用
 > `Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory <项目目录>`
@@ -14,7 +14,7 @@
 ### 0.1 静态检查
 - [ ] `npm run check` 通过（仅语法层，查不出运行时引用错误）。
 - [ ] **DOM 对账**：`renderer.js` 的 `elements` 映射与所有 `querySelector("#...")` 引用的 id，逐一在 `index.html` 中存在（历史前科：`rightSidebarBody` 未定义导致右分屏 TypeError，2128665 修复）。
-- [ ] **IPC 三端对账**：`main.js` 的 `ipcMain.handle/on` 通道名 ↔ `preload.js` 的 `ipcRenderer.invoke/send/on` ↔ `renderer.js` 的 `window.workbench.*` 调用，三端一致；`preload-popup.js` 用到的 `workbench:get-active-tab-info`、`workbench:get-cookies`、`workbench:get-session-token` 不得删除。
+- [ ] **IPC 三端对账**：`main.js` 的 `ipcMain.handle/on` 通道名 ↔ `preload.js` 的 `ipcRenderer.invoke/send/on` ↔ `renderer.js` 的 `window.workbench.*` 调用，三端一致；`preload-popup.js` 只保留 `workbench:get-active-tab-info` 与 `workbench:get-cookies`，不得重新暴露全量 session Token。
 - [ ] 新增 DOM 事件监听的目标元素在对应视图模板中真实存在（含动态 innerHTML 模板里的 class 选择器）。
 
 ### 0.2 自动化冒烟（Playwright + playwright-core）
@@ -82,7 +82,7 @@
 
 ## 附：当前未关闭问题登记
 
-> 2026-07-24 已移除有代码/回归证据的历史条目 #1、#2、#3、#4、#5、#6、#7、#9、#11。剩余 7 项仍需单独修复或人工确认；不要把它们误写成“已解决”。
+> 2026-07-26 核对后，当前保留 6 项，仍需单独修复或人工确认。
 
 | # | 级别 | 描述 | 位置 |
 |---|------|------|------|

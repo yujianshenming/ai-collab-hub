@@ -2,12 +2,12 @@
 
 > 这是 `personal-workbench` 的当前事实主文档。它描述产品边界、功能、架构、数据、测试、版本状态和维护规则。规格书、审查报告与交接文档可以补充历史背景，但与本手册冲突时，必须先核对代码和测试，再更新本手册。
 
-- 最后更新：2026-07-24
+- 最后更新：2026-07-26
 - 项目类型：Windows Electron 桌面应用
 - 代码入口：`main.js`、`preload.js`、`renderer.js`
-- 当前工作分支：`codex/personal-workbench-redesign`
-- 上一稳定基线：`personal-workbench-stable-2026-07-16`
-- 本次检查点：2026-07-24 未提交工作区（当前分支 `codex/personal-workbench-redesign`）
+- 当前工作分支：`codex/refactor-workbench`
+- 上一稳定基线：`95b798d`（`origin/master`）
+- 本次检查点：2026-07-26 未提交工作区（多子任务切换修复、Token 图表与洁癖收尾）
 
 ## 1. 新成员 / 新模型先读什么
 
@@ -84,7 +84,7 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 平台字段试注入 | 预研 / 辅助能力 | `platformFieldMap`、`platform:test-inject` |
 | 主题 | 已实现 | `sky`、`morning`、`night` |
 | 周报中心首版 | 已实现 | `__weeklyreport__`、历史周次、模板姓名/标题、编辑器、预览、HTML/Markdown/DOCX 导出和表格复制 |
-| Token 统计 | 已实现，构建 sidecar 后可用 | `__tokenbox__`、TokenBox Rust sidecar、Codex/Claude Code 日志扫描、模型/日期筛选、证据审计、导出和 relay 对账 |
+| Token 统计 | 已实现，构建 sidecar 后可用 | `__tokenbox__`、TokenBox Rust sidecar、Codex/Claude Code 日志扫描、模型/日期筛选、折线/圆环图、证据审计和导出 |
 | 直接上传企业微信/腾讯文档 | 未实现 | 当前使用 HTML/纯文本剪贴板或 DOCX 文件导出 |
 
 ### 周报中心首版行为
@@ -260,9 +260,9 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 ### 5.5 Token 统计与 TokenBox 账本
 
 - 工作台不解析原始日志，也不在 renderer 内复制计费规则；`main.js` 启动 `tokenbox-bridge.exe`，通过 JSONL stdin/stdout 调用 TokenBox 的 Rust 核心。
-- sidecar 通过 JSONL gateway 暴露 `refresh_dashboard`、`get_dashboard`、`get_evidence`、`export_dashboard`、`get_audit_summary`、`export_audit_report`、`import_relay`、`get_reconciliation`、`backup_database`、`rebuild_usage_ledger` 和对应导出接口；`refresh_dashboard` 先增量扫描 Codex / Claude Code JSONL，再从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本。
-- renderer 只提交 provider、from、to、model、format 等白名单参数，展示总 Token、billable input、官方估算成本、中转站实际金额、请求次数、模型用量、每日用量、事件级 evidence、源日志/SQLite 审计和 relay 逐字段对账；未识别模型和扫描警告保留显示，并提供 SQLite 备份和带备份的派生账本重建。
-- sidecar 不是 HTTP 服务，不接收任意文件路径、shell 命令或 prompt/response/tool 内容；relay 导入只写规范化账单字段与 source hash。工作台 preload 暴露固定 TokenBox 操作，不暴露任意 method 或命令转发。
+- sidecar 通过 JSONL gateway 暴露 `refresh_dashboard`、`get_dashboard`、`get_evidence`、`export_dashboard`、`get_audit_summary`、`export_audit_report`、`backup_database`、`rebuild_usage_ledger` 和对应导出接口；`refresh_dashboard` 先增量扫描 Codex / Claude Code JSONL，再从 `%LOCALAPPDATA%\TokenBox\tokenbox.db` 读取统一账本。
+- renderer 只提交 provider、from、to、model、format 等白名单参数，展示总 Token、billable input、官方估算成本、请求次数、模型用量、每日用量、每日趋势折线图、模型占比圆环图、事件级 evidence 和源日志/SQLite 审计；未识别模型和扫描警告保留显示，并提供 SQLite 备份和带备份的派生账本重建。
+- sidecar 不是 HTTP 服务，不接收任意文件路径、shell 命令或 prompt/response/tool 内容。工作台 preload 暴露固定 TokenBox 操作，不暴露任意 method 或命令转发。
 - 开发态可从 `../../tokenbox/src-tauri/target/release/tokenbox-bridge.exe` 发现 sidecar；打包态使用 `resources/sidecars/tokenbox-bridge.exe`。运行 `npm run build:bridge:stage` 后再 `npm run dist` 才会把统计能力放进安装包。
 
 `npm run build:bridge` uses `scripts/build-tokenbox-bridge.js`: it selects MSVC when `link.exe` exists, otherwise the installed GNU Rust toolchain plus `TOKENBOX_MINGW_BIN` or a WinGet MinGW package.
@@ -287,7 +287,7 @@ PERSONAL_WORKBENCH_DOWNLOAD_ROOT
 - 本地 HTTP 服务默认监听 `38924`，敏感路由需要 session Token。
 - `local-apps` 静态服务和 `temp/tasks` IPC 必须进行绝对路径边界检查，不能只用字符串前缀比较。
 - 扩展 API 按扩展 ID、manifest 权限和 host permission 门控；修复扩展问题时不能把权限扩大到 `<all_urls>`。
-- TokenBox sidecar 只从固定候选路径启动，并且要求文件扩展名为 `.exe`；renderer 不能指定 sidecar 路径、方法名或启动参数。sidecar 的 stdout 只承载 JSONL 协议，stderr 只作为诊断信息。relay content 在主进程和 Rust gateway 两侧均限制为 50 MiB。
+- TokenBox sidecar 只从固定候选路径启动，并且要求文件扩展名为 `.exe`；renderer 不能指定 sidecar 路径、方法名或启动参数。sidecar 的 stdout 只承载 JSONL 协议，stderr 只作为诊断信息。
 - 所有用户路径、Cookie、Token、扩展目录和调试日志都不应写进 Markdown、测试夹具或 Git 提交。
 
 安全相关代码变更必须至少运行静态安全回归、HTTP 安全 E2E，并记录结果；不能只凭“页面看起来正常”结案。
@@ -315,9 +315,9 @@ npm run dist
 npm run build:bridge:stage  # 自动选择 MSVC 或 GNU toolchain
 ```
 
-当前 E2E 覆盖：启动冒烟、卡片舱、P1 缺陷、HTTP 安全、主题和 webview 生命周期、下载归档、任务重启恢复、任务状态/子任务、周报生成与持久化。
+当前 E2E 覆盖：启动冒烟、卡片舱、P1 缺陷、HTTP 安全、主题和 webview 生命周期、下载归档、任务重启恢复、任务状态/多子任务切换、Token 图表、周报生成与持久化。
 
-2026-07-24 洁癖收尾核对结果：`npm run check` 通过；`npm test` 通过（69/69）；`npm run pack` 通过，但因当前机器没有 Rust MSVC `link.exe`，构建产物不包含 `tokenbox-bridge.exe`。最近一次完整 E2E 尝试中，启动冒烟通过，随后 `cards-bay.e2e.js` 长时间无输出，已停止该测试进程，因此不能把 `npm run test:e2e` 或 `npm run test:all` 标记为全量通过。
+2026-07-26 洁癖收尾核对结果：`npm run test:all` 完整通过（81/81 单测、DOM/IPC 机器检查和全部 Electron E2E）；`npm run pack` 通过，GNU Rust 构建的 `tokenbox-bridge.exe` 已进入打包资源。完整 E2E 使用固定端口 `38924`，执行前先关闭日常工作台实例，避免测试连接到旧实例。
 
 人工验收仍然重要的场景：
 
@@ -334,7 +334,7 @@ npm run build:bridge:stage  # 自动选择 MSVC 或 GNU toolchain
 
 ### 分支与提交
 
-- 功能开发、缺陷修复和重构使用 `codex/<topic>` 分支；本项目当前使用 `codex/personal-workbench-redesign`。
+- 功能开发、缺陷修复和重构使用 `codex/<topic>` 分支；本项目当前使用 `codex/refactor-workbench`。
 - 提交信息使用简短前缀：`feat:`、`fix:`、`refactor:`、`test:`、`docs:`、`chore:`。
 - 一个提交应能说明一个可回滚的逻辑单元；如果代码、测试和文档属于同一功能，可以放在同一提交。
 - 发布或交接前创建可读 tag，例如 `personal-workbench-stable-YYYY-MM-DD`。
@@ -378,7 +378,7 @@ git diff --stat
 - 任务卡产物回扫依赖 `listTaskFiles` 与内存 cache；任务很多时靠 debounce + 仅未归档任务回扫控制 IPC 频率。
 - 图片裁切覆盖原图不可撤销；`webp` 会变成 `.png`，需在真实样本上确认平台是否仍接受。
 - 完整 E2E 会启动多个 Electron 实例，开发时应使用测试隔离环境，不能让夹具污染真实用户数据。
-- 当前完整 E2E 尚未闭环：启动冒烟已通过，但 `cards-bay.e2e.js` 测试进程曾无输出挂起；需要单独修复测试 harness 或收集其阻塞日志后，才能重新声明 `npm run test:all` 全量通过。
+- 完整 E2E 使用固定端口 `38924`；若日常工作台仍在运行，安全 HTTP 用例会连接到旧实例并出现会话令牌失配。测试前关闭旧实例，结束后再恢复日常工作台。
 
 ### 推荐顺序
 
@@ -391,7 +391,10 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
-| 2026-07-25 | feat | 完成 TokenBox headless JSONL gateway 与工作台扩展：模型事件证据、源日志/SQLite 审计、JSON/CSV 导出、中转站导入和逐字段对账；Rust core 继续拥有扫描、去重、游标、Decimal 计价和账本规则 | `../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs`、`../../tokenbox/src-tauri/src/commands/mod.rs`、`../../tokenbox/src-tauri/src/storage/mod.rs`、`main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm test`（81/81）；`npm run test:all`；`npm run build:bridge:stage`；TokenBox `npm run build`；桥接 UI smoke（2,495 Token / 3 models / audit PASS） |
+| 2026-07-26 | chore/test | 洁癖收尾：同步当前分支、基线、E2E 与 sidecar 状态；修正 popup 全量会话令牌的过期清单；增强 DOM/IPC 机器检查的重复 id、`sendToRenderer` 与 Token 图表覆盖，并接入 `npm test` | `docs/PROJECT_HANDBOOK.md`、`regression-checklist.md`、`tests/reconcile-dom-ipc.js`、`package.json`、`README.md` | `npm run test:all`；`npm run pack`；`git diff --check` |
+| 2026-07-26 | refactor/feat | 精简 Token 统计：移除外部账单导入、实际金额和差异核对的页面与 IPC；新增每日 Token 趋势折线图、模型用量占比圆环图及图例 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css`、`tests/tokenbox-integration-contract.test.js`、`tests/tokenbox-charts.e2e.js` | `npm test`；`node tests/tokenbox-charts.e2e.js`；`npm run test:e2e` |
+| 2026-07-26 | fix | 修复多子任务状态机：暂停当前子任务后可启动另一子任务；继续操作绑定到指定子任务；子任务完成状态独立持久化；启动时迁移历史 `paused + running child` 残留状态 | `renderer.js`、`style.css`、`tests/subtask-switching.e2e.js`、`package.json` | `npm test`（81/81）；`npm run test:e2e`；新增 3 个真实 Electron 回归场景 |
+| 2026-07-25 | feat | 完成 TokenBox headless JSONL gateway 与工作台扩展：模型事件证据、源日志/SQLite 审计和 JSON/CSV 导出；Rust core 继续拥有扫描、去重、游标、Decimal 计价和账本规则 | `../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs`、`../../tokenbox/src-tauri/src/commands/mod.rs`、`../../tokenbox/src-tauri/src/storage/mod.rs`、`main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm test`（81/81）；`npm run test:all`；`npm run build:bridge:stage`；TokenBox `npm run build`；桥接 UI smoke（2,495 Token / 3 models / audit PASS） |
 | 2026-07-25 | fix | Apply the 2026-07-24 adversarial review: IPC path/token boundaries, report period/orphan preservation, completion timestamps, same-lane reorder, artifact lifecycle, and local server status | `main.js`, `preload.js`, `renderer.js`, `tests/adversarial-fix-regression.test.js` | `npm test`; `npm run test:e2e` |
 | 2026-07-24 | docs/chore | 完成洁癖收尾：同步当前稳定基线与工作区状态，清理已关闭回归登记，标记历史计划与验收清单，明确 E2E 挂起和 sidecar linker 阻塞；确认运行时个人数据、E2E 夹具与本地 agent 配置边界 | `README.md`、`.gitignore`、`docs/PROJECT_HANDBOOK.md`、`docs/FEATURE_PLAN_THREE.md`、`docs/ACCEPTANCE_CHECKLIST_ABC.md`、`regression-checklist.md` | `npm run check`；`npm test`（69/69）；`npm run pack`；只读 Git/残留盘点 |
 | 2026-07-22 | feat/refactor | 接入长期 Token 统计方案：TokenBox 增加 headless JSONL sidecar，工作台通过白名单 IPC 展示模型/日期筛选、账本汇总和扫描警告；补充 sidecar staging 与契约测试 | `main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css`、`package.json`、`scripts/stage-tokenbox-bridge.js`、`tests/tokenbox-integration-contract.test.js`、`../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs` | `npm test`（69 项）；TokenBox `npm run build`；`cargo fmt --check`；真实 bridge 构建待本机 linker |

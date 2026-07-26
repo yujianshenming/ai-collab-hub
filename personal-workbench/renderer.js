@@ -111,8 +111,6 @@ let activeWeeklyReport = null;
 let activeTokenboxSnapshot = null;
 let tokenboxLoading = false;
 let tokenboxRefreshQueued = false;
-let activeTokenboxAudit = null;
-let activeTokenboxReconciliation = null;
 let tokenboxOperationLoading = false;
 let taskTransitionGeneration = 0;
 let taskRailCollapsed = false;
@@ -225,12 +223,15 @@ const elements = {
   tokenboxStatus: document.querySelector("#tokenbox-status"),
   tokenboxTotalTokens: document.querySelector("#tokenbox-total-tokens"),
   tokenboxOfficialCost: document.querySelector("#tokenbox-official-cost"),
-  tokenboxActualCost: document.querySelector("#tokenbox-actual-cost"),
   tokenboxRequests: document.querySelector("#tokenbox-requests"),
   tokenboxModelCount: document.querySelector("#tokenbox-model-count"),
   tokenboxBillableInput: document.querySelector("#tokenbox-billable-input"),
   tokenboxUnpricedCount: document.querySelector("#tokenbox-unpriced-count"),
   tokenboxWarningList: document.querySelector("#tokenbox-warning-list"),
+  tokenboxTrendSummary: document.querySelector("#tokenbox-trend-summary"),
+  tokenboxTrendChart: document.querySelector("#tokenbox-trend-chart"),
+  tokenboxModelChart: document.querySelector("#tokenbox-model-chart"),
+  tokenboxModelLegend: document.querySelector("#tokenbox-model-legend"),
   tokenboxModelsBody: document.querySelector("#tokenbox-models-body"),
   tokenboxDailyBody: document.querySelector("#tokenbox-daily-body"),
   tokenboxBackup: document.querySelector("#tokenbox-backup"),
@@ -240,12 +241,6 @@ const elements = {
   tokenboxExportAuditMd: document.querySelector("#tokenbox-export-audit-md"),
   tokenboxAuditStatus: document.querySelector("#tokenbox-audit-status"),
   tokenboxAuditSummary: document.querySelector("#tokenbox-audit-summary"),
-  tokenboxRelayFile: document.querySelector("#tokenbox-relay-file"),
-  tokenboxRelayImport: document.querySelector("#tokenbox-relay-import"),
-  tokenboxRelayReconcile: document.querySelector("#tokenbox-relay-reconcile"),
-  tokenboxExportReconciliation: document.querySelector("#tokenbox-export-reconciliation"),
-  tokenboxReconciliationStatus: document.querySelector("#tokenbox-reconciliation-status"),
-  tokenboxReconciliationBody: document.querySelector("#tokenbox-reconciliation-body"),
   tokenboxEvidenceTitle: document.querySelector("#tokenbox-evidence-title"),
   tokenboxEvidenceBody: document.querySelector("#tokenbox-evidence-body"),
   reportGenerate: document.querySelector("#report-generate"),
@@ -1341,6 +1336,178 @@ function tokenboxBillableInputTokens(row = {}) {
     .reduce((total, key) => total + (Number(row[key]) || 0), 0);
 }
 
+const TOKENBOX_MODEL_COLORS = ["#0d9488", "#f97316", "#3b82f6", "#8b5cf6", "#22c55e", "#eab308"];
+
+function formatTokenboxCompactNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return new Intl.NumberFormat("zh-CN", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(number);
+}
+
+function tokenboxChartCeiling(value) {
+  const number = Math.max(1, Number(value) || 0);
+  const magnitude = 10 ** Math.floor(Math.log10(number));
+  const normalized = number / magnitude;
+  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return step * magnitude;
+}
+
+function renderTokenboxTrendChart(daily) {
+  const container = elements.tokenboxTrendChart;
+  if (!container) return;
+
+  const rows = (Array.isArray(daily) ? daily : [])
+    .map((row, index) => ({
+      date: String(row?.date || `第 ${index + 1} 天`),
+      tokens: Math.max(0, Number(tokenboxTotalTokens(row)) || 0)
+    }))
+    .sort((left, right) => left.date.localeCompare(right.date));
+
+  if (!rows.length) {
+    container.innerHTML = '<div class="tokenbox-chart-empty">当前筛选范围暂无趋势数据</div>';
+    container.setAttribute("aria-label", "每日 Token 趋势图，暂无数据");
+    if (elements.tokenboxTrendSummary) elements.tokenboxTrendSummary.textContent = "等待统计数据";
+    return;
+  }
+
+  const width = 760;
+  const height = 270;
+  const padding = { top: 20, right: 18, bottom: 42, left: 60 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const baseline = padding.top + plotHeight;
+  const maxTokens = Math.max(...rows.map((row) => row.tokens));
+  const ceiling = tokenboxChartCeiling(maxTokens);
+  const points = rows.map((row, index) => ({
+    ...row,
+    x: rows.length === 1
+      ? padding.left + plotWidth / 2
+      : padding.left + (plotWidth * index) / (rows.length - 1),
+    y: padding.top + plotHeight - (row.tokens / ceiling) * plotHeight
+  }));
+  const linePath = points.map((point, index) => `${index ? "L" : "M"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+  const areaPath = `M ${points[0].x.toFixed(2)} ${baseline} L ${points.map((point) => `${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" L ")} L ${points.at(-1).x.toFixed(2)} ${baseline} Z`;
+  const gridLines = Array.from({ length: 5 }, (_, index) => {
+    const ratio = index / 4;
+    const y = padding.top + plotHeight * ratio;
+    const label = formatTokenboxCompactNumber(Math.round(ceiling * (1 - ratio)));
+    return `<g class="tokenbox-chart-gridline">
+      <line x1="${padding.left}" y1="${y}" x2="${width - padding.right}" y2="${y}"></line>
+      <text x="${padding.left - 10}" y="${y + 4}" text-anchor="end">${escapeHtml(label)}</text>
+    </g>`;
+  }).join("");
+  const labelEvery = Math.max(1, Math.ceil(rows.length / 6));
+  const xLabels = points
+    .filter((_point, index) => index === 0 || index === points.length - 1 || index % labelEvery === 0)
+    .map((point) => `<text class="tokenbox-chart-axis-label" x="${point.x}" y="${height - 14}" text-anchor="middle">${escapeHtml(point.date.slice(5).replace("-", "/"))}</text>`)
+    .join("");
+  const pointMarks = points.map((point, index) => `<circle
+      class="tokenbox-trend-point"
+      data-tokenbox-point="${index}"
+      cx="${point.x}"
+      cy="${point.y}"
+      r="4"
+    ><title>${escapeHtml(point.date)}：${escapeHtml(formatTokenboxNumber(point.tokens))} Token</title></circle>`).join("");
+
+  container.innerHTML = `<svg class="tokenbox-trend-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <defs>
+      <linearGradient id="tokenbox-trend-fill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#0d9488" stop-opacity="0.28"></stop>
+        <stop offset="100%" stop-color="#0d9488" stop-opacity="0.02"></stop>
+      </linearGradient>
+    </defs>
+    ${gridLines}
+    <path class="tokenbox-trend-area" d="${areaPath}"></path>
+    <path class="tokenbox-trend-line" d="${linePath}"></path>
+    ${pointMarks}
+    ${xLabels}
+  </svg>`;
+
+  const peak = rows.reduce((current, row) => row.tokens > current.tokens ? row : current, rows[0]);
+  container.setAttribute("aria-label", `${rows[0].date} 至 ${rows.at(-1).date} 的每日 Token 趋势，峰值 ${formatTokenboxNumber(peak.tokens)}`);
+  if (elements.tokenboxTrendSummary) {
+    elements.tokenboxTrendSummary.textContent = `峰值 ${peak.date} · ${formatTokenboxNumber(peak.tokens)} Token`;
+  }
+}
+
+function tokenboxModelShareRows(models) {
+  const totals = new Map();
+  for (const row of Array.isArray(models) ? models : []) {
+    const model = String(row?.model || "未知模型");
+    const tokens = Math.max(0, Number(tokenboxTotalTokens(row)) || 0);
+    if (tokens <= 0) continue;
+    totals.set(model, (totals.get(model) || 0) + tokens);
+  }
+  const ranked = [...totals.entries()]
+    .map(([model, tokens]) => ({ model, tokens }))
+    .sort((left, right) => right.tokens - left.tokens);
+  if (ranked.length <= 6) return ranked;
+  const visible = ranked.slice(0, 5);
+  visible.push({
+    model: "其他",
+    tokens: ranked.slice(5).reduce((sum, row) => sum + row.tokens, 0)
+  });
+  return visible;
+}
+
+function renderTokenboxModelShareChart(models) {
+  const chart = elements.tokenboxModelChart;
+  const legend = elements.tokenboxModelLegend;
+  if (!chart || !legend) return;
+
+  const rows = tokenboxModelShareRows(models);
+  const total = rows.reduce((sum, row) => sum + row.tokens, 0);
+  if (!rows.length || total <= 0) {
+    chart.innerHTML = '<div class="tokenbox-chart-empty">当前筛选范围暂无模型用量</div>';
+    chart.setAttribute("aria-label", "模型 Token 用量占比图，暂无数据");
+    legend.replaceChildren();
+    return;
+  }
+
+  let offset = 0;
+  const segments = rows.map((row, index) => {
+    const share = row.tokens / total * 100;
+    const color = TOKENBOX_MODEL_COLORS[index % TOKENBOX_MODEL_COLORS.length];
+    const segment = `<circle
+      class="tokenbox-donut-segment"
+      data-tokenbox-slice="${index}"
+      cx="64"
+      cy="64"
+      r="46"
+      pathLength="100"
+      fill="none"
+      stroke="${color}"
+      stroke-width="18"
+      stroke-dasharray="${share.toFixed(4)} ${(100 - share).toFixed(4)}"
+      stroke-dashoffset="${(-offset).toFixed(4)}"
+      transform="rotate(-90 64 64)"
+    ><title>${escapeHtml(row.model)}：${escapeHtml(formatTokenboxNumber(row.tokens))} Token（${share.toFixed(1)}%）</title></circle>`;
+    offset += share;
+    return segment;
+  }).join("");
+
+  chart.innerHTML = `<svg class="tokenbox-donut-svg" viewBox="0 0 128 128" aria-hidden="true">
+    <circle class="tokenbox-donut-track" cx="64" cy="64" r="46" pathLength="100" fill="none" stroke-width="18"></circle>
+    ${segments}
+    <text class="tokenbox-donut-total" x="64" y="61" text-anchor="middle">${escapeHtml(formatTokenboxCompactNumber(total))}</text>
+    <text class="tokenbox-donut-caption" x="64" y="78" text-anchor="middle">Token</text>
+  </svg>`;
+  chart.setAttribute("aria-label", `${rows.length} 个模型的 Token 用量占比，总计 ${formatTokenboxNumber(total)}`);
+  legend.innerHTML = rows.map((row, index) => {
+    const color = TOKENBOX_MODEL_COLORS[index % TOKENBOX_MODEL_COLORS.length];
+    const share = row.tokens / total * 100;
+    return `<div class="tokenbox-model-legend-item" title="${escapeHtml(row.model)}">
+      <span class="tokenbox-model-legend-dot" style="--tokenbox-chart-color: ${color}"></span>
+      <span class="tokenbox-model-legend-name">${escapeHtml(row.model)}</span>
+      <strong>${share.toFixed(1)}%</strong>
+      <small>${formatTokenboxNumber(row.tokens)}</small>
+    </div>`;
+  }).join("");
+}
+
 function tokenboxProviderLabel(provider) {
   if (provider === "codex") return "Codex";
   if (provider === "claude" || provider === "claude_code") return "Claude Code";
@@ -1355,13 +1522,14 @@ function setTokenboxStatus(message, state = "") {
 }
 
 function clearTokenboxTables() {
-  [elements.tokenboxTotalTokens, elements.tokenboxOfficialCost, elements.tokenboxActualCost, elements.tokenboxRequests, elements.tokenboxModelCount, elements.tokenboxBillableInput, elements.tokenboxUnpricedCount]
+  [elements.tokenboxTotalTokens, elements.tokenboxOfficialCost, elements.tokenboxRequests, elements.tokenboxModelCount, elements.tokenboxBillableInput, elements.tokenboxUnpricedCount]
     .forEach((element) => { if (element) element.textContent = "—"; });
   if (elements.tokenboxWarningList) elements.tokenboxWarningList.replaceChildren();
+  renderTokenboxTrendChart([]);
+  renderTokenboxModelShareChart([]);
   if (elements.tokenboxModelsBody) elements.tokenboxModelsBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="5">暂无数据</td></tr>';
   if (elements.tokenboxDailyBody) elements.tokenboxDailyBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="5">暂无数据</td></tr>';
-  if (elements.tokenboxEvidenceBody) elements.tokenboxEvidenceBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="7">选择模型后显示证据</td></tr>';
-  if (elements.tokenboxReconciliationBody) elements.tokenboxReconciliationBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="7">暂无对账记录</td></tr>';
+  if (elements.tokenboxEvidenceBody) elements.tokenboxEvidenceBody.innerHTML = '<tr><td class="tokenbox-empty" colspan="6">选择模型后显示证据</td></tr>';
 }
 
 function renderTokenboxSnapshot(snapshot) {
@@ -1373,7 +1541,6 @@ function renderTokenboxSnapshot(snapshot) {
   const totals = snapshot.totals || {};
   if (elements.tokenboxTotalTokens) elements.tokenboxTotalTokens.textContent = formatTokenboxNumber(totals.total_tokens);
   if (elements.tokenboxOfficialCost) elements.tokenboxOfficialCost.textContent = formatTokenboxCost(totals.official_cost);
-  if (elements.tokenboxActualCost) elements.tokenboxActualCost.textContent = formatTokenboxCost(totals.actual_cost);
   if (elements.tokenboxRequests) elements.tokenboxRequests.textContent = formatTokenboxNumber(totals.requests);
   if (elements.tokenboxModelCount) elements.tokenboxModelCount.textContent = formatTokenboxNumber(totals.model_count);
   if (elements.tokenboxBillableInput) elements.tokenboxBillableInput.textContent = formatTokenboxNumber(
@@ -1386,14 +1553,13 @@ function renderTokenboxSnapshot(snapshot) {
     elements.tokenboxModelsBody.innerHTML = models.length
       ? models.map((row) => {
         const aliases = Array.isArray(row.raw_aliases) ? row.raw_aliases : [];
-        const actual = row.actual_cost ? `<br><small>实际 ${escapeHtml(formatTokenboxCost(row.actual_cost))}</small>` : "";
         const provider = row.provider === "Codex" ? "codex" : "claude_code";
         return `<tr>
           <td title="${escapeHtml(aliases.join(", "))}"><button class="tokenbox-model-link" type="button" data-tokenbox-model="${escapeHtml(row.model || "")}" data-tokenbox-provider="${provider}">${escapeHtml(row.model || "未知模型")}</button></td>
           <td>${escapeHtml(tokenboxProviderLabel(row.provider))}</td>
           <td>${formatTokenboxNumber(row.requests)}</td>
           <td>${formatTokenboxNumber(tokenboxTotalTokens(row))}</td>
-          <td>${escapeHtml(formatTokenboxCost(row.official_cost))}${actual}</td>
+          <td>${escapeHtml(formatTokenboxCost(row.official_cost))}</td>
         </tr>`;
       }).join("")
       : '<tr><td class="tokenbox-empty" colspan="5">当前筛选范围暂无模型用量</td></tr>';
@@ -1416,6 +1582,8 @@ function renderTokenboxSnapshot(snapshot) {
         </tr>`).join("")
       : '<tr><td class="tokenbox-empty" colspan="5">当前筛选范围暂无每日用量</td></tr>';
   }
+  renderTokenboxTrendChart(daily);
+  renderTokenboxModelShareChart(models);
 
   const warnings = Array.isArray(snapshot.warnings) ? snapshot.warnings : [];
   if (elements.tokenboxWarningList) {
@@ -1461,11 +1629,10 @@ function renderTokenboxEvidence(evidence) {
         <td>${escapeHtml(item.model_normalized || item.model_raw || "未知模型")}</td>
         <td>${formatTokenboxNumber(item.total_tokens)}</td>
         <td>${escapeHtml(formatTokenboxCost(item.official_cost))}</td>
-        <td>${escapeHtml(formatTokenboxCost(item.actual_cost))}</td>
         <td><code>${escapeHtml(item.event_id || "")}</code></td>
         <td><code>${escapeHtml(item.source_file_hash || "")}</code><br><small>offset ${formatTokenboxNumber(item.source_offset)}</small></td>
       </tr>`).join("")
-    : '<tr><td class="tokenbox-empty" colspan="7">当前模型没有事件级证据</td></tr>';
+    : '<tr><td class="tokenbox-empty" colspan="6">当前模型没有事件级证据</td></tr>';
 }
 
 async function loadTokenboxEvidence(model, provider) {
@@ -1487,7 +1654,6 @@ async function loadTokenboxEvidence(model, provider) {
 }
 
 function renderTokenboxAudit(audit) {
-  activeTokenboxAudit = audit || null;
   if (!elements.tokenboxAuditSummary) return;
   if (!audit) {
     elements.tokenboxAuditSummary.textContent = "等待源日志审计。";
@@ -1550,61 +1716,6 @@ async function exportTokenboxAudit(format) {
   setTokenboxInlineStatus(elements.tokenboxAuditStatus, `已导出完整 ${format.toUpperCase()} 审计证据`, "success");
 }
 
-function renderTokenboxReconciliation(summary) {
-  activeTokenboxReconciliation = summary || null;
-  if (elements.tokenboxActualCost && summary?.relay_actual_cost !== undefined) {
-    elements.tokenboxActualCost.textContent = formatTokenboxCost(summary.relay_actual_cost);
-  }
-  if (!elements.tokenboxReconciliationBody) return;
-  const rows = Array.isArray(summary?.rows) ? summary.rows : [];
-  elements.tokenboxReconciliationBody.innerHTML = rows.length
-    ? rows.slice(0, 100).map((row) => `<tr>
-        <td>${escapeHtml(row.date || "—")}</td>
-        <td>${escapeHtml(row.model || "未知模型")}</td>
-        <td>${escapeHtml(tokenboxProviderLabel(row.provider))}</td>
-        <td>${formatTokenboxNumber(row.local?.total_tokens)}</td>
-        <td>${formatTokenboxNumber(row.relay?.total_tokens)}</td>
-        <td>${formatTokenboxNumber(row.token_delta?.total_tokens)}</td>
-        <td><span class="tokenbox-reconcile-state" data-state="${escapeHtml(row.status || "ATTENTION")}">${escapeHtml(row.status || "ATTENTION")}</span></td>
-      </tr>`).join("")
-    : '<tr><td class="tokenbox-empty" colspan="7">筛选范围内暂无中转站对账记录</td></tr>';
-  const warning = Array.isArray(summary?.warnings) && summary.warnings.length ? ` · ${summary.warnings.join("；")}` : "";
-  setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, `对账：${summary?.status || "EMPTY"} · Token 差异 ${formatTokenboxNumber(summary?.token_delta?.total_tokens)}${warning}`, summary?.status === "PASS" ? "success" : "warning");
-}
-
-async function refreshTokenboxReconciliation() {
-  const result = await window.workbench.getTokenboxReconciliation(tokenboxFilter());
-  if (!result?.success) throw new Error(result?.error || "TokenBox 中转站对账查询失败");
-  renderTokenboxReconciliation(result.reconciliation);
-}
-
-async function importTokenboxRelay() {
-  const file = elements.tokenboxRelayFile?.files?.[0];
-  if (!file) return;
-  if (file.size > 50 * 1024 * 1024) {
-    setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, "中转站文件超过 50 MB", "error");
-    return;
-  }
-  setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, `正在导入 ${file.name}…`, "loading");
-  try {
-    const result = await window.workbench.importTokenboxRelay({ content: await file.text(), sourceName: file.name, format: "auto" });
-    if (!result?.success) throw new Error(result?.error || "TokenBox 中转站导入失败");
-    await refreshTokenboxReconciliation();
-    setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, `已导入 ${formatTokenboxNumber(result.import?.records_imported)} 条记录`, "success");
-  } catch (error) {
-    setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error");
-  } finally {
-    if (elements.tokenboxRelayFile) elements.tokenboxRelayFile.value = "";
-  }
-}
-
-async function exportTokenboxReconciliation() {
-  const result = await window.workbench.exportTokenboxReconciliation({ filter: tokenboxFilter(), format: "json" });
-  if (!result?.success) throw new Error(result?.error || "TokenBox 对账导出失败");
-  downloadTokenboxText(result.content, result.filename || "tokenbox-reconciliation.json", "application/json;charset=utf-8");
-  setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, "已导出对账证据", "success");
-}
-
 async function refreshTokenbox() {
   if (tokenboxLoading) {
     tokenboxRefreshQueued = true;
@@ -1625,9 +1736,6 @@ async function refreshTokenbox() {
     const scan = result.scan || {};
     const dataAsOf = result.dashboard?.data_as_of ? `，数据截至 ${result.dashboard.data_as_of}` : "";
     setTokenboxStatus(`已更新：扫描 ${formatTokenboxNumber(scan.files_scanned)} 个文件，新增 ${formatTokenboxNumber(scan.events_added)} 条事件${dataAsOf}`, "success");
-    void refreshTokenboxReconciliation().catch((error) => {
-      setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error");
-    });
   } catch (error) {
     setTokenboxStatus(error?.message || String(error), "error");
   } finally {
@@ -3407,7 +3515,7 @@ function normalizeSubtasks(subtasks, quantity) {
   const list = [];
   for (let index = 1; index <= count; index += 1) {
     const status = source[index - 1]?.status;
-    list.push({ index, status: ["pending", "running", "done", "unconfirmed"].includes(status) ? status : "pending" });
+    list.push({ index, status: ["pending", "running", "paused", "done", "unconfirmed"].includes(status) ? status : "pending" });
   }
   return list;
 }
@@ -3472,6 +3580,7 @@ function subtaskStatusLabel(status) {
   return {
     pending: "待做",
     running: "进行中",
+    paused: "已暂停",
     done: "已完成",
     unconfirmed: "待确认"
   }[status] || "待做";
@@ -3488,6 +3597,7 @@ function runningSubtaskIndex(task) {
 function nextRunnableSubtaskIndex(task) {
   const subtasks = taskSubtasks(task);
   return runningSubtaskIndex(task)
+    || subtasks.find((subtask) => subtask.status === "paused")?.index
     || subtasks.find((subtask) => ["pending", "unconfirmed"].includes(subtask.status))?.index
     || null;
 }
@@ -3549,6 +3659,12 @@ async function loadWeeklyTasks() {
       }
       if (["running", "evaluating"].includes(task.status)) {
         task.status = "paused";
+        reconciled = true;
+      }
+      if (task.status === "paused" && taskSubtasks(task).some((subtask) => subtask.status === "running")) {
+        task.subtasks = taskSubtasks(task).map((subtask) =>
+          subtask.status === "running" ? { ...subtask, status: "paused" } : subtask
+        );
         reconciled = true;
       }
       retainedTasks.push(task);
@@ -4252,14 +4368,6 @@ function setupTokenboxEvents() {
   elements.tokenboxExportAuditMd?.addEventListener("click", () => {
     void exportTokenboxAudit("md").catch((error) => setTokenboxInlineStatus(elements.tokenboxAuditStatus, error?.message || String(error), "error"));
   });
-  elements.tokenboxRelayImport?.addEventListener("click", () => elements.tokenboxRelayFile?.click());
-  elements.tokenboxRelayFile?.addEventListener("change", () => void importTokenboxRelay());
-  elements.tokenboxRelayReconcile?.addEventListener("click", () => {
-    void refreshTokenboxReconciliation().catch((error) => setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error"));
-  });
-  elements.tokenboxExportReconciliation?.addEventListener("click", () => {
-    void exportTokenboxReconciliation().catch((error) => setTokenboxInlineStatus(elements.tokenboxReconciliationStatus, error?.message || String(error), "error"));
-  });
 }
 
 function taskProgressInfo(task) {
@@ -4606,6 +4714,8 @@ function taskCardElement(task) {
       action = active
         ? '<button class="subtask-action finish" type="button" data-subtask-action="finish">结束</button>'
         : '<button class="subtask-action" type="button" data-subtask-action="resume">继续</button>';
+    } else if (subtask.status === "paused") {
+      action = '<button class="subtask-action" type="button" data-subtask-action="resume">继续</button>';
     } else if (["pending", "unconfirmed"].includes(subtask.status)) {
       action = '<button class="subtask-action" type="button" data-subtask-action="start">开始</button>';
     }
@@ -4626,10 +4736,13 @@ function taskCardElement(task) {
     : "";
   const noteHtml = task.note ? `<div class="tc-note">备注：${escapeHtml(task.note)}</div>` : "";
   const archiveMenuLabel = task.archived ? "取消归档" : "归档";
+  const defaultSubtaskIndex = nextRunnableSubtaskIndex(task);
+  const defaultSubtask = subtasks.find((subtask) => subtask.index === defaultSubtaskIndex);
+  const defaultSubtaskCanResume = ["running", "paused"].includes(defaultSubtask?.status);
 
   let mainAction = "";
   if (task.status === "paused") {
-    mainAction = `<button class="btn btn-teal btn-sm task-resume" type="button">${runningSubtaskIndex(task) ? "继续" : "开始下一项"}</button>`;
+    mainAction = `<button class="btn btn-teal btn-sm task-resume" type="button">${defaultSubtaskCanResume ? "继续" : "开始下一项"}</button>`;
   } else if (task.status === "unsubmitted") {
     mainAction = '<button class="btn btn-teal btn-sm task-mark-completed" type="button">标记已完成</button>';
   } else if (task.status === "completed") {
@@ -4671,9 +4784,8 @@ function taskCardElement(task) {
 
   card.querySelector(".task-run")?.addEventListener("click", () => startTaskAutomation(task.id));
   card.querySelector(".task-resume")?.addEventListener("click", () => {
-    const activeIndex = runningSubtaskIndex(task);
-    if (activeIndex) resumeTaskAutomation(task.id);
-    else startTaskAutomation(task.id, nextRunnableSubtaskIndex(task));
+    if (defaultSubtaskCanResume) resumeTaskAutomation(task.id, defaultSubtaskIndex);
+    else startTaskAutomation(task.id, defaultSubtaskIndex);
   });
   card.querySelector(".task-mark-completed")?.addEventListener("click", () =>
     updateTaskFields(task.id, {
@@ -4715,7 +4827,7 @@ function taskCardElement(task) {
         return;
       }
       if (action === "resume") {
-        await resumeTaskAutomation(task.id);
+        await resumeTaskAutomation(task.id, index);
         return;
       }
       if (action === "start") await startTaskAutomation(task.id, index);
@@ -5616,7 +5728,7 @@ async function startTaskAutomation(id, subtaskIndex = null) {
     showToast(`子任务 ${existingRunningIndex} 尚未结束，请先继续或结束它`, "error");
     return;
   }
-  if (!targetSubtask || !["pending", "unconfirmed"].includes(targetSubtask.status)) {
+  if (!targetSubtask || !["pending", "unconfirmed", "paused"].includes(targetSubtask.status)) {
     showToast("没有可开始的子任务，请先检查子任务状态", "error");
     return;
   }
@@ -5691,6 +5803,9 @@ async function pauseTaskAutomation(id) {
   taskTransitionGeneration += 1;
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
+  const activeSubtaskIndex = pipelineState.active && pipelineState.taskId === id
+    ? pipelineState.activeSubtaskIndex
+    : runningSubtaskIndex(task);
 
   if (pipelineState.active && pipelineState.taskId === id) {
     task.chatLogPath = pipelineState.chatPath || "";
@@ -5699,6 +5814,9 @@ async function pauseTaskAutomation(id) {
     task.step = pipelineState.step || "testing";
   }
 
+  if (activeSubtaskIndex) {
+    task.subtasks = updateSubtaskStatus(task, activeSubtaskIndex, "paused");
+  }
   task.status = "paused";
   pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
   await updateTaskRail(null);
@@ -5712,17 +5830,32 @@ async function pauseTaskAutomation(id) {
   showToast(`任务已暂停：${task.school || ""} ${task.course || ""}`, "success");
 }
 
-async function resumeTaskAutomation(id) {
+async function resumeTaskAutomation(id, subtaskIndex = null) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return;
   const previousStatus = task.status;
-  const activeSubtaskIndex = nextRunnableSubtaskIndex(task);
+  const previousSubtasks = taskSubtasks(task);
+  const requestedSubtaskIndex = subtaskIndex !== null && Number.isInteger(Number(subtaskIndex))
+    ? Number(subtaskIndex)
+    : null;
+  const activeSubtaskIndex = requestedSubtaskIndex || nextRunnableSubtaskIndex(task);
   if (!activeSubtaskIndex) {
     showToast("该任务没有待继续的子任务", "error");
     return;
   }
-  if (taskSubtasks(task).find((subtask) => subtask.index === activeSubtaskIndex)?.status !== "running") {
+  const activeSubtask = previousSubtasks.find((subtask) => subtask.index === activeSubtaskIndex);
+  if (["pending", "unconfirmed"].includes(activeSubtask?.status)
+    || (activeSubtask?.status === "paused" && !task.taskFolder)) {
     await startTaskAutomation(id, activeSubtaskIndex);
+    return;
+  }
+  if (!["running", "paused"].includes(activeSubtask?.status)) {
+    showToast("该子任务当前不可继续", "error");
+    return;
+  }
+  const existingRunningIndex = runningSubtaskIndex(task);
+  if (existingRunningIndex && existingRunningIndex !== activeSubtaskIndex) {
+    showToast(`子任务 ${existingRunningIndex} 正在运行，请先暂停或结束它`, "error");
     return;
   }
 
@@ -5774,12 +5907,14 @@ async function resumeTaskAutomation(id) {
   };
 
   const nextStatus = pipelineState.step === "evaluating" ? "evaluating" : "running";
+  const nextSubtasks = updateSubtaskStatus(task, activeSubtaskIndex, "running");
   taskRailCollapsed = false;
   let activeTask;
   try {
-    activeTask = await updateTaskFields(id, { status: nextStatus });
+    activeTask = await updateTaskFields(id, { status: nextStatus, subtasks: nextSubtasks });
   } catch (error) {
     task.status = previousStatus;
+    task.subtasks = previousSubtasks;
     pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
     await updateTaskRail(null);
     console.error("保存任务恢复状态失败:", error);
