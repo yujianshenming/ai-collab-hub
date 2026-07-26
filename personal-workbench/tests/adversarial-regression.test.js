@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const test = require("node:test");
+const { transitionTask } = require("../task-state-engine");
 
 const root = path.resolve(__dirname, "..");
 const mainSrc = fs.readFileSync(path.join(root, "main.js"), "utf8");
@@ -44,8 +45,14 @@ test("task persistence fails closed and reconciles orphan running states", () =>
   assert.match(mainSrc, /"backups", "weekly_tasks\.json"/);
   assert.match(mainSrc, /fs\.renameSync\(tempPath, weeklyTasksPath\)/);
   assert.match(rendererSrc, /if \(!weeklyTasksLoadedSuccessfully\)/);
-  assert.match(rendererSrc, /\["running", "evaluating"\]\.includes\(task\.status\)/);
-  assert.match(rendererSrc, /task\.status = "paused"/);
+  assert.match(rendererSrc, /transitionTask\(task, \{ type: "recover-startup" \}\)/);
+  const recovered = transitionTask({
+    quantity: 1,
+    status: "running",
+    subtasks: [{ index: 1, status: "running" }]
+  }, { type: "recover-startup" });
+  assert.equal(recovered.task.status, "paused");
+  assert.equal(recovered.task.subtasks[0].status, "paused");
   assert.match(rendererSrc, /cleanupPending: Boolean\(task\.cleanupPending\)/);
   assert.match(rendererSrc, /deletePending: Boolean\(task\.deletePending\)/);
 });

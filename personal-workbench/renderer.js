@@ -1,3 +1,14 @@
+const taskStateEngine = window.TaskStateEngine;
+if (!taskStateEngine) throw new Error("Task state engine failed to load");
+const {
+  nextRunnableSubtaskIndex,
+  normalizeSubtasks,
+  runningSubtaskIndex,
+  taskStateViolations,
+  taskSubtasks,
+  transitionTask
+} = taskStateEngine;
+
 const DEFAULT_TABS = [
   { id: "evaluation", name: "评估", url: "https://www.wl363eval.top/" }
 ];
@@ -3401,15 +3412,21 @@ async function completeActiveTask(submitted) {
   if (!activeSubtaskIndex || !subtasks.some((subtask) => subtask.index === activeSubtaskIndex)) return;
   taskTransitionGeneration += 1;
   const previousTask = JSON.parse(JSON.stringify(task));
-  const nextSubtasks = updateSubtaskStatus(task, activeSubtaskIndex, submitted ? "done" : "unconfirmed");
-  const allSubtasksDone = nextSubtasks.every((subtask) => subtask.status === "done");
-  // 单个任务沿用原有“未提交”终态；多个子任务只有全部完成才清理总任务。
-  const terminal = allSubtasksDone || (!submitted && nextSubtasks.length === 1);
+  const completion = transitionTask(task, {
+    type: "complete-subtask",
+    subtaskIndex: activeSubtaskIndex,
+    submitted
+  });
+  if (!completion.ok) {
+    showToast("子任务状态已变化，请刷新后重试", "error");
+    return;
+  }
+  const terminal = completion.terminal;
   Object.assign(task, {
-    status: allSubtasksDone ? "completed" : (terminal ? "unsubmitted" : "paused"),
+    status: completion.task.status,
     cleanupPending: Boolean(folderPath && terminal),
     cardCopied: terminal ? {} : task.cardCopied,
-    subtasks: nextSubtasks
+    subtasks: completion.task.subtasks
   });
   if (!folderPath && terminal) {
     task.chatLogPath = "";
@@ -3508,18 +3525,6 @@ function resetTaskForm() {
   if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
 }
 
-// 子任务清单与 quantity 联动：长度不足补 pending，超出截断；index 重排为 1..N
-function normalizeSubtasks(subtasks, quantity) {
-  const count = Math.max(1, Number(quantity) || 1);
-  const source = Array.isArray(subtasks) ? subtasks : [];
-  const list = [];
-  for (let index = 1; index <= count; index += 1) {
-    const status = source[index - 1]?.status;
-    list.push({ index, status: ["pending", "running", "paused", "done", "unconfirmed"].includes(status) ? status : "pending" });
-  }
-  return list;
-}
-
 function normalizeWeeklyTask(task = {}) {
   const quantity = Math.max(1, Number(task.quantity) || 1);
   const status = task.status || "pending";
@@ -3558,10 +3563,6 @@ function normalizeWeeklyTask(task = {}) {
   };
 }
 
-function markAllSubtasksDone(subtasks, quantity) {
-  return normalizeSubtasks(subtasks, quantity).map((subtask) => ({ ...subtask, status: "done" }));
-}
-
 function weekdayRank(weekday) {
   const index = TODO_WEEKDAYS.indexOf(weekday);
   return index >= 0 ? index : TODO_WEEKDAYS.length;
@@ -3586,45 +3587,18 @@ function subtaskStatusLabel(status) {
   }[status] || "待做";
 }
 
-function taskSubtasks(task) {
-  return normalizeSubtasks(task?.subtasks, task?.quantity);
-}
-
-function runningSubtaskIndex(task) {
-  return taskSubtasks(task).find((subtask) => subtask.status === "running")?.index || null;
-}
-
-function nextRunnableSubtaskIndex(task) {
-  const subtasks = taskSubtasks(task);
-  return runningSubtaskIndex(task)
-    || subtasks.find((subtask) => subtask.status === "paused")?.index
-    || subtasks.find((subtask) => ["pending", "unconfirmed"].includes(subtask.status))?.index
-    || null;
-}
-
-function updateSubtaskStatus(task, index, status) {
-  return taskSubtasks(task).map((subtask) =>
-    subtask.index === index ? { ...subtask, status } : subtask
-  );
-}
-
-function subtasksForTaskStatus(subtasks, previousStatus, nextStatus) {
-  const normalized = normalizeSubtasks(subtasks, subtasks?.length);
-  if (nextStatus === "completed") return normalized.map((subtask) => ({ ...subtask, status: "done" }));
-  if (nextStatus === "pending" && ["completed", "unsubmitted"].includes(previousStatus)) {
-    return normalized.map((subtask) => ({ ...subtask, status: "pending" }));
-  }
-  if (!["paused", "running", "evaluating"].includes(nextStatus)) {
-    return normalized.map((subtask) => subtask.status === "running" ? { ...subtask, status: "pending" } : subtask);
-  }
-  return normalized;
-}
-
 async function persistWeeklyTasks() {
   if (!weeklyTasksLoadedSuccessfully) {
     throw new Error("Task data was not loaded successfully; refusing to overwrite it");
   }
-  weeklyTasks = await window.workbench.writeWeeklyTasks(weeklyTasks.map(normalizeWeeklyTask));
+  const normalizedTasks = weeklyTasks.map(normalizeWeeklyTask);
+  const invalidStates = normalizedTasks.flatMap((task) =>
+    taskStateViolations(task).map((code) => `${task.id}:${code}`)
+  );
+  if (invalidStates.length) {
+    throw new Error(`Task state invariant violation: ${invalidStates.join(", ")}`);
+  }
+  weeklyTasks = await window.workbench.writeWeeklyTasks(normalizedTasks);
   renderTaskCenter();
 }
 
@@ -3657,15 +3631,14 @@ async function loadWeeklyTasks() {
           reconciled = true;
         }
       }
-      if (["running", "evaluating"].includes(task.status)) {
-        task.status = "paused";
+      const recovery = transitionTask(task, { type: "recover-startup" });
+      if (recovery.changed) {
+        Object.assign(task, recovery.task);
         reconciled = true;
       }
-      if (task.status === "paused" && taskSubtasks(task).some((subtask) => subtask.status === "running")) {
-        task.subtasks = taskSubtasks(task).map((subtask) =>
-          subtask.status === "running" ? { ...subtask, status: "paused" } : subtask
-        );
-        reconciled = true;
+      const stateViolations = taskStateViolations(task);
+      if (stateViolations.length) {
+        console.warn(`任务 ${task.id} 状态核对异常:`, stateViolations);
       }
       retainedTasks.push(task);
     }
@@ -4475,15 +4448,6 @@ function closeAllSubtaskPopovers() {
   document.querySelectorAll(".subtask-popover.open").forEach((pop) => pop.classList.remove("open"));
 }
 
-async function updateTaskSubtaskStatus(taskId, subtaskIndex, status) {
-  const task = weeklyTasks.find((candidate) => candidate.id === taskId);
-  if (!task) return;
-  const subtasks = normalizeSubtasks(task.subtasks, task.quantity).map((subtask) =>
-    subtask.index === subtaskIndex ? { ...subtask, status } : subtask
-  );
-  await updateTaskFields(taskId, { subtasks });
-}
-
 // 任务中心筛选状态（仅影响网格，不影响统计卡 / pipeline / 任务舱）
 const taskCenterFilters = {
   query: "",
@@ -4787,13 +4751,17 @@ function taskCardElement(task) {
     if (defaultSubtaskCanResume) resumeTaskAutomation(task.id, defaultSubtaskIndex);
     else startTaskAutomation(task.id, defaultSubtaskIndex);
   });
-  card.querySelector(".task-mark-completed")?.addEventListener("click", () =>
+  card.querySelector(".task-mark-completed")?.addEventListener("click", () => {
+    const completedState = transitionTask(task, {
+      type: "set-task-status",
+      status: "completed"
+    });
     updateTaskFields(task.id, {
-      status: "completed",
-      subtasks: markAllSubtasksDone(task.subtasks, task.quantity),
+      status: completedState.task.status,
+      subtasks: completedState.task.subtasks,
       completedAt: new Date().toISOString()
-    }).then(() => showToast("任务已标记为已完成", "success"))
-  );
+    }).then(() => showToast("任务已标记为已完成", "success"));
+  });
   card.querySelector(".task-open-folder")?.addEventListener("click", () => {
     if (task.taskFolder) {
       window.workbench.openTaskFolder(task.taskFolder);
@@ -4974,15 +4942,19 @@ async function applyTaskCardDrop({ taskId, targetLane, beforeId = null, afterId 
   });
 
   if (statusChanged) {
-    const patch = { status: nextStatus, sortKey: task.sortKey };
+    const stateTransition = transitionTask(task, {
+      type: "set-task-status",
+      status: nextStatus
+    });
+    const patch = {
+      status: stateTransition.task.status,
+      subtasks: stateTransition.task.subtasks,
+      sortKey: task.sortKey
+    };
     if (nextStatus === "completed") {
-      patch.subtasks = markAllSubtasksDone(task.subtasks, task.quantity);
       patch.completedAt = task.completedAt || new Date().toISOString();
     } else if (task.status === "completed") {
       patch.completedAt = "";
-    }
-    if (nextStatus === "pending" && ["completed", "unsubmitted"].includes(task.status)) {
-      patch.subtasks = subtasksForTaskStatus(task.subtasks, task.status, "pending");
     }
     Object.assign(task, patch);
   }
@@ -5130,8 +5102,16 @@ function taskFromForm() {
   const status = ["pending", "paused", "unsubmitted", "completed"].includes(elements.taskStatus.value)
     ? elements.taskStatus.value
     : (existing.status || "pending");
-  const existingSubtasks = normalizeSubtasks(existing.subtasks, Math.max(1, Number(document.querySelector("#task-quantity").value) || 1));
-  const subtasks = subtasksForTaskStatus(existingSubtasks, existing.status, status);
+  const quantity = Math.max(1, Number(document.querySelector("#task-quantity").value) || 1);
+  const stateTransition = transitionTask({
+    ...existing,
+    quantity,
+    subtasks: normalizeSubtasks(existing.subtasks, quantity)
+  }, {
+    type: "set-task-status",
+    status
+  });
+  const subtasks = stateTransition.task.subtasks;
   const dueDate = normalizeDueDate(document.querySelector("#task-due-date")?.value || existing.dueDate);
   let completedAt = existing.completedAt || "";
   if (status === "completed") {
@@ -5144,7 +5124,7 @@ function taskFromForm() {
     school: document.querySelector("#task-school").value.trim(),
     course: document.querySelector("#task-course").value.trim(),
     taskType: document.querySelector("#task-type").value,
-    quantity: Math.max(1, Number(document.querySelector("#task-quantity").value) || 1),
+    quantity,
     status,
     owner: document.querySelector("#task-owner").value.trim(),
     weekday: existing.weekday || "",
@@ -5239,6 +5219,7 @@ async function performDeleteWeeklyTask(id) {
 async function updateTaskFields(id, fields) {
   const task = weeklyTasks.find((candidate) => candidate.id === id);
   if (!task) return null;
+  const previousTask = { ...task };
   const next = { ...fields };
   if (Object.prototype.hasOwnProperty.call(next, "status")) {
     if (next.status === "completed") {
@@ -5253,7 +5234,14 @@ async function updateTaskFields(id, fields) {
     next.dueDate = normalizeDueDate(next.dueDate);
   }
   Object.assign(task, next);
-  await persistWeeklyTasks();
+  try {
+    await persistWeeklyTasks();
+  } catch (error) {
+    Object.keys(task).forEach((key) => delete task[key]);
+    Object.assign(task, previousTask);
+    renderTaskCenter();
+    throw error;
+  }
   return weeklyTasks.find((candidate) => candidate.id === id) || null;
 }
 
@@ -5721,21 +5709,23 @@ async function startTaskAutomation(id, subtaskIndex = null) {
   if (!task) return;
   const requestedSubtaskIndex = subtaskIndex !== null && Number.isInteger(Number(subtaskIndex)) ? Number(subtaskIndex) : null;
   const targetSubtaskIndex = requestedSubtaskIndex || nextRunnableSubtaskIndex(task);
-  const subtasks = taskSubtasks(task);
-  const targetSubtask = subtasks.find((subtask) => subtask.index === targetSubtaskIndex);
-  const existingRunningIndex = runningSubtaskIndex(task);
-  if (existingRunningIndex && existingRunningIndex !== targetSubtaskIndex) {
-    showToast(`子任务 ${existingRunningIndex} 尚未结束，请先继续或结束它`, "error");
-    return;
-  }
-  if (!targetSubtask || !["pending", "unconfirmed", "paused"].includes(targetSubtask.status)) {
+  const startTransition = transitionTask(task, {
+    type: "start-subtask",
+    subtaskIndex: targetSubtaskIndex,
+    taskStatus: "running"
+  });
+  if (!startTransition.ok) {
+    if (startTransition.code === "SUBTASK_ALREADY_RUNNING") {
+      showToast(`子任务 ${runningSubtaskIndex(task)} 尚未结束，请先继续或结束它`, "error");
+      return;
+    }
     showToast("没有可开始的子任务，请先检查子任务状态", "error");
     return;
   }
   const previousStatus = task.status;
   const previousStep = task.step;
-  const previousSubtasks = subtasks;
-  const nextSubtasks = updateSubtaskStatus(task, targetSubtaskIndex, "running");
+  const previousSubtasks = taskSubtasks(task);
+  const nextSubtasks = startTransition.task.subtasks;
   const transitionGeneration = ++taskTransitionGeneration;
   // 缺陷 #7：执行先落 prepare（1/5），任务文件夹创建成功后才推进 testing（2/5）
   pipelineState = {
@@ -5814,10 +5804,14 @@ async function pauseTaskAutomation(id) {
     task.step = pipelineState.step || "testing";
   }
 
-  if (activeSubtaskIndex) {
-    task.subtasks = updateSubtaskStatus(task, activeSubtaskIndex, "paused");
+  let pauseTransition = activeSubtaskIndex
+    ? transitionTask(task, { type: "pause-subtask", subtaskIndex: activeSubtaskIndex })
+    : transitionTask(task, { type: "set-task-status", status: "paused" });
+  if (!pauseTransition.ok) {
+    pauseTransition = transitionTask(task, { type: "set-task-status", status: "paused" });
   }
-  task.status = "paused";
+  task.status = pauseTransition.task.status;
+  task.subtasks = pauseTransition.task.subtasks;
   pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
   await updateTaskRail(null);
   try {
@@ -5849,13 +5843,18 @@ async function resumeTaskAutomation(id, subtaskIndex = null) {
     await startTaskAutomation(id, activeSubtaskIndex);
     return;
   }
-  if (!["running", "paused"].includes(activeSubtask?.status)) {
+  const nextStatus = task.step === "evaluating" ? "evaluating" : "running";
+  const resumeTransition = transitionTask(task, {
+    type: "resume-subtask",
+    subtaskIndex: activeSubtaskIndex,
+    taskStatus: nextStatus
+  });
+  if (!resumeTransition.ok) {
+    if (resumeTransition.code === "SUBTASK_ALREADY_RUNNING") {
+      showToast(`子任务 ${runningSubtaskIndex(task)} 正在运行，请先暂停或结束它`, "error");
+      return;
+    }
     showToast("该子任务当前不可继续", "error");
-    return;
-  }
-  const existingRunningIndex = runningSubtaskIndex(task);
-  if (existingRunningIndex && existingRunningIndex !== activeSubtaskIndex) {
-    showToast(`子任务 ${existingRunningIndex} 正在运行，请先暂停或结束它`, "error");
     return;
   }
 
@@ -5906,16 +5905,18 @@ async function resumeTaskAutomation(id, subtaskIndex = null) {
     uploadQueue: []
   };
 
-  const nextStatus = pipelineState.step === "evaluating" ? "evaluating" : "running";
-  const nextSubtasks = updateSubtaskStatus(task, activeSubtaskIndex, "running");
   taskRailCollapsed = false;
   let activeTask;
   try {
-    activeTask = await updateTaskFields(id, { status: nextStatus, subtasks: nextSubtasks });
+    activeTask = await updateTaskFields(id, {
+      status: resumeTransition.task.status,
+      subtasks: resumeTransition.task.subtasks
+    });
   } catch (error) {
     task.status = previousStatus;
     task.subtasks = previousSubtasks;
     pipelineState = { active: false, taskId: null, activeSubtaskIndex: null, step: "idle", chatPath: "", reportPath: "", taskFolder: "", uploadQueue: [] };
+    await window.workbench.updateActiveTaskInfo({}).catch(() => {});
     await updateTaskRail(null);
     console.error("保存任务恢复状态失败:", error);
     showToast("无法保存任务恢复状态，任务保持暂停", "error");
@@ -5942,8 +5943,13 @@ async function handleDownloadCompleted(download) {
         showToast(`已忽略原任务的过期对话下载: ${download.filename}`, "error");
         return;
       }
+      const pausedState = transitionTask(targetTask, {
+        type: "set-task-status",
+        status: "paused"
+      });
       await updateTaskFields(download.taskId, {
-        status: "paused",
+        status: pausedState.task.status,
+        subtasks: pausedState.task.subtasks,
         chatLogPath: download.path,
         step: "evaluating"
       });
@@ -5953,8 +5959,13 @@ async function handleDownloadCompleted(download) {
         showToast(`已忽略原任务的过期报告下载: ${download.filename}`, "error");
         return;
       }
+      const pausedState = transitionTask(targetTask, {
+        type: "set-task-status",
+        status: "paused"
+      });
       await updateTaskFields(download.taskId, {
-        status: "completed",
+        status: pausedState.task.status,
+        subtasks: pausedState.task.subtasks,
         reportPath: download.path,
         step: "report"
       });
@@ -5999,7 +6010,11 @@ async function handleDownloadCompleted(download) {
     }
     pipelineState.reportPath = download.path;
     pipelineState.step = "report";
-    const task = await updateTaskFields(pipelineState.taskId, { status: "completed", reportPath: download.path, step: "report" });
+    const task = await updateTaskFields(pipelineState.taskId, {
+      status: "running",
+      reportPath: download.path,
+      step: "report"
+    });
     updateTaskRail(task);
     scheduleArtifactRefresh(pipelineState.taskId, { force: true });
     // 前台始终 toast；后台系统通知由 main 在窗口未聚焦时发出

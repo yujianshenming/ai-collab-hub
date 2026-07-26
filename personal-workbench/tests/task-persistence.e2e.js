@@ -87,6 +87,45 @@ async function launch() {
     await runningApp.close();
     runningApp = null;
 
+    fs.writeFileSync(weeklyTasksPath, JSON.stringify([{
+      id: "invariant-rollback",
+      school: "test",
+      course: "rollback",
+      quantity: 1,
+      status: "pending",
+      subtasks: [{ index: 1, status: "pending" }]
+    }], null, 2));
+    launched = await launch();
+    runningApp = launched.app;
+    const invariantRollback = await launched.page.evaluate(async () => {
+      let rejected = false;
+      try {
+        await updateTaskFields("invariant-rollback", { status: "running" });
+      } catch {
+        rejected = true;
+      }
+      return {
+        rejected,
+        status: weeklyTasks.find((task) => task.id === "invariant-rollback")?.status
+      };
+    });
+    record(
+      "invalid task updates are rejected by the invariant gate",
+      invariantRollback.rejected,
+      JSON.stringify(invariantRollback)
+    );
+    record(
+      "rejected task updates roll back the in-memory task",
+      invariantRollback.status === "pending",
+      JSON.stringify(invariantRollback)
+    );
+    await runningApp.close();
+    runningApp = null;
+    record(
+      "rejected task updates leave the ledger unchanged",
+      JSON.parse(fs.readFileSync(weeklyTasksPath, "utf8"))[0]?.status === "pending"
+    );
+
     fs.writeFileSync(weeklyTasksPath, "{");
     launched = await launch();
     runningApp = launched.app;

@@ -186,7 +186,13 @@ function closeDownloadWindows(app) {
     const lateDownloadRouting = await page.evaluate(async () => {
       weeklyTasks = [
         normalizeWeeklyTask({ id: "task-a", school: "A", course: "A", status: "paused" }),
-        normalizeWeeklyTask({ id: "task-b", school: "B", course: "B", status: "running" })
+        normalizeWeeklyTask({
+          id: "task-b",
+          school: "B",
+          course: "B",
+          status: "running",
+          subtasks: [{ index: 1, status: "running" }]
+        })
       ];
       pipelineState = {
         active: true,
@@ -210,6 +216,14 @@ function closeDownloadWindows(app) {
         path: "A-folder/dialogue.json",
         filename: "dialogue.json"
       });
+      await handleDownloadCompleted({
+        state: "completed",
+        type: "report",
+        taskId: "task-a",
+        captured: true,
+        path: "A-folder/eval_report.pdf",
+        filename: "eval_report.pdf"
+      });
       return {
         taskA: weeklyTasks.find((task) => task.id === "task-a"),
         taskB: weeklyTasks.find((task) => task.id === "task-b"),
@@ -220,7 +234,9 @@ function closeDownloadWindows(app) {
     record(
       "late task-A download cannot advance active task B",
       lateDownloadRouting.taskA.chatLogPath.endsWith("dialogue.json")
-        && lateDownloadRouting.taskA.step === "evaluating"
+        && lateDownloadRouting.taskA.reportPath.endsWith("eval_report.pdf")
+        && lateDownloadRouting.taskA.step === "report"
+        && lateDownloadRouting.taskA.status === "paused"
         && lateDownloadRouting.taskB.step === "testing"
         && lateDownloadRouting.taskB.chatLogPath === ""
         && lateDownloadRouting.activeTaskId === "task-b"
@@ -234,6 +250,7 @@ function closeDownloadWindows(app) {
         school: "Current",
         course: "Current",
         status: "completed",
+        subtasks: [{ index: 1, status: "done" }],
         step: "report",
         reportPath: "task-current/eval_report.pdf"
       })];

@@ -25,6 +25,12 @@
 - [ ] 监听 `pageerror` 与 `console.error`，3 秒内零未捕获异常。
 - 注意：冒烟阶段**不要打开终端面板**（node-pty 在包装器控制台下可能 AttachConsole 失败）；终端相关用例放人工部分。
 
+### 0.3 GitHub CI
+- [ ] `.github/workflows/personal-workbench-ci.yml` 在 Pull Request 与 `master` 推送时触发。
+- [ ] `Static and unit checks` 使用 Windows + Node.js 22 执行 `npm test`。
+- [ ] `Electron E2E` 在静态/单元检查通过后执行完整 `npm run test:e2e`。
+- [ ] `permissions.contents` 保持 `read`，`actions/checkout` 与 `actions/setup-node` 固定到完整提交 SHA。
+
 ---
 
 ## 1. 分屏（右分屏 / 底部分屏）
@@ -55,8 +61,11 @@
 - [ ] 添加/编辑/删除任务走居中 dialog，校验（学校/课程必填）生效。
 - [ ] 「执行」→ 任务文件夹创建于 `temp/tasks/{id}_{school}_{course}/`，任务舱自动展开，步骤推进到「本地测试」。
 - [ ] 下载 dialogue（json）→ 步骤推进「评估上传」，自动切到评估标签并尝试注入。
-- [ ] 捕获 report（pdf）→ 状态变已完成、步骤「捕获报告」，「加载至 Hermes」按钮解除 disabled。
+- [ ] 捕获 report（pdf）→ 步骤推进「捕获报告」，父任务仍为进行中；结束当前子任务后才更新子任务和父任务完成状态，「加载至 Hermes」按钮解除 disabled。
 - [ ] 暂停：任务舱/把手/状态栏芯片全部消失，卡片变「已暂停」+「继续」；继续后状态完整恢复；双任务防冲突 toast。
+- [ ] 多子任务：同一父任务最多一个 `running` 子任务；暂停子任务 1 后可开始子任务 2；完成子任务 1 不改变子任务 2；全部子任务 `done` 后父任务才 `completed`。
+- [ ] 启动恢复：遗留 `running/evaluating` 父任务与 `running` 子任务统一落为 `paused`；重复恢复结果一致；历史 `completed + unfinished child` 修复为全子任务完成。
+- [ ] 写盘守卫：制造父任务运行但无运行子任务的异常更新，保存应被拦截，内存状态与 `weekly_tasks.json` 均保持原值。
 - [ ] 结束任务：临时文件夹被清理，任务舱隐藏。
 - [ ] 重新打开已完成任务（04ebbb3）：状态回退待处理，taskFolder/chatLogPath/reportPath 保留；再次执行复用同名文件夹，产物不丢失。
 - [ ] 任务舱收起把手进度环、状态栏芯片文案 `n/5` 与当前步骤一致。

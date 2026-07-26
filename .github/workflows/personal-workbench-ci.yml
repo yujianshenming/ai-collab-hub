@@ -1,0 +1,68 @@
+name: Personal Workbench CI
+
+on:
+  pull_request:
+    paths:
+      - "personal-workbench/**"
+      - ".github/workflows/personal-workbench-ci.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "personal-workbench/**"
+      - ".github/workflows/personal-workbench-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-workbench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "true"
+
+jobs:
+  quality:
+    name: Static and unit checks
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: personal-workbench
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: personal-workbench/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run static and unit checks
+        run: npm test
+
+  electron-e2e:
+    name: Electron E2E
+    needs: quality
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: personal-workbench
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: personal-workbench/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run Electron regression suite
+        run: npm run test:e2e
