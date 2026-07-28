@@ -6,3 +6,7 @@ temp/
 build-output/
 sidecars/*.exe
 reproduce.ps1
+integrations/homework-variance/output/
+integrations/homework-variance/web/uploads/
+integrations/homework-variance/secrets.json
+integrations/homework-variance/**/__pycache__/

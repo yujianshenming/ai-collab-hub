@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld("workbench", {
   importTokenboxRelay: (payload) => ipcRenderer.invoke("tokenbox:relay-import", payload),
   getTokenboxReconciliation: (filter) => ipcRenderer.invoke("tokenbox:reconciliation", { filter }),
   exportTokenboxReconciliation: (payload) => ipcRenderer.invoke("tokenbox:export-reconciliation", payload),
+  getHomeworkVarianceStatus: () => ipcRenderer.invoke("homework-variance:status"),
+  startHomeworkVariance: () => ipcRenderer.invoke("homework-variance:start"),
+  stopHomeworkVariance: () => ipcRenderer.invoke("homework-variance:stop"),
   onDownloadCompleted: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("download-completed", listener);

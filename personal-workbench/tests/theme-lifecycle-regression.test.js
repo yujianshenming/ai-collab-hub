@@ -6,16 +6,16 @@ const test = require("node:test");
 const root = path.join(__dirname, "..");
 const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
 
-test("sky is the default and all three production themes are selectable", () => {
+test("sakura is the default and all four production themes are selectable", () => {
   const html = read("index.html");
   const main = read("main.js");
 
-  assert.match(html, /<body data-theme="sky">/);
-  for (const theme of ["sky", "morning", "night"]) {
+  assert.match(html, /<body data-theme="sakura">/);
+  for (const theme of ["sakura", "sky", "morning", "night"]) {
     assert.match(html, new RegExp(`<option value="${theme}">`));
-    assert.match(main, new RegExp(`\\["sky", "morning", "night"\\]\\.includes\\(prefs\\.theme\\)`));
+    assert.match(main, new RegExp(`\\["sakura", "sky", "morning", "night"\\]\\.includes\\(prefs\\.theme\\)`));
   }
-  assert.match(main, /theme\s*=.*\? prefs\.theme : "sky"/);
+  assert.match(main, /theme\s*=.*\? prefs\.theme : "sakura"/);
 });
 
 test("theme switching covers global chrome, terminal, and responsive layouts", () => {
@@ -25,7 +25,7 @@ test("theme switching covers global chrome, terminal, and responsive layouts", (
   assert.match(renderer, /const TERMINAL_THEMES = \{/);
   assert.match(renderer, /terminal\.options\.theme = terminalThemeFor\(normalized\)/);
   assert.match(renderer, /theme: applyWorkbenchTheme\(elements\.prefTheme\.value\)/);
-  for (const theme of ["sky", "morning", "night"]) {
+  for (const theme of ["sakura", "sky", "morning", "night"]) {
     assert.match(css, new RegExp(`body\\[data-theme="${theme}"\\]`));
   }
   assert.match(css, /@media \(max-width: 1260px\)/);

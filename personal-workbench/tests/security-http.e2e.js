@@ -1,11 +1,12 @@
 // V3.4 安全 HTTP 运行时验证（测试工程师）—— 回归清单 §6 鉴权 + 静态路径穿越
-// 启动真实应用，对本地服务 127.0.0.1:38924 发请求：
+// 启动真实应用，对隔离的随机 loopback 端口发请求：
 //   - 七条敏感路由无 token → 401
 //   - 注册 local-app 后取得 per-tab scoped token → 200
 //   - /local-apps 未注册 tabId → 404；..%2F 穿越 → 403/404（不泄露文件）
 // 跑法：node tests/security-http.e2e.js
 const path = require("path");
 const http = require("http");
+const net = require("net");
 const fs = require("fs");
 const os = require("os");
 const { _electron: electron } = require("playwright-core");
@@ -14,7 +15,7 @@ const { isolateWeeklyTasks } = require("./e2e-isolation");
 const ROOT = path.join(__dirname, "..");
 isolateWeeklyTasks("security-e2e");
 const electronPath = path.join(ROOT, "node_modules", "electron", "dist", "electron.exe");
-const PORT = 38924;
+let PORT = 0;
 
 const checks = [];
 function record(name, ok, detail = "") {
@@ -34,10 +35,28 @@ function httpGet(p) {
   });
 }
 
+function reserveLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
 (async () => {
   let app;
   let fixtureRoot = "";
   try {
+    PORT = await reserveLoopbackPort();
+    process.env.PERSONAL_WORKBENCH_LOCAL_SERVER_PORT = String(PORT);
     app = await electron.launch({ executablePath: electronPath, args: ["."], cwd: ROOT });
     const page = await app.firstWindow({ timeout: 30000 });
     await page.waitForTimeout(2000); // 等本地服务 listen

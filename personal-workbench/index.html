@@ -11,7 +11,7 @@
     <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css" />
     <link rel="stylesheet" href="./style.css" />
   </head>
-  <body data-theme="sky">
+  <body data-theme="sakura">
     <div class="app-shell">
       <aside class="sidebar">
         <header class="brand">
@@ -35,6 +35,10 @@
           <button id="nav-tokenbox" class="nav-item" type="button">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="m7 15 3-4 3 2 5-7"/><path d="M18 6h2v2"/></svg>
             Token 统计
+          </button>
+          <button id="nav-homework-variance" class="nav-item" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 8h8M8 12h5M8 16h8"/><path d="m16 13 2 2 3-4"/></svg>
+            作业批阅方差
           </button>
         </div>
 
@@ -160,6 +164,19 @@
               <div><div id="stat-completed" class="num">0</div><div class="lbl">已完成</div></div>
             </div>
           </div>
+
+          <div class="task-view-row">
+            <div id="task-view-switch" class="task-view-switch" role="group" aria-label="任务视图">
+              <button type="button" class="task-view-button active" data-task-view="focus" aria-pressed="true">专注视图</button>
+              <button type="button" class="task-view-button" data-task-view="all" aria-pressed="false">全部任务</button>
+            </div>
+            <p id="task-view-summary" class="task-view-summary"></p>
+          </div>
+
+          <details id="task-duplicate-alert" class="task-data-alert" hidden>
+            <summary><span id="task-duplicate-summary"></span></summary>
+            <div id="task-duplicate-list" class="task-duplicate-list"></div>
+          </details>
 
           <div class="task-filter-bar" aria-label="任务筛选">
             <label class="task-search-wrap" for="task-search">
@@ -418,11 +435,11 @@
                   <h2>源日志 / SQLite 审计</h2>
                 </div>
                 <div class="tokenbox-panel-actions">
-                  <button id="tokenbox-backup" class="icon-button" type="button">备份 SQLite</button>
-                  <button id="tokenbox-rebuild" class="btn btn-ghost" type="button">重建账本</button>
-                  <button id="tokenbox-audit" class="btn btn-ghost" type="button">运行审计</button>
-                  <button id="tokenbox-export-audit-json" class="icon-button" type="button">JSON</button>
-                  <button id="tokenbox-export-audit-md" class="icon-button" type="button">MD</button>
+                  <button id="tokenbox-backup" class="btn btn-ghost btn-sm" type="button">备份 SQLite</button>
+                  <button id="tokenbox-rebuild" class="btn btn-ghost btn-sm" type="button">重建账本</button>
+                  <button id="tokenbox-audit" class="btn btn-ghost btn-sm" type="button">运行审计</button>
+                  <button id="tokenbox-export-audit-json" class="btn btn-ghost btn-sm" type="button">JSON</button>
+                  <button id="tokenbox-export-audit-md" class="btn btn-ghost btn-sm" type="button">MD</button>
                 </div>
               </div>
               <div id="tokenbox-audit-status" class="tokenbox-inline-status">尚未审计</div>
@@ -436,9 +453,9 @@
                 </div>
                 <div class="tokenbox-panel-actions">
                   <input id="tokenbox-relay-file" type="file" accept=".json,.csv,application/json,text/csv" hidden>
-                  <button id="tokenbox-relay-import" class="btn btn-ghost" type="button">导入 JSON/CSV</button>
-                  <button id="tokenbox-relay-reconcile" class="btn btn-ghost" type="button">刷新对账</button>
-                  <button id="tokenbox-export-reconciliation" class="icon-button" type="button">导出</button>
+                  <button id="tokenbox-relay-import" class="btn btn-ghost btn-sm" type="button">导入 JSON/CSV</button>
+                  <button id="tokenbox-relay-reconcile" class="btn btn-ghost btn-sm" type="button">刷新对账</button>
+                  <button id="tokenbox-export-reconciliation" class="btn btn-ghost btn-sm" type="button">导出</button>
                 </div>
               </div>
               <div id="tokenbox-reconciliation-status" class="tokenbox-inline-status">尚未导入中转站账单</div>
@@ -466,6 +483,30 @@
               </table>
             </div>
           </section>
+        </section>
+
+        <section id="homework-variance-view" class="homework-variance-view" aria-label="作业批阅方差">
+          <div class="homework-variance-head">
+            <div>
+              <span class="eyebrow">HOMEWORK VARIANCE</span>
+              <h1>作业批阅方差</h1>
+              <p>对同一批作业进行多次独立 AI 批阅，查看均值、总体方差并导出评分表。</p>
+            </div>
+            <button id="homework-variance-retry" class="btn btn-ghost" type="button" hidden>重启批阅服务</button>
+          </div>
+          <div id="homework-variance-status" class="homework-variance-status" role="status">点击左侧入口后启动本地批阅服务。</div>
+          <div id="homework-variance-empty" class="homework-variance-empty">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4.5" width="14" height="16.5" rx="2.5"/><path d="M9 4.5a3 3 0 0 1 6 0"/><path d="m8.8 13.2 2.3 2.3 4.2-4.6"/></svg>
+            <strong>正在接入本地批阅服务</strong>
+            <p>首次启动需要几秒钟，服务就绪后这里会自动显示批阅界面；若启动失败，可根据上方提示重试。</p>
+          </div>
+          <iframe
+            id="homework-variance-frame"
+            class="homework-variance-frame"
+            title="作业批阅方差工具"
+            sandbox="allow-forms allow-modals allow-popups allow-downloads allow-scripts allow-same-origin"
+            hidden
+          ></iframe>
         </section>
 
         <section id="webview-stack" class="webview-stack" aria-label="网页工作区"></section>
@@ -712,7 +753,8 @@
         <label>
           工作台主题
           <select id="pref-theme">
-            <option value="sky">天空专注室（默认）</option>
+            <option value="sakura">樱语自习室（默认）</option>
+            <option value="sky">天空专注室</option>
             <option value="morning">晨光事务所</option>
             <option value="night">夜航指挥舱</option>
           </select>
@@ -875,6 +917,23 @@
               <input id="tab-local-path" type="text" placeholder="例如：E:\codes\my-app" />
               <button id="tab-local-path-browse" class="secondary-button browse-btn" type="button">浏览...</button>
             </div>
+          </label>
+        </div>
+
+        <div id="tab-return-bookmark-options" class="tab-return-bookmark-options">
+          <label class="tab-option">
+            <input id="tab-return-bookmark-enabled" type="checkbox" />
+            <span>
+              <b>保存跳转前的页面</b>
+              <small>跳转后在网页左侧显示一个返回书签；仅为这个网页保存。</small>
+            </span>
+          </label>
+          <label class="tab-option tab-option-secondary">
+            <input id="tab-return-bookmark-visible" type="checkbox" checked />
+            <span>
+              <b>显示返回书签</b>
+              <small>在网页内隐藏后，可回到这里重新显示。</small>
+            </span>
           </label>
         </div>
 

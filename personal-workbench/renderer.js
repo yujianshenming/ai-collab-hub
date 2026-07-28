@@ -25,14 +25,16 @@ function pipelineStepIndex(step) {
 const TASK_CENTER_ID = "__taskcenter__";
 const WEEKLY_REPORT_ID = "__weeklyreport__";
 const TOKENBOX_ID = "__tokenbox__";
+const HOMEWORK_VARIANCE_ID = "__homework_variance__";
 
 function isBuiltinViewId(id) {
-  return id === TASK_CENTER_ID || id === WEEKLY_REPORT_ID || id === TOKENBOX_ID;
+  return id === TASK_CENTER_ID || id === WEEKLY_REPORT_ID || id === TOKENBOX_ID || id === HOMEWORK_VARIANCE_ID;
 }
 
 const storageKey = "personal_workbench_tabs";
 const sidebarStorageKey = "personal_workbench_sidebar_collapsed";
 const themeStorageKey = "personal_workbench_theme";
+const taskCenterViewStorageKey = "personal_workbench_task_center_view";
 let tabs = readTabs();
 let activeTabId = TASK_CENTER_ID;
 let rightSplitTabId = null;
@@ -41,6 +43,20 @@ let terminal;
 let fitAddon;
 
 const TERMINAL_THEMES = {
+  sakura: {
+    background: "#fff7fa",
+    foreground: "#4d3242",
+    cursor: "#e0709b",
+    selectionBackground: "#fbd9e7",
+    black: "#5b4250",
+    blue: "#7a9fe0",
+    cyan: "#4fa8a0",
+    green: "#4d9b78",
+    magenta: "#b088d8",
+    red: "#d5606f",
+    white: "#fdeef4",
+    yellow: "#c08a3e"
+  },
   sky: {
     background: "#ffffff",
     foreground: "#2f3650",
@@ -86,7 +102,7 @@ const TERMINAL_THEMES = {
 };
 
 function normalizeWorkbenchTheme(theme) {
-  return Object.hasOwn(TERMINAL_THEMES, theme) ? theme : "sky";
+  return Object.hasOwn(TERMINAL_THEMES, theme) ? theme : "sakura";
 }
 
 function terminalThemeFor(theme) {
@@ -101,7 +117,7 @@ function applyWorkbenchTheme(theme) {
   return normalized;
 }
 
-applyWorkbenchTheme(localStorage.getItem(themeStorageKey) || "sky");
+applyWorkbenchTheme(localStorage.getItem(themeStorageKey) || "sakura");
 let pointerDrag = null;
 let weeklyTasks = [];
 let weeklyTasksLoadedSuccessfully = false;
@@ -114,6 +130,8 @@ let tokenboxRefreshQueued = false;
 let activeTokenboxAudit = null;
 let activeTokenboxReconciliation = null;
 let tokenboxOperationLoading = false;
+let homeworkVarianceStartPromise = null;
+let homeworkVarianceLoaded = false;
 let taskTransitionGeneration = 0;
 let taskRailCollapsed = false;
 let pipelineState = {
@@ -213,10 +231,16 @@ const elements = {
   navTaskCenter: document.querySelector("#nav-task-center"),
   navWeeklyReport: document.querySelector("#nav-weekly-report"),
   navTokenbox: document.querySelector("#nav-tokenbox"),
+  navHomeworkVariance: document.querySelector("#nav-homework-variance"),
   taskCenterBadge: document.querySelector("#task-center-badge"),
   taskCenterView: document.querySelector("#task-center-view"),
   weeklyReportView: document.querySelector("#weekly-report-view"),
   tokenboxView: document.querySelector("#tokenbox-view"),
+  homeworkVarianceView: document.querySelector("#homework-variance-view"),
+  homeworkVarianceStatus: document.querySelector("#homework-variance-status"),
+  homeworkVarianceFrame: document.querySelector("#homework-variance-frame"),
+  homeworkVarianceEmpty: document.querySelector("#homework-variance-empty"),
+  homeworkVarianceRetry: document.querySelector("#homework-variance-retry"),
   tokenboxProvider: document.querySelector("#tokenbox-provider"),
   tokenboxRange: document.querySelector("#tokenbox-range"),
   tokenboxRefresh: document.querySelector("#tokenbox-refresh"),
@@ -291,6 +315,11 @@ const elements = {
   taskSearch: document.querySelector("#task-search"),
   taskFilterChips: document.querySelector("#task-filter-chips"),
   taskSchoolFilter: document.querySelector("#task-school-filter"),
+  taskViewSwitch: document.querySelector("#task-view-switch"),
+  taskViewSummary: document.querySelector("#task-view-summary"),
+  taskDuplicateAlert: document.querySelector("#task-duplicate-alert"),
+  taskDuplicateSummary: document.querySelector("#task-duplicate-summary"),
+  taskDuplicateList: document.querySelector("#task-duplicate-list"),
   btnImportTodo: document.querySelector("#btn-import-todo"),
   taskDialog: document.querySelector("#task-dialog"),
   taskFormTitle: document.querySelector("#task-form-title"),
@@ -398,9 +427,90 @@ function normalizeUrl(value) {
   return `https://www.baidu.com/s?wd=${encodeURIComponent(trimmed)}`;
 }
 
-function iconForTab(name) {
-  // H2：首字母可能是 < & 等字符，进 innerHTML 前转义，杜绝标签名注入 DOM
-  return escapeHtml((String(name || "").trim()[0] || "W").toUpperCase());
+// ============ 网页返回书签（纯函数，供渲染层与测试共用） ============
+
+function normalizeReturnBookmarkUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    const parsed = new URL(text);
+    return ["http:", "https:", "file:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function nextReturnBookmarkState(tab, nextUrl) {
+  const current = { ...(tab || {}) };
+  const next = normalizeReturnBookmarkUrl(nextUrl);
+  if (!current.returnBookmarkEnabled || !next) return current;
+
+  const previous = normalizeReturnBookmarkUrl(current.lastVisitedUrl || current.url);
+  current.lastVisitedUrl = next;
+  if (previous && previous !== next) {
+    current.returnBookmarkUrl = previous;
+  } else if (normalizeReturnBookmarkUrl(current.returnBookmarkUrl) === next) {
+    current.returnBookmarkUrl = "";
+  }
+  return current;
+}
+
+function swapReturnBookmarkState(tab, currentUrl) {
+  const current = { ...(tab || {}) };
+  const target = normalizeReturnBookmarkUrl(current.returnBookmarkUrl);
+  const from = normalizeReturnBookmarkUrl(currentUrl || current.lastVisitedUrl || current.url);
+  if (!current.returnBookmarkEnabled || !target || target === from) {
+    return { tab: current, target: "" };
+  }
+  current.lastVisitedUrl = target;
+  current.returnBookmarkUrl = from && from !== target ? from : "";
+  return { tab: current, target };
+}
+
+window.normalizeReturnBookmarkUrl = normalizeReturnBookmarkUrl;
+window.nextReturnBookmarkState = nextReturnBookmarkState;
+window.swapReturnBookmarkState = swapReturnBookmarkState;
+
+// 标签图标：按应用类别显示矢量图标，网页类标签拿到真实 favicon 后优先显示 favicon
+const TAB_ICON_SVG_ATTRS = 'width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"';
+const TAB_CATEGORY_ICONS = {
+  builtin: `<svg ${TAB_ICON_SVG_ATTRS}><path d="M10 4.5a2 2 0 1 1 4 0V6h3.5A1.5 1.5 0 0 1 19 7.5V11h-1.5a2 2 0 1 0 0 4H19v3.5a1.5 1.5 0 0 1-1.5 1.5H14v-1.5a2 2 0 1 0-4 0V20H6.5A1.5 1.5 0 0 1 5 18.5V15H3.5a2 2 0 1 1 0-4H5V7.5A1.5 1.5 0 0 1 6.5 6H10V4.5Z"/></svg>`,
+  "desktop-app": `<svg ${TAB_ICON_SVG_ATTRS}><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M9 21h6M12 17v4"/></svg>`,
+  "local-web": `<svg ${TAB_ICON_SVG_ATTRS}><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.5h8.5A1.5 1.5 0 0 1 21 10v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18V7.5Z"/></svg>`,
+  "cli-app": `<svg ${TAB_ICON_SVG_ATTRS}><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="m7 9.5 3 2.5-3 2.5M12.5 15H17"/></svg>`,
+  web: `<svg ${TAB_ICON_SVG_ATTRS}><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.5 3.8 5.6 3.8 9S14.5 18.5 12 21c-2.5-2.5-3.8-5.6-3.8-9S9.5 5.5 12 3Z"/></svg>`
+};
+
+const tabFavicons = new Map();
+try {
+  const savedFavicons = JSON.parse(localStorage.getItem("workbench_tab_favicons")) || {};
+  for (const [id, url] of Object.entries(savedFavicons)) tabFavicons.set(id, url);
+} catch {
+  // 无效缓存直接忽略，回退到分类图标
+}
+
+function isSafeFaviconUrl(url) {
+  return /^https?:\/\//i.test(url) || /^data:image\//i.test(url);
+}
+
+function rememberTabFavicon(tabId, url) {
+  if (!isSafeFaviconUrl(url) || tabFavicons.get(tabId) === url) return false;
+  tabFavicons.set(tabId, url);
+  try {
+    localStorage.setItem("workbench_tab_favicons", JSON.stringify(Object.fromEntries(tabFavicons)));
+  } catch {
+    // 写入失败不影响本次会话显示
+  }
+  return true;
+}
+
+function iconForTab(tab) {
+  const favicon = tabFavicons.get(tab.id);
+  if (favicon && isSafeFaviconUrl(favicon)) {
+    // escapeHtml 防止 URL 中的引号/尖括号破坏属性边界
+    return `<img class="tab-favicon" src="${escapeHtml(favicon)}" alt="" />`;
+  }
+  return TAB_CATEGORY_ICONS[getTabCategory(tab)] || TAB_CATEGORY_ICONS.web;
 }
 
 function renderTabs() {
@@ -457,7 +567,7 @@ function renderTabs() {
       item.dataset.id = tab.id;
       item.innerHTML = `
         <button class="tab-main" type="button">
-          <span class="tab-icon">${iconForTab(tab.name)}</span>
+          <span class="tab-icon">${iconForTab(tab)}</span>
           <span>${escapeHtml(tab.name)}</span>
         </button>
         <button class="tab-menu" type="button" aria-label="编辑 ${escapeHtml(tab.name)}" title="编辑标签">
@@ -486,6 +596,13 @@ function renderTabs() {
     if (!tabs.some((tab) => tab.id === viewport.dataset.id)) {
       runTabCleanup(viewport.dataset.id);
       viewport.remove();
+      if (tabFavicons.delete(viewport.dataset.id)) {
+        try {
+          localStorage.setItem("workbench_tab_favicons", JSON.stringify(Object.fromEntries(tabFavicons)));
+        } catch {
+          // 写入失败仅影响缓存清理
+        }
+      }
     }
   });
 
@@ -682,6 +799,86 @@ function swapTabs(id1, id2) {
   return true;
 }
 
+function returnBookmarkDestinationLabel(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname || parsed.pathname || url;
+  } catch {
+    return url;
+  }
+}
+
+function refreshReturnBookmarkControl(tab, rail, webview) {
+  if (!rail) return;
+  let currentUrl = tab.lastVisitedUrl || tab.url || "";
+  try {
+    currentUrl = webview?.getURL?.() || currentUrl;
+  } catch {}
+  const target = normalizeReturnBookmarkUrl(tab.returnBookmarkUrl);
+  const visible = Boolean(
+    tab.returnBookmarkEnabled
+    && !tab.returnBookmarkHidden
+    && target
+    && target !== normalizeReturnBookmarkUrl(currentUrl)
+  );
+  rail.hidden = !visible;
+  if (!visible) return;
+  const destination = returnBookmarkDestinationLabel(target);
+  const action = rail.querySelector(".page-return-action");
+  action.title = `返回上一页面：${destination}`;
+  action.setAttribute("aria-label", `返回上一页面：${destination}`);
+}
+
+function recordReturnBookmarkNavigation(tab, nextUrl, rail, webview) {
+  if (!tab.returnBookmarkEnabled) return;
+  const previousUrl = tab.lastVisitedUrl || "";
+  const previousBookmark = tab.returnBookmarkUrl || "";
+  const nextState = nextReturnBookmarkState(tab, nextUrl);
+  Object.assign(tab, nextState);
+  if (tab.lastVisitedUrl !== previousUrl || tab.returnBookmarkUrl !== previousBookmark) {
+    saveTabs();
+  }
+  refreshReturnBookmarkControl(tab, rail, webview);
+}
+
+function createPageReturnBookmark(tab, webview) {
+  const rail = document.createElement("aside");
+  rail.className = "page-return-bookmark";
+  rail.hidden = true;
+  rail.innerHTML = `
+    <button class="page-return-action" type="button" aria-label="返回上一页面">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="m15 18-6-6 6-6"></path>
+        <path d="M9 12h8"></path>
+      </svg>
+    </button>
+    <button class="page-return-hide" type="button" aria-label="隐藏返回书签" title="隐藏这个书签">×</button>
+  `;
+  rail.querySelector(".page-return-action").addEventListener("click", () => {
+    let currentUrl = tab.lastVisitedUrl || tab.url || "";
+    try {
+      currentUrl = webview.getURL() || currentUrl;
+    } catch {}
+    const result = swapReturnBookmarkState(tab, currentUrl);
+    if (!result.target) {
+      refreshReturnBookmarkControl(tab, rail, webview);
+      return;
+    }
+    Object.assign(tab, result.tab);
+    saveTabs();
+    refreshReturnBookmarkControl(tab, rail, webview);
+    webview.loadURL(result.target).catch((error) => {
+      console.warn("返回书签导航失败:", error);
+    });
+  });
+  rail.querySelector(".page-return-hide").addEventListener("click", () => {
+    tab.returnBookmarkHidden = true;
+    saveTabs();
+    refreshReturnBookmarkControl(tab, rail, webview);
+  });
+  return rail;
+}
+
 function createTabViewport(tab, { deferWeb = true } = {}) {
   const viewport = document.createElement("div");
   viewport.className = "tab-viewport";
@@ -702,7 +899,9 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
 
     const webview = document.createElement("webview");
     webview.className = "tab-webview";
-    webview.src = tab.url || "";
+    webview.src = tab.returnBookmarkEnabled
+      ? (normalizeReturnBookmarkUrl(tab.lastVisitedUrl) || tab.url || "")
+      : (tab.url || "");
     webview.partition = "persist:personal-workbench";
     webview.setAttribute("allowpopups", "false");
     webview.setAttribute("webpreferences", "contextIsolation=no");
@@ -716,8 +915,14 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
         updateAddressFromWebview(webview);
       }
     });
-    webview.addEventListener("did-navigate", () => updateAddressFromWebview(webview));
-    webview.addEventListener("did-navigate-in-page", () => updateAddressFromWebview(webview));
+    const returnBookmark = createPageReturnBookmark(tab, webview);
+    const handleMainFrameNavigation = (event) => {
+      if (event.isMainFrame === false) return;
+      recordReturnBookmarkNavigation(tab, event.url, returnBookmark, webview);
+      updateAddressFromWebview(webview);
+    };
+    webview.addEventListener("did-navigate", handleMainFrameNavigation);
+    webview.addEventListener("did-navigate-in-page", handleMainFrameNavigation);
     webview.addEventListener("dom-ready", () => {
       fitWebviewZoom();
       const currentUrl = webview.getURL() || tab.url || "";
@@ -730,6 +935,10 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
     });
     webview.addEventListener("page-title-updated", (event) => {
       if (tab.id === activeTabId && event.title) elements.activeTitle.textContent = tab.name;
+    });
+    webview.addEventListener("page-favicon-updated", (event) => {
+      const favicon = (event.favicons || []).find((url) => isSafeFaviconUrl(url)) || "";
+      if (favicon && rememberTabFavicon(tab.id, favicon)) renderTabs();
     });
 
     const extPanel = document.createElement("div");
@@ -797,6 +1006,7 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
       document.addEventListener("pointercancel", onUp);
     });
 
+    viewport.append(returnBookmark);
     viewport.append(webview);
     viewport.append(resizer);
     viewport.append(extPanel);
@@ -1645,6 +1855,45 @@ function renderTokenboxCenter() {
   renderTokenboxSnapshot(activeTokenboxSnapshot);
 }
 
+function setHomeworkVarianceStatus(message, state = "") {
+  if (!elements.homeworkVarianceStatus) return;
+  elements.homeworkVarianceStatus.textContent = message;
+  elements.homeworkVarianceStatus.dataset.state = state;
+}
+
+async function renderHomeworkVarianceCenter() {
+  if (!elements.homeworkVarianceFrame || homeworkVarianceLoaded) return;
+  if (homeworkVarianceStartPromise) return homeworkVarianceStartPromise;
+
+  setHomeworkVarianceStatus("正在准备本地批阅服务…", "loading");
+  if (elements.homeworkVarianceRetry) elements.homeworkVarianceRetry.hidden = true;
+  homeworkVarianceStartPromise = (async () => {
+    const result = await window.workbench.startHomeworkVariance();
+    if (!result?.success || !result.url) {
+      throw new Error(result?.error || "作业批阅服务启动失败");
+    }
+    elements.homeworkVarianceFrame.src = result.url;
+    elements.homeworkVarianceFrame.hidden = false;
+    if (elements.homeworkVarianceEmpty) elements.homeworkVarianceEmpty.hidden = true;
+    homeworkVarianceLoaded = true;
+    setHomeworkVarianceStatus("本地批阅服务已就绪，数据保存在工作台用户目录。", "ready");
+  })();
+  try {
+    await homeworkVarianceStartPromise;
+  } catch (error) {
+    homeworkVarianceLoaded = false;
+    if (elements.homeworkVarianceFrame) {
+      elements.homeworkVarianceFrame.hidden = true;
+      elements.homeworkVarianceFrame.removeAttribute("src");
+    }
+    if (elements.homeworkVarianceEmpty) elements.homeworkVarianceEmpty.hidden = false;
+    setHomeworkVarianceStatus(error?.message || String(error), "error");
+    if (elements.homeworkVarianceRetry) elements.homeworkVarianceRetry.hidden = false;
+  } finally {
+    homeworkVarianceStartPromise = null;
+  }
+}
+
 let isActivatingTab = false;
 function activateTab(id, { autoExpand = true } = {}) {
   if (isActivatingTab) return;
@@ -1653,7 +1902,8 @@ function activateTab(id, { autoExpand = true } = {}) {
     const isTaskCenter = id === TASK_CENTER_ID;
     const isWeeklyReport = id === WEEKLY_REPORT_ID;
     const isTokenbox = id === TOKENBOX_ID;
-    const isBuiltinView = isTaskCenter || isWeeklyReport || isTokenbox;
+    const isHomeworkVariance = id === HOMEWORK_VARIANCE_ID;
+    const isBuiltinView = isTaskCenter || isWeeklyReport || isTokenbox || isHomeworkVariance;
     if (isBuiltinView) {
       rightSplitTabId = null;
       bottomSplitTabId = null;
@@ -1693,9 +1943,11 @@ function activateTab(id, { autoExpand = true } = {}) {
     elements.workspace.classList.toggle("task-center-active", isTaskCenter);
     elements.workspace.classList.toggle("weekly-report-active", isWeeklyReport);
     elements.workspace.classList.toggle("tokenbox-active", isTokenbox);
+    elements.workspace.classList.toggle("homework-variance-active", isHomeworkVariance);
     elements.navTaskCenter?.classList.toggle("active", isTaskCenter);
     elements.navWeeklyReport?.classList.toggle("active", isWeeklyReport);
     elements.navTokenbox?.classList.toggle("active", isTokenbox);
+    elements.navHomeworkVariance?.classList.toggle("active", isHomeworkVariance);
     document.querySelectorAll(".tab-item").forEach((item) => {
       item.classList.toggle("active", !isBuiltinView && item.dataset.id === id);
       item.classList.toggle("split-active", item.dataset.id === rightSplitTabId || item.dataset.id === bottomSplitTabId);
@@ -1736,6 +1988,9 @@ function activateTab(id, { autoExpand = true } = {}) {
     }
     if (isTokenbox) {
       renderTokenboxCenter();
+    }
+    if (isHomeworkVariance) {
+      void renderHomeworkVarianceCenter();
     }
     updateActiveTabInfo();
     fitWebviewZoom();
@@ -1789,6 +2044,12 @@ function updateTopbarForActive(tab = null) {
     if (activeTabId === TOKENBOX_ID) {
       elements.activeTitle.textContent = "Token 统计";
       elements.crumbSub.textContent = "本机日志账本 · Codex / Claude Code";
+      elements.addressBar.style.display = "none";
+      return;
+    }
+    if (activeTabId === HOMEWORK_VARIANCE_ID) {
+      elements.activeTitle.textContent = "作业批阅方差";
+      elements.crumbSub.textContent = "多次独立批阅 · 均值与总体方差";
       elements.addressBar.style.display = "none";
       return;
     }
@@ -1851,7 +2112,9 @@ function updateActiveTabInfo() {
       url: "",
       title: activeTabId === WEEKLY_REPORT_ID
         ? "周报中心"
-        : activeTabId === TOKENBOX_ID ? "Token 统计" : "任务中心"
+        : activeTabId === TOKENBOX_ID
+          ? "Token 统计"
+          : activeTabId === HOMEWORK_VARIANCE_ID ? "作业批阅方差" : "任务中心"
     });
     return;
   }
@@ -1877,6 +2140,16 @@ function switchTabFormType(type) {
   document.querySelectorAll(".form-group-type").forEach((group) => {
     group.style.display = group.dataset.type === type ? "block" : "none";
   });
+  const bookmarkOptions = document.querySelector("#tab-return-bookmark-options");
+  if (bookmarkOptions) bookmarkOptions.hidden = !(type === "web" || type === "local-web");
+}
+
+function syncTabReturnBookmarkForm() {
+  const enabled = document.querySelector("#tab-return-bookmark-enabled");
+  const visible = document.querySelector("#tab-return-bookmark-visible");
+  if (!enabled || !visible) return;
+  visible.disabled = !enabled.checked;
+  visible.closest(".tab-option")?.classList.toggle("disabled", visible.disabled);
 }
 
 function openTabDialog(tab = null) {
@@ -1896,8 +2169,11 @@ function openTabDialog(tab = null) {
   document.querySelector("#tab-cli-command").value = tab?.command || "";
   document.querySelector("#tab-cli-cwd").value = tab?.cwd || "";
   document.querySelector("#tab-builtin-type").value = tab?.builtinType || "markdown";
+  document.querySelector("#tab-return-bookmark-enabled").checked = Boolean(tab?.returnBookmarkEnabled);
+  document.querySelector("#tab-return-bookmark-visible").checked = !tab?.returnBookmarkHidden;
 
   switchTabFormType(type);
+  syncTabReturnBookmarkForm();
 
   document.querySelector("#delete-tab-button").hidden = !tab;
   const index = tab ? tabs.findIndex((candidate) => candidate.id === tab.id) : -1;
@@ -2011,9 +2287,59 @@ function filterTasks(tasks, { query = "", status = "all", school = "" } = {}, ty
   });
 }
 
+function taskFocusPriority(task, todayYmd = formatDateYmd(new Date())) {
+  const status = String(task?.status || "pending");
+  if (status === "running" || status === "evaluating") return 0;
+  if (status === "paused") return 1;
+  if (status === "unsubmitted") return 2;
+  const due = String(task?.dueDate || "");
+  if (due && due < todayYmd) return 3;
+
+  const today = parseDateYmd(todayYmd);
+  if (today && due) {
+    const soon = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
+    if (due <= formatDateYmd(soon)) return 4;
+  }
+  return 5;
+}
+
+function selectFocusTasks(tasks, { todayYmd = formatDateYmd(new Date()), limit = 6 } = {}) {
+  const ranked = (Array.isArray(tasks) ? tasks : [])
+    .filter((task) => !task?.archived && task?.status !== "completed")
+    .map((task, index) => ({ task, index, priority: taskFocusPriority(task, todayYmd) }))
+    .sort((a, b) => (
+      a.priority - b.priority
+      || compareTasksForLane(a.task, b.task)
+      || a.index - b.index
+    ));
+  const urgent = ranked.filter((entry) => entry.priority <= 4);
+  const routine = ranked.filter((entry) => entry.priority > 4);
+  const remaining = Math.max(0, Math.max(1, Number(limit) || 6) - urgent.length);
+  return urgent.concat(routine.slice(0, remaining)).map((entry) => entry.task);
+}
+
+function findPotentialTaskDuplicateGroups(tasks) {
+  const groups = new Map();
+  for (const task of Array.isArray(tasks) ? tasks : []) {
+    if (!task || task.archived) continue;
+    const parts = [task.school, task.course, task.taskType]
+      .map((value) => String(value || "").trim().toLowerCase());
+    if (parts.some((value) => !value)) continue;
+    const key = parts.join("\u0001");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(task);
+  }
+  return [...groups.values()]
+    .filter((group) => group.length > 1)
+    .sort((a, b) => compareTasksForLane(a[0], b[0]));
+}
+
 window.matchesTaskQuery = matchesTaskQuery;
 window.filterTasks = filterTasks;
 window.taskTypeLabel = taskTypeLabel;
+window.taskFocusPriority = taskFocusPriority;
+window.selectFocusTasks = selectFocusTasks;
+window.findPotentialTaskDuplicateGroups = findPotentialTaskDuplicateGroups;
 
 // ============ 任务时限 / 分区 / 跨周清理（纯函数，供测试注入） ============
 
@@ -4262,6 +4588,17 @@ function setupTokenboxEvents() {
   });
 }
 
+function setupHomeworkVarianceEvents() {
+  elements.navHomeworkVariance?.addEventListener("click", () => activateTab(HOMEWORK_VARIANCE_ID));
+  elements.homeworkVarianceRetry?.addEventListener("click", () => {
+    homeworkVarianceLoaded = false;
+    void renderHomeworkVarianceCenter();
+  });
+  elements.homeworkVarianceFrame?.addEventListener("load", () => {
+    if (homeworkVarianceLoaded) setHomeworkVarianceStatus("批阅台已加载，可以创建批阅任务。", "ready");
+  });
+}
+
 function taskProgressInfo(task) {
   const isActiveTask = pipelineState.active && pipelineState.taskId === task.id;
   if (!isActiveTask && !["running", "evaluating"].includes(task.status)) {
@@ -4382,6 +4719,7 @@ const taskCenterFilters = {
   status: "all",
   school: ""
 };
+let taskCenterViewMode = localStorage.getItem(taskCenterViewStorageKey) === "all" ? "all" : "focus";
 let taskSearchDebounceTimer = null;
 
 function getVisibleTasks() {
@@ -4420,6 +4758,33 @@ function syncTaskFilterControls() {
     elements.taskSchoolFilter.value = schools.includes(current) ? current : "";
     if (!schools.includes(current)) taskCenterFilters.school = "";
   }
+  elements.taskViewSwitch?.querySelectorAll("[data-task-view]").forEach((button) => {
+    const active = button.dataset.taskView === taskCenterViewMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+function renderTaskDuplicateAlert() {
+  if (!elements.taskDuplicateAlert || !elements.taskDuplicateSummary || !elements.taskDuplicateList) return;
+  const groups = findPotentialTaskDuplicateGroups(weeklyTasks);
+  elements.taskDuplicateAlert.hidden = groups.length === 0;
+  if (!groups.length) {
+    elements.taskDuplicateAlert.open = false;
+    elements.taskDuplicateSummary.textContent = "";
+    elements.taskDuplicateList.replaceChildren();
+    return;
+  }
+  elements.taskDuplicateSummary.textContent = `发现 ${groups.length} 组学校、课程和任务类型完全相同的记录，建议核对`;
+  elements.taskDuplicateList.innerHTML = `
+    <p>这里只提示，不会自动合并或删除任务。</p>
+    <ul>
+      ${groups.map((group) => {
+        const sample = group[0];
+        return `<li><b>${escapeHtml(sample.school)}《${escapeHtml(sample.course)}》</b> · ${escapeHtml(taskTypeLabel(sample.taskType))} · ${group.length} 条</li>`;
+      }).join("")}
+    </ul>
+  `;
 }
 
 async function setTaskArchived(taskId, archived) {
@@ -4904,12 +5269,28 @@ function renderTaskCenter() {
   elements.taskCenterBadge.textContent = String(pendingCount);
 
   syncTaskFilterControls();
+  renderTaskDuplicateAlert();
   renderFocusCard();
 
-  const visibleTasks = getVisibleTasks();
   const statusFilter = taskCenterFilters.status || "all";
   const archivedOnly = statusFilter === "archived";
   const isFiltered = Boolean(taskCenterFilters.query || statusFilter !== "all" || taskCenterFilters.school);
+  const filteredTasks = getVisibleTasks();
+  const focusMode = taskCenterViewMode === "focus" && !isFiltered;
+  const visibleTasks = focusMode ? selectFocusTasks(filteredTasks) : filteredTasks;
+  const openTaskCount = weeklyTasks.filter((task) => !task.archived && task.status !== "completed").length;
+  if (elements.taskViewSummary) {
+    if (isFiltered) {
+      elements.taskViewSummary.textContent = `筛选结果 ${visibleTasks.length} 项，顶部统计仍按全部任务计算。`;
+    } else if (focusMode) {
+      const hiddenCount = Math.max(0, openTaskCount - visibleTasks.length);
+      elements.taskViewSummary.textContent = hiddenCount
+        ? `优先展示 ${visibleTasks.length} / ${openTaskCount} 项未完成任务，另有 ${hiddenCount} 项可在「全部任务」查看。`
+        : `当前 ${visibleTasks.length} 项未完成任务均已列出。`;
+    } else {
+      elements.taskViewSummary.textContent = `完整展示 ${visibleTasks.length} 项未归档任务。`;
+    }
+  }
 
   // 进行中/评估中默认只出现在聚焦卡；网格展示 待处理+已暂停 / 未提交 / 已完成
   // 指定状态 chip 时把可见集直接落到对应分区；归档模式单独一区
@@ -4924,6 +5305,14 @@ function renderTaskCenter() {
     unsubmittedGroup = visibleTasks;
   } else if (statusFilter === "completed") {
     doneGroup = visibleTasks;
+  } else if (focusMode) {
+    activeGroup = sortTasksByWeekday(visibleTasks.filter((task) => (
+      task.status === "pending"
+      || task.status === "paused"
+      || task.status === "running"
+      || task.status === "evaluating"
+    ))).filter((task) => !(pipelineState.active && pipelineState.taskId === task.id));
+    unsubmittedGroup = visibleTasks.filter((task) => task.status === "unsubmitted");
   } else {
     activeGroup = sortTasksByWeekday(visibleTasks.filter((task) => task.status === "pending" || task.status === "paused"));
     unsubmittedGroup = visibleTasks.filter((task) => task.status === "unsubmitted");
@@ -4936,9 +5325,10 @@ function renderTaskCenter() {
     running: "进行中",
     paused: "已暂停"
   }[statusFilter] || "待处理 / 已暂停";
+  const resolvedActiveLabel = focusMode ? "现在优先处理" : activeLabel;
 
   if (elements.sectionActive) {
-    elements.sectionActive.textContent = activeLabel;
+    elements.sectionActive.textContent = resolvedActiveLabel;
     elements.sectionActive.hidden = archivedOnly || statusFilter === "unsubmitted" || statusFilter === "completed";
   }
   if (elements.sectionDone) {
@@ -4979,7 +5369,7 @@ function renderTaskCenter() {
     }
   }
 
-  const showDoneGrid = archivedOnly || statusFilter === "completed" || statusFilter === "all";
+  const showDoneGrid = !focusMode && (archivedOnly || statusFilter === "completed" || statusFilter === "all");
   elements.taskGridDone.replaceChildren();
   if (elements.sectionDone) elements.sectionDone.hidden = !showDoneGrid;
   elements.taskGridDone.hidden = !showDoneGrid;
@@ -6290,9 +6680,17 @@ window.workbench.onMenuOpenSettings(openSettings);
 elements.navTaskCenter?.addEventListener("click", () => activateTab(TASK_CENTER_ID));
 setupWeeklyReportEvents();
 setupTokenboxEvents();
+setupHomeworkVarianceEvents();
 elements.addNewTask?.addEventListener("click", () => openTaskForm());
 elements.btnImportTodo?.addEventListener("click", () => handleTodoImport());
 elements.btnWritebackTodo?.addEventListener("click", () => handleTodoWriteback());
+elements.taskViewSwitch?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-task-view]");
+  if (!button) return;
+  taskCenterViewMode = button.dataset.taskView === "all" ? "all" : "focus";
+  localStorage.setItem(taskCenterViewStorageKey, taskCenterViewMode);
+  renderTaskCenter();
+});
 // 任务中心筛选：搜索 debounce ~150ms；chip / 学校即时刷新列表
 elements.taskSearch?.addEventListener("input", () => {
   clearTimeout(taskSearchDebounceTimer);
@@ -6516,6 +6914,8 @@ elements.tabForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const id = document.querySelector("#tab-id").value || `tab-${Date.now()}`;
   const type = document.querySelector("#tab-type").value;
+  const existing = tabs.findIndex((tab) => tab.id === id);
+  const existingTab = existing >= 0 ? tabs[existing] : null;
   
   const data = {
     id,
@@ -6540,7 +6940,27 @@ elements.tabForm.addEventListener("submit", (event) => {
     data.builtinType = document.querySelector("#tab-builtin-type").value;
   }
 
-  const existing = tabs.findIndex((tab) => tab.id === data.id);
+  if (type === "web" || type === "local-web") {
+    const enabled = document.querySelector("#tab-return-bookmark-enabled").checked;
+    data.returnBookmarkEnabled = enabled;
+    data.returnBookmarkHidden = enabled && !document.querySelector("#tab-return-bookmark-visible").checked;
+    if (enabled) {
+      const baseUrlChanged = Boolean(existingTab && existingTab.url !== data.url);
+      let liveUrl = "";
+      if (!baseUrlChanged && existingTab) {
+        try {
+          liveUrl = document.querySelector(`.tab-viewport[data-id="${id}"] .tab-webview`)?.getURL?.() || "";
+        } catch {}
+      }
+      data.lastVisitedUrl = normalizeReturnBookmarkUrl(
+        baseUrlChanged ? data.url : (liveUrl || existingTab?.lastVisitedUrl || data.url)
+      );
+      data.returnBookmarkUrl = baseUrlChanged
+        ? ""
+        : normalizeReturnBookmarkUrl(existingTab?.returnBookmarkUrl);
+    }
+  }
+
   if (existing >= 0) {
     tabs[existing] = data;
     runTabCleanup(data.id);
@@ -6956,6 +7376,11 @@ tabs.forEach(tab => {
 
 document.querySelector("#tab-type").addEventListener("change", (e) => {
   switchTabFormType(e.target.value);
+});
+document.querySelector("#tab-return-bookmark-enabled")?.addEventListener("change", (event) => {
+  const visible = document.querySelector("#tab-return-bookmark-visible");
+  if (event.target.checked && visible) visible.checked = true;
+  syncTabReturnBookmarkForm();
 });
 
 document.querySelector("#tab-local-path-browse").addEventListener("click", async () => {

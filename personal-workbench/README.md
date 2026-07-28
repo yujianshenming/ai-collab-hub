@@ -33,13 +33,16 @@ npm start
 ### 基础壳
 - 多个网页以常驻 `webview` 标签承载，切换只控制显示状态，不重新加载，保留登录态、表单输入与滚动位置。
 - 地址栏支持后退、前进、停止/刷新与直接导航。
+- 在线网页/本地 Web 标签可逐个开启「页面返回书签」：跳转后在网页左侧一键返回上一页，也可再次切回；书签可隐藏并从标签设置恢复，关闭功能后不再保留该标签的页面历史。
 - 标签支持添加、编辑、删除、拖拽排序、分类折叠；侧边栏可折叠。
 - 左右分屏与上下分屏，分屏 resizer 可拖动。
 - 底部本地 PowerShell 终端（node-pty + xterm），可展开、收起、拖动调整高度；CLI 类工具可作为独立标签常驻运行。
 - Chrome 扩展加载：支持扩展 ID 或已解压扩展目录；有交互页面的扩展显示在顶栏，点击在可折叠右侧栏中使用。
 
 ### 任务驱动（V3）
-- 任务中心作为默认落地页，统计卡：总数 / 进行中 / 已暂停 / 已完成。
+- 任务中心作为默认落地页，统计卡：总数 / 进行中 / 已暂停 / 未提交 / 已完成。
+- 默认「专注视图」优先列出进行中、暂停、未提交、过期/临期任务，再补足最近待办；可切换「全部任务」，任何搜索或筛选都能查到专注列表之外的任务。
+- 对学校、课程和任务类型完全相同的记录给出疑似重复提示，只提示核对，不自动合并或删除。
 - 任务卡列表 + 居中表单 dialog（学校/课程必填校验）。
 - **流水线五步模型**：准备 → 本地测试 → 评估上传 → 捕获报告 → 完成；任务舱与状态栏芯片同步进度。
 - 任务暂停 / 继续（带防冲突拦截）、结束任务清理临时文件夹、重新打开已完成任务复用同名文件夹。
@@ -78,6 +81,12 @@ npm start
 - 统计视图还提供事件级 evidence、源日志/SQLite 审计、JSON/CSV 看板导出、中转站 JSON/CSV 导入与逐字段 Token 对账；官方估算与中转站实际金额分栏显示，未定价模型保留 Token 并显示状态，并提供 SQLite 备份和带备份的派生账本重建。
 - sidecar 使用 JSONL gateway contract（`ping`、`refresh_dashboard`、`get_evidence`、`get_audit_summary`、`import_relay`、`get_reconciliation` 等），宿主只传 provider/date/model/filter，不传任意源文件路径或会话正文。
 - 开发态先构建并 staging sidecar：`npm run build:bridge:stage`；再运行 `npm start` 或 `npm run dist`。未构建 sidecar 时页面会明确提示，不会伪造统计数据。
+
+### 作业批阅方差（集成首版）
+- 左侧「作业批阅方差」按需启动 Python + FastAPI 批阅侧车，原工具的批阅轮询、均值/总体方差、历史任务和 Excel 导出都在工作台内使用。
+- 侧车只监听 `127.0.0.1` 的动态端口，主进程生成随机令牌；任务数据、上传文件、评分表和可选 LLM 配置保存在 `userData/homework-variance`。
+- 需要本机 Python 3.10+ 和依赖：`python -m pip install -r integrations/homework-variance/requirements.txt`。便携包当前不捆绑 Python runtime。
+- 使用说明、安全边界和独立调试方式见 [`integrations/homework-variance/README.md`](integrations/homework-variance/README.md)。
 
 ## 安全说明
 

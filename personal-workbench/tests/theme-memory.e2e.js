@@ -25,7 +25,7 @@ function record(name, ok, detail = "") {
     await page.waitForLoadState("domcontentloaded").catch(() => {});
     await page.waitForTimeout(1200);
 
-    record("default theme is sky", await page.locator("body").getAttribute("data-theme") === "sky");
+    record("default theme is sakura", await page.locator("body").getAttribute("data-theme") === "sakura");
 
     await page.evaluate(() => {
       localStorage.setItem("personal_workbench_tabs", JSON.stringify([

@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage, 
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
+const net = require("node:net");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
@@ -56,6 +57,20 @@ const tokenboxBridge = {
 };
 const TOKENBOX_BRIDGE_REQUEST_TIMEOUT_MS = 120000;
 const TOKENBOX_BRIDGE_MAX_LINE_BYTES = 8 * 1024 * 1024;
+const homeworkVarianceService = {
+  child: null,
+  root: "",
+  dataRoot: "",
+  port: 0,
+  token: "",
+  output: "",
+  lastError: "",
+  lastErrorDetail: null,
+  starting: null,
+  generation: 0
+};
+const HOMEWORK_VARIANCE_READY_TIMEOUT_MS = 45000;
+const HOMEWORK_VARIANCE_LOG_BYTES = 16 * 1024;
 
 // SSE & state sharing structures
 const sessionToken = crypto.randomBytes(16).toString("hex");
@@ -251,7 +266,12 @@ function handleCommandLineArgs(args) {
   }
 }
 const workbenchPartition = "persist:personal-workbench";
-const localServerPort = 38924;
+const configuredLocalServerPort = Number(process.env.PERSONAL_WORKBENCH_LOCAL_SERVER_PORT);
+const localServerPort = Number.isInteger(configuredLocalServerPort)
+  && configuredLocalServerPort >= 1024
+  && configuredLocalServerPort <= 65535
+  ? configuredLocalServerPort
+  : 38924;
 const extensionApiBaseUrl = "https://cloudapi.polymas.com";
 const extensionAuthCookieUrl = "https://hike-teaching-center.polymas.com/";
 const extensionAuthCookieName = "ai-poly";
@@ -532,6 +552,291 @@ function tokenboxBridgeStatus() {
     path: bridgePath || tokenboxBridge.path,
     error: tokenboxBridge.lastError
   };
+}
+
+function homeworkVarianceRootCandidates() {
+  return [...new Set([
+    process.env.PERSONAL_WORKBENCH_HOMEWORK_VARIANCE_ROOT,
+    app.isPackaged ? path.join(process.resourcesPath, "integrations", "homework-variance") : "",
+    path.join(__dirname, "integrations", "homework-variance")
+  ].filter(Boolean).map((candidate) => path.resolve(candidate)))];
+}
+
+function resolveHomeworkVarianceRoot() {
+  for (const candidate of homeworkVarianceRootCandidates()) {
+    try {
+      if (fs.statSync(path.join(candidate, "web_server.py")).isFile()
+        && fs.statSync(path.join(candidate, "polymas_grade_engine.py")).isFile()) {
+        return candidate;
+      }
+    } catch {}
+  }
+  return "";
+}
+
+function homeworkVarianceStatus() {
+  const root = homeworkVarianceService.root || resolveHomeworkVarianceRoot();
+  return {
+    available: Boolean(root),
+    running: Boolean(homeworkVarianceService.child && !homeworkVarianceService.child.killed),
+    root,
+    dataRoot: homeworkVarianceService.dataRoot,
+    port: homeworkVarianceService.port,
+    error: homeworkVarianceService.lastError,
+    errorDetail: homeworkVarianceService.lastErrorDetail
+  };
+}
+
+function reserveLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+function probeHomeworkVarianceHealth(port) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const request = http.get({
+      hostname: "127.0.0.1",
+      port,
+      path: "/health",
+      timeout: 1200
+    }, (response) => {
+      response.resume();
+      finish(response.statusCode === 200);
+    });
+    request.on("error", () => finish(false));
+    request.on("timeout", () => {
+      request.destroy();
+      finish(false);
+    });
+  });
+}
+
+async function waitForHomeworkVarianceHealth(port, child, generation) {
+  const deadline = Date.now() + HOMEWORK_VARIANCE_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (generation !== homeworkVarianceService.generation) {
+      throw new Error("作业批阅服务启动已取消");
+    }
+    if (child.exitCode !== null || child.killed) {
+      throw new Error(homeworkVarianceService.lastError || "作业批阅服务提前退出");
+    }
+    if (await probeHomeworkVarianceHealth(port)) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`作业批阅服务启动超时：${homeworkVarianceService.output.slice(-600)}`);
+}
+
+function homeworkVariancePythonCandidates() {
+  const configured = String(process.env.PERSONAL_WORKBENCH_PYTHON || "").trim();
+  const candidates = [];
+  if (configured) candidates.push({ command: configured, prefix: [] });
+  candidates.push({ command: process.platform === "win32" ? "python.exe" : "python3", prefix: [] });
+  candidates.push({ command: "python", prefix: [] });
+  if (process.platform === "win32") candidates.push({ command: "py", prefix: ["-3"] });
+  return candidates;
+}
+
+function spawnHomeworkVariancePython(root, args, env) {
+  const candidates = homeworkVariancePythonCandidates();
+  let index = 0;
+  const attempt = () => {
+    if (index >= candidates.length) {
+      throw new Error("找不到 Python 解释器，请安装 Python 3.10+ 或设置 PERSONAL_WORKBENCH_PYTHON");
+    }
+    const candidate = candidates[index++];
+    return new Promise((resolve, reject) => {
+      const child = spawn(candidate.command, [...candidate.prefix, ...args], {
+        cwd: root,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true
+      });
+      let spawned = false;
+      child.once("spawn", () => {
+        spawned = true;
+        resolve(child);
+      });
+      child.once("error", (error) => {
+        if (!spawned) reject(error);
+      });
+    }).catch((error) => {
+      if (error?.code === "ENOENT") return attempt();
+      throw error;
+    });
+  };
+  return attempt();
+}
+
+function killHomeworkVarianceProcessTree(child) {
+  if (!child) return;
+  if (process.platform === "win32" && child.pid) {
+    const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore"
+    });
+    killer.on("error", () => {});
+  } else {
+    try { child.kill("SIGTERM"); } catch {}
+  }
+}
+
+function appendHomeworkVarianceOutput(chunk) {
+  homeworkVarianceService.output = `${homeworkVarianceService.output}${String(chunk)}`.slice(-HOMEWORK_VARIANCE_LOG_BYTES);
+}
+
+function homeworkVarianceLogDir() {
+  const dataRoot = homeworkVarianceService.dataRoot || path.join(app.getPath("userData"), "homework-variance");
+  return path.join(dataRoot, "logs");
+}
+
+function writeHomeworkVarianceLogLine(entry) {
+  try {
+    const dir = homeworkVarianceLogDir();
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, "homework-variance-service.log"), `${JSON.stringify(entry)}\n`, "utf8");
+  } catch {}
+}
+
+function reportHomeworkVarianceError(stage, error, extra = {}) {
+  const message = (error?.message || String(error || "")).trim();
+  const detail = {
+    timestamp: new Date().toISOString(),
+    level: "error",
+    service: "homework-variance",
+    stage,
+    message,
+    code: error?.code ?? null,
+    stack: typeof error?.stack === "string" ? error.stack.slice(0, 4000) : null,
+    port: homeworkVarianceService.port || null,
+    outputTail: homeworkVarianceService.output.slice(-2000),
+    ...extra
+  };
+  homeworkVarianceService.lastError = message;
+  homeworkVarianceService.lastErrorDetail = detail;
+  writeHomeworkVarianceLogLine(detail);
+  return detail;
+}
+
+function stopHomeworkVariance() {
+  homeworkVarianceService.generation += 1;
+  const child = homeworkVarianceService.child;
+  homeworkVarianceService.child = null;
+  homeworkVarianceService.port = 0;
+  homeworkVarianceService.token = "";
+  if (child) killHomeworkVarianceProcessTree(child);
+}
+
+async function startHomeworkVariance() {
+  if (homeworkVarianceService.child && !homeworkVarianceService.child.killed) {
+    return {
+      success: true,
+      url: `http://127.0.0.1:${homeworkVarianceService.port}/?token=${encodeURIComponent(homeworkVarianceService.token)}`
+    };
+  }
+  if (homeworkVarianceService.starting) return homeworkVarianceService.starting;
+
+  const generation = homeworkVarianceService.generation + 1;
+  homeworkVarianceService.generation = generation;
+  const launch = (async () => {
+    const root = resolveHomeworkVarianceRoot();
+    if (!root) throw new Error("找不到作业批阅集成文件，请确认 integrations/homework-variance 已随应用安装");
+    const port = await reserveLoopbackPort();
+    const token = crypto.randomBytes(32).toString("hex");
+    const dataRoot = path.join(app.getPath("userData"), "homework-variance");
+    fs.mkdirSync(dataRoot, { recursive: true });
+    const env = {
+      ...process.env,
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUTF8: "1",
+      PERSONAL_WORKBENCH_HOMEWORK_VARIANCE_DATA: dataRoot,
+      PERSONAL_WORKBENCH_HOMEWORK_VARIANCE_TOKEN: token,
+      PERSONAL_WORKBENCH_HOMEWORK_VARIANCE_SECRETS: path.join(dataRoot, "secrets.json")
+    };
+    const child = await spawnHomeworkVariancePython(root, [
+      "-u",
+      "web_server.py",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--data-root",
+      dataRoot,
+      "--auth-token",
+      token
+    ], env);
+    if (generation !== homeworkVarianceService.generation) {
+      killHomeworkVarianceProcessTree(child);
+      throw new Error("作业批阅服务启动已取消");
+    }
+    homeworkVarianceService.child = child;
+    homeworkVarianceService.root = root;
+    homeworkVarianceService.dataRoot = dataRoot;
+    homeworkVarianceService.port = port;
+    homeworkVarianceService.token = token;
+    homeworkVarianceService.output = "";
+    homeworkVarianceService.lastError = "";
+    homeworkVarianceService.lastErrorDetail = null;
+    writeHomeworkVarianceLogLine({
+      timestamp: new Date().toISOString(),
+      level: "info",
+      service: "homework-variance",
+      stage: "spawn",
+      message: `作业批阅侧车已启动 (pid=${child.pid ?? "unknown"}, port=${port})`
+    });
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", appendHomeworkVarianceOutput);
+    child.stderr?.on("data", (chunk) => {
+      const text = String(chunk);
+      appendHomeworkVarianceOutput(text);
+      if (/(error|traceback|exception|failed|fatal)/i.test(text)) {
+        reportHomeworkVarianceError("runtime-stderr", new Error(text.trim().slice(-2000)));
+      }
+    });
+    child.on("error", (error) => {
+      reportHomeworkVarianceError("process-error", error);
+    });
+    child.on("exit", (code, signal) => {
+      if (homeworkVarianceService.child !== child) return;
+      if (code !== 0 && code !== null) {
+        reportHomeworkVarianceError("process-exit", new Error(`作业批阅服务退出 (${code ?? signal ?? "unknown"})`), {
+          exitCode: code,
+          signal: signal ?? null
+        });
+      }
+      homeworkVarianceService.child = null;
+      homeworkVarianceService.port = 0;
+      homeworkVarianceService.token = "";
+    });
+    await waitForHomeworkVarianceHealth(port, child, generation);
+    return {
+      success: true,
+      url: `http://127.0.0.1:${port}/?token=${encodeURIComponent(token)}`
+    };
+  })();
+  homeworkVarianceService.starting = launch;
+  try {
+    return await launch;
+  } catch (error) {
+    const detail = reportHomeworkVarianceError("startup", error);
+    stopHomeworkVariance();
+    return { success: false, error: homeworkVarianceService.lastError, errorDetail: detail };
+  } finally {
+    if (homeworkVarianceService.starting === launch) homeworkVarianceService.starting = null;
+  }
 }
 
 function normalizeTokenboxFilter(value) {
@@ -1453,7 +1758,7 @@ function normalizeWorkbenchPrefs(prefs = {}) {
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
   const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
   const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
-  const theme = ["sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "sky";
+  const theme = ["sakura", "sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "sakura";
   const weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs.weeklyReportDefaults);
   return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap, theme, weeklyReportDefaults };
 }
@@ -2493,6 +2798,12 @@ function registerIpc() {
       return { success: false, error: error?.message || String(error) };
     }
   });
+  ipcMain.handle("homework-variance:status", () => homeworkVarianceStatus());
+  ipcMain.handle("homework-variance:start", () => startHomeworkVariance());
+  ipcMain.handle("homework-variance:stop", () => {
+    stopHomeworkVariance();
+    return { success: true };
+  });
 
   ipcMain.handle("reports:read-weekly", () => readWeeklyReports());
   ipcMain.handle("reports:write-weekly", (_event, reports) => writeWeeklyReports(reports));
@@ -2877,9 +3188,14 @@ app.whenReady().then(async () => {
   });
 });
 
+app.on("before-quit", () => {
+  stopHomeworkVariance();
+});
+
 app.on("window-all-closed", () => {
   closeTokenboxBridge();
   stopTerminal();
+  stopHomeworkVariance();
   stopLocalServer();
   for (const appInfo of runningDesktopApps.values()) {
     try {

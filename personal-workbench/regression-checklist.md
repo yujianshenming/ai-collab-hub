@@ -1,7 +1,7 @@
 # 个人工作台 回归测试清单
 
 > 测试工程师维护 · 2026-06-10 建立
-> 最近同步：2026-07-24；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
+> 最近同步：2026-07-28；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
 > 适用范围：每次交付（commit/Phase）合入后必须执行。静态部分可在不启动应用的情况下完成；动态部分需启动应用。
 > 启动方式（避开 AttachConsole 崩溃）：不要用 `npm start` 包装器在沙箱终端里启动；用
 > `Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory <项目目录>`
@@ -13,12 +13,14 @@
 
 ### 0.1 静态检查
 - [ ] `npm run check` 通过（仅语法层，查不出运行时引用错误）。
+- [ ] 作业批阅集成额外执行 `python -m py_compile integrations/homework-variance/web_server.py integrations/homework-variance/polymas_grade_engine.py`；`npm test` 包含 sidecar 边界契约测试。
 - [ ] **DOM 对账**：`renderer.js` 的 `elements` 映射与所有 `querySelector("#...")` 引用的 id，逐一在 `index.html` 中存在（历史前科：`rightSidebarBody` 未定义导致右分屏 TypeError，2128665 修复）。
 - [ ] **IPC 三端对账**：`main.js` 的 `ipcMain.handle/on` 通道名 ↔ `preload.js` 的 `ipcRenderer.invoke/send/on` ↔ `renderer.js` 的 `window.workbench.*` 调用，三端一致；`preload-popup.js` 用到的 `workbench:get-active-tab-info`、`workbench:get-cookies`、`workbench:get-session-token` 不得删除。
 - [ ] 新增 DOM 事件监听的目标元素在对应视图模板中真实存在（含动态 innerHTML 模板里的 class 选择器）。
 
 ### 0.2 自动化冒烟（Playwright + playwright-core）
 - [ ] `npm i --no-save playwright-core` 后用 `_electron.launch({ args: ["."] })` 启动。
+- [ ] 涉及本地 HTTP API 的隔离测试使用 `PERSONAL_WORKBENCH_LOCAL_SERVER_PORT` 随机端口；生产工作台保持打开时，测试请求仍只进入测试实例。
 - [ ] 应用窗口出现，标题为「个人工作台」。
 - [ ] `#task-center-view` 可见（任务中心为默认落地页）；统计卡数字非空。
 - [ ] 侧边栏 `#nav-task-center`、状态栏 `#sb-terminal` 可见。
@@ -35,6 +37,10 @@
 - [ ] 关闭分屏（× 按钮）后 viewport 回到主栈，webview 不重载（保留登录态/滚动位置）。
 - [ ] 标签数不足时（右分屏<2、双分屏<3）有 toast 拦截。
 - [ ] 分屏中的标签被删除时，分屏自动关闭且无残留引用。
+- [ ] 为网页 A 开启「保存跳转前的页面」，从 A1 跳转 A2 后左侧书签出现；点击回到 A1，再点可回 A2。
+- [ ] 隐藏网页 A 的返回书签后不影响网页 B；编辑网页 A 并勾选「显示返回书签」后恢复。
+- [ ] 关闭网页 A 的返回书签功能后，`personal_workbench_tabs` 不再保存其 `lastVisitedUrl` / `returnBookmarkUrl`；普通地址栏后退仍可用。
+- [ ] 返回书签与右侧扩展面板同时使用时，两侧均可点击，webview 宽度正确收缩且无覆盖。
 
 ## 2. 终端（主终端 + CLI 标签）
 - [ ] 状态栏「终端」按钮开关终端面板，按钮高亮 `.on` 态正确。
@@ -52,6 +58,9 @@
 
 ## 4. 任务流水线（V3 任务驱动 UI）
 - [ ] 任务中心为默认落地页；统计卡（总数/进行中/已暂停/已完成）与 weekly_tasks.json 一致。
+- [ ] 首次进入默认是「专注视图」；进行中、暂停、未提交、过期/临期任务优先，普通待办最多补足到 6 项，紧急项不会因数量限制被隐藏。
+- [ ] 切换「全部任务」可看到全部未归档记录；搜索、状态 chip 或学校筛选能命中专注列表之外的任务，且统计卡仍按全局计数。
+- [ ] 学校、课程、任务类型三项完全相同的多条记录显示疑似重复提示；提示不修改、合并或删除任务 JSON。
 - [ ] 添加/编辑/删除任务走居中 dialog，校验（学校/课程必填）生效。
 - [ ] 「执行」→ 任务文件夹创建于 `temp/tasks/{id}_{school}_{course}/`，任务舱自动展开，步骤推进到「本地测试」。
 - [ ] 下载 dialogue（json）→ 步骤推进「评估上传」，自动切到评估标签并尝试注入。
@@ -77,6 +86,7 @@
 - [ ] **静态服务路径穿越**：`http://127.0.0.1:38924/local-apps/{tabId}/..%2F..%2F` 及同名前缀目录（如 base 为 `C:\X`，请求解析到 `C:\X-secret`）一律 403（§2.2）。
 - [ ] **temp/tasks IPC 防穿越**：`tasks:open-folder / list-folder / list-files / file-action / crop-image / cleanup-folder / task:active-update` 传入 temp/tasks 之外的绝对路径（如 `C:\Windows`）、`..` 相对路径，全部拒绝；`temp/tasks` 根目录本身不可被 delete/cleanup。
 - [ ] 本地 HTTP API 鉴权：`/cookies /events /broadcast /state /tabs /active-tab /active-task` 无 token 返回 401。
+- [ ] 作业批阅侧车只监听 `127.0.0.1` 动态端口；无 `X-Workbench-Token` 的 `/api/jobs` 返回 401，带令牌可访问；关闭 Electron 后 Python 进程退出，任务数据仍只留在 `userData/homework-variance`。
 
 ---
 
