@@ -2,12 +2,12 @@
 
 > 这是 `personal-workbench` 的当前事实主文档。它描述产品边界、功能、架构、数据、测试、版本状态和维护规则。规格书、审查报告与交接文档可以补充历史背景，但与本手册冲突时，必须先核对代码和测试，再更新本手册。
 
-- 最后更新：2026-07-24
+- 最后更新：2026-07-28
 - 项目类型：Windows Electron 桌面应用
 - 代码入口：`main.js`、`preload.js`、`renderer.js`
 - 当前工作分支：`codex/personal-workbench-redesign`
 - 上一稳定基线：`personal-workbench-stable-2026-07-16`
-- 本次检查点：2026-07-24 未提交工作区（当前分支 `codex/personal-workbench-redesign`）
+- 本次检查点：2026-07-28，任务中心专注视图与逐网页返回书签已完成全量回归；下一阶段计划已建立。工作区可能同时存在前端模型的未提交修改，开始新阶段前必须以 `git status` 为准。
 
 ## 1. 新成员 / 新模型先读什么
 
@@ -18,7 +18,8 @@
 3. `personal-workbench/package.json`：了解脚本、依赖和打包入口。
 4. `personal-workbench/regression-checklist.md`：了解已修复缺陷、仍需人工验证的风险和验收标准。
 5. 与当前任务直接相关的代码和测试；不要为了“熟悉项目”一次性阅读整个 `renderer.js` 或 `main.js`。
-6. 根目录的 `personal-workbench-roadmap.md`、`personal-workbench-automation-plan.md` 和 `decisions/`：只在需要路线图或历史决策时阅读。
+6. `docs/NEXT_PHASE_DEVELOPMENT_PLAN_2026-07-28.md`：执行任务中心 AI、公司模型网关、AI 助手或性能重构时阅读。
+7. 根目录的 `personal-workbench-roadmap.md`、`personal-workbench-automation-plan.md` 和 `decisions/`：只在需要旧路线图或历史决策时阅读。
 
 ### 日常启动（推荐）
 
@@ -454,6 +455,7 @@ git diff --stat
 
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
+| 2026-07-28 | docs/plan | 新增下一阶段可执行计划：先建立任务解析证据与 Schema，再接入主进程公司模型网关、AI 辅助导入和可编辑预览，随后实施通用 AI 助手、测量驱动的模块化与性能优化；明确密钥边界、多模型协作、测试矩阵、停止和退出条件 | `docs/NEXT_PHASE_DEVELOPMENT_PLAN_2026-07-28.md`、`README.md`、`docs/PROJECT_HANDBOOK.md` | 文档事实核对；`git diff --check`；敏感信息扫描 |
 | 2026-07-28 | feat/fix | 网页标签增加逐标签可选的一层返回书签（返回/切回、隐藏/恢复、关闭即清除历史）；任务中心增加默认专注视图、完整视图和保守的疑似重复提示，筛选始终可查完整数据；安全 HTTP E2E 使用随机端口，消除生产工作台占用 `38924` 导致的假失败 | `renderer.js`、`index.html`、`style.css`、`main.js`、`tests/page-return-bookmark.test.js`、`tests/page-return-bookmark.e2e.js`、`tests/task-focus-helpers.test.js`、`tests/task-focus-view.e2e.js`、`tests/security-http.e2e.js`、`README.md`、`regression-checklist.md` | `npm run test:all`（单元/契约 89/89；E2E 111 项断言全通过）；书签 E2E（6/6）；专注视图 E2E（4/4）；安全 HTTP E2E（11/11） |
 | 2026-07-25 | feat | 完成 TokenBox headless JSONL gateway 与工作台扩展：模型事件证据、源日志/SQLite 审计、JSON/CSV 导出、中转站导入和逐字段对账；Rust core 继续拥有扫描、去重、游标、Decimal 计价和账本规则 | `../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs`、`../../tokenbox/src-tauri/src/commands/mod.rs`、`../../tokenbox/src-tauri/src/storage/mod.rs`、`main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm test`（81/81）；`npm run test:all`；`npm run build:bridge:stage`；TokenBox `npm run build`；桥接 UI smoke（2,495 Token / 3 models / audit PASS） |
 | 2026-07-25 | fix | Apply the 2026-07-24 adversarial review: IPC path/token boundaries, report period/orphan preservation, completion timestamps, same-lane reorder, artifact lifecycle, and local server status | `main.js`, `preload.js`, `renderer.js`, `tests/adversarial-fix-regression.test.js` | `npm test`; `npm run test:e2e` |
@@ -477,6 +479,7 @@ git diff --stat
 ## 12. 相关文档
 
 - 应用快速介绍：`personal-workbench/README.md`
+- 下一阶段实施计划：`personal-workbench/docs/NEXT_PHASE_DEVELOPMENT_PLAN_2026-07-28.md`
 - A/B/C 本机验收清单：`personal-workbench/docs/ACCEPTANCE_CHECKLIST_ABC.md`
 - 回归清单：`personal-workbench/regression-checklist.md`
 - 任务系统要求：`personal-workbench/task_system_requirements.md`

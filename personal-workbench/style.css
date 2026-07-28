@@ -78,12 +78,18 @@ button { cursor: pointer; }
   place-items: center;
   width: 38px;
   height: 38px;
+  padding: 0;
+  border: none;
   border-radius: 13px;
+  overflow: hidden;
+  cursor: pointer;
   color: white;
   font-weight: 800;
   background: var(--accent-gradient);
   box-shadow: 0 8px 18px rgba(59, 130, 246, 0.22);
 }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.brand-mark:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .brand strong, .brand span { display: block; }
 .brand strong { font-size: 14px; letter-spacing: 0.02em; }
 .brand span { margin-top: 3px; color: var(--text-muted); font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; }

@@ -15,7 +15,10 @@
     <div class="app-shell">
       <aside class="sidebar">
         <header class="brand">
-          <div class="brand-mark">W</div>
+          <button id="brand-mark-button" class="brand-mark" type="button" title="点击更换标识图片，右键恢复默认小猫">
+            <img id="brand-logo" src="./assets/icons/brand-cat.png" alt="工作台标识" />
+          </button>
+          <input id="brand-logo-input" type="file" accept="image/*" hidden />
           <div>
             <strong>个人工作台</strong>
             <span>Task-First Workbench</span>

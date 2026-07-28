@@ -510,8 +510,90 @@ function iconForTab(tab) {
     // escapeHtml 防止 URL 中的引号/尖括号破坏属性边界
     return `<img class="tab-favicon" src="${escapeHtml(favicon)}" alt="" />`;
   }
+  if (getTabCategory(tab) === "web") {
+    // 网页标签拿不到 favicon 时，按标签 id 稳定轮流使用内置贴纸图标
+    return `<img class="tab-favicon" src="${fallbackIconForTab(tab.id)}" alt="" />`;
+  }
   return TAB_CATEGORY_ICONS[getTabCategory(tab)] || TAB_CATEGORY_ICONS.web;
 }
+
+// 网页标签无 favicon 时的内置贴纸图标，按标签 id 哈希轮流分配，保证同一标签每次显示一致
+const TAB_FALLBACK_ICONS = [
+  "assets/icons/tab-rocket.png",
+  "assets/icons/tab-planet.png",
+  "assets/icons/tab-coffee.png",
+  "assets/icons/tab-bolt.png"
+];
+
+function fallbackIconForTab(tabId) {
+  const text = String(tabId || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) hash = (hash * 31 + text.charCodeAt(i)) >>> 0;
+  return TAB_FALLBACK_ICONS[hash % TAB_FALLBACK_ICONS.length];
+}
+
+// ===== 品牌标识：默认黑色小猫，点击上传自定义图片，右键恢复默认 =====
+const BRAND_LOGO_STORAGE_KEY = "workbench_brand_logo";
+const DEFAULT_BRAND_LOGO = "assets/icons/brand-cat.png";
+
+function applyBrandLogo() {
+  const img = document.querySelector("#brand-logo");
+  if (!img) return;
+  const saved = localStorage.getItem(BRAND_LOGO_STORAGE_KEY);
+  img.src = saved && /^data:image\//.test(saved) ? saved : DEFAULT_BRAND_LOGO;
+}
+
+function brandLogoFileToDataUrl(file, size = 128) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("读取图片失败"));
+    reader.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error("无法解析这张图片"));
+      image.onload = () => {
+        // 居中裁切成正方形并缩到 128px，避免 localStorage 存大图
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const side = Math.min(image.width, image.height);
+        const sx = (image.width - side) / 2;
+        const sy = (image.height - side) / 2;
+        canvas.getContext("2d").drawImage(image, sx, sy, side, side, 0, 0, size, size);
+        resolve(canvas.toDataURL("image/png"));
+      };
+      image.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+(function setupBrandLogo() {
+  const button = document.querySelector("#brand-mark-button");
+  const input = document.querySelector("#brand-logo-input");
+  if (!button || !input) return;
+  applyBrandLogo();
+  button.addEventListener("click", () => input.click());
+  button.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    if (!localStorage.getItem(BRAND_LOGO_STORAGE_KEY)) return;
+    if (window.confirm("恢复默认的小猫标识吗？")) {
+      localStorage.removeItem(BRAND_LOGO_STORAGE_KEY);
+      applyBrandLogo();
+    }
+  });
+  input.addEventListener("change", async () => {
+    const file = input.files && input.files[0];
+    input.value = "";
+    if (!file) return;
+    try {
+      const dataUrl = await brandLogoFileToDataUrl(file);
+      localStorage.setItem(BRAND_LOGO_STORAGE_KEY, dataUrl);
+      applyBrandLogo();
+    } catch (error) {
+      window.alert(`更换标识失败：${error?.message || error}`);
+    }
+  });
+})();
 
 function renderTabs() {
   elements.tabList.replaceChildren();

@@ -98,6 +98,7 @@ npm start
 ## 相关文档
 
 - **项目主手册（新成员 / 新模型首先阅读）**：`./docs/PROJECT_HANDBOOK.md`
+- 下一阶段实施计划（任务中心可信导入、公司模型网关、AI 助手与性能重构）：`./docs/NEXT_PHASE_DEVELOPMENT_PLAN_2026-07-28.md`
 - 版本路线图：`../personal-workbench-roadmap.md`
 - 回归测试清单（含 7 个当前待处理风险登记）：`./regression-checklist.md`
 - 各版本规格书：`../personal-workbench-*-spec.md`
