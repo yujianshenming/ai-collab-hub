@@ -1,7 +1,7 @@
 # 个人工作台 回归测试清单
 
 > 测试工程师维护 · 2026-06-10 建立
-> 最近同步：2026-07-28；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
+> 最近同步：2026-07-28（新增 §7 AI 网关与 AI 辅助导入解析）；附表只保留当前未关闭的代码风险，已修复项已从表中移除。
 > 适用范围：每次交付（commit/Phase）合入后必须执行。静态部分可在不启动应用的情况下完成；动态部分需启动应用。
 > 启动方式（避开 AttachConsole 崩溃）：不要用 `npm start` 包装器在沙箱终端里启动；用
 > `Start-Process .\node_modules\.bin\electron.cmd -ArgumentList "." -WorkingDirectory <项目目录>`
@@ -88,6 +88,26 @@
 - [ ] 本地 HTTP API 鉴权：`/cookies /events /broadcast /state /tabs /active-tab /active-task` 无 token 返回 401。
 - [ ] 作业批阅侧车只监听 `127.0.0.1` 动态端口；无 `X-Workbench-Token` 的 `/api/jobs` 返回 401，带令牌可访问；关闭 Electron 后 Python 进程退出，任务数据仍只留在 `userData/homework-variance`。
 
+## 7. AI 网关与 AI 辅助导入解析（2026-07-28 新增）
+
+### 7.1 契约测试（npm test 已覆盖，合入前必跑）
+- [ ] `tests/llm-model-registry.test.js`：注册表 9 模型、仅 stableDefault 可设默认、`sanitizeModelId` 只接受字符串（前科：数字 42 被 String 强转放行）。
+- [ ] `tests/llm-client.test.js`：本地假网关，验证固定 Base URL、Bearer 头、超时/取消/非 2xx 处理；不碰真实网关。
+- [ ] `tests/llm-task-parser.test.js`：防编造（学校/课程/负责人逐字在原文）、防注入、未知字段丢弃、低置信度标记、漏行补 unresolved。
+
+### 7.2 安全边界（每次交付必查，不得回退）
+- [ ] API key 只存在于主进程（env > 会话 key > `userData/llm-secret.bin`）；grep 确认 key 不出现在任何 IPC 返回值、console/日志输出。
+- [ ] Base URL 固定在 `llm-client.js`，renderer/preload 无任何可注入网关地址的入口。
+- [ ] `ai:get-config` 返回值只含 `configured/encryptionAvailable/defaultModel/models`，不含密钥明文或密文。
+- [ ] `tasks/weekly_tasks.json`、`llm-secret.bin`、真实 key 均未进入 git 暂存区。
+
+### 7.3 人工动态检查
+- [ ] 未配置 key 时：导入预览、规则解析、应用所选等全部功能不受影响；点 AI 按钮只得到友好失败提示。
+- [ ] 偏好→AI 模型区：状态三态（加密保存/仅会话/未配置）正确；key 保存后输入框立即清空；非 stableDefault 模型在默认模型下拉中不可选。
+- [ ] 导入预览未解析行：勾选行→「使用 AI 解析所选行」前有二次确认展示将发送的行；AI 失败/超时时规则解析结果原样保留。
+- [ ] 低置信度（<0.75）候选在预览中默认不勾选；取消预览不写盘，只有「应用所选」才修改任务 JSON。
+- [ ] AI 请求进行中关闭预览再重新打开：迟到的旧结果被代际 token 丢弃，不污染新预览。
+
 ---
 
 ## 附：当前未关闭问题登记
@@ -103,7 +123,7 @@
 | 15 | P3 | `fallbackSystemChooser` 中 `dialog.showOpenDialog(mainWindow ?? undefined, ...)` 首参传 undefined，建议改条件分支传参（原扫描 L4） | main.js `fallbackSystemChooser` |
 | 16 | P3 | `serveFile` 中 existsSync 与 readFile 之间竞态会把已删除文件回 500 而非 404（仅状态码语义）（原扫描 L5） | main.js `serveFile` |
 
-## 7. Adversarial review closure ? 2026-07-25
+## 8. Adversarial review closure ? 2026-07-25
 
 - [x] SEC-01 desktop launch uses canonical executable validation plus a persisted main-process allowlist.
 - [x] SEC-03 todo path writes are dialog-owned and read/write paths are canonical existing `.txt` files.

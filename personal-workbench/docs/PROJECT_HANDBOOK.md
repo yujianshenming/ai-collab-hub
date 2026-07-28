@@ -87,6 +87,9 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 | 周报中心首版 | 已实现 | `__weeklyreport__`、历史周次、模板姓名/标题、编辑器、预览、HTML/Markdown/DOCX 导出和表格复制 |
 | Token 统计 | 已实现，构建 sidecar 后可用 | `__tokenbox__`、TokenBox Rust sidecar、Codex/Claude Code 日志扫描、模型/日期筛选、证据审计、导出和 relay 对账 |
 | 作业批阅方差 | 已集成首版，需本机 Python 依赖与平台登录态 | `__homework_variance__`、`integrations/homework-variance`、懒启动 FastAPI 侧车、批阅进度/均值/总体方差/Excel 导出 |
+| 任务导入确定性解析器 | 已实现并有契约测试 | `task-import-helpers.js`：字段级证据、`validateImportedTask` Schema 校验、新增/更新/不变差异分类 |
+| AI 模型网关（主进程） | 已实现，需本机配置 API key | `llm-model-registry.js`、`llm-client.js`、safeStorage 密钥（`userData/llm-secret.bin`）、偏好界面「AI 模型」区 |
+| AI 辅助任务解析 | 已实现并有契约测试 | `llm-task-parser.js`、导入预览「未解析行」AI 按钮；审阅优先，低置信度默认不勾选 |
 | 直接上传企业微信/腾讯文档 | 未实现 | 当前使用 HTML/纯文本剪贴板或 DOCX 文件导出 |
 
 ### 网页返回书签行为
@@ -118,6 +121,15 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 - 周报数据保存到 Electron `userData/weekly-reports.json`，与 `tasks/weekly_tasks.json` 分离，并有备份与临时文件原子替换。
 - 周报默认值保存在 `userData/workbench-prefs.json` 的 `weeklyReportDefaults` 字段。
 
+### 任务导入与 AI 辅助解析行为
+
+- 待办导入的确定性解析由 `task-import-helpers.js` 提供（UMD，renderer 与 Node 测试共用）：字段级证据、`validateImportedTask` Schema 校验（必填/枚举/长度/数量 1-999）、与现有任务的差异分类；`todoImportKey` 做行级匹配。
+- AI 能力经公司 Polymas 网关，Base URL 固定为 `https://llm-service.polymas.com/api/openai/v1` 且只存在于主进程；renderer 不能注入地址，也不能直接发起模型请求。
+- API key 优先级：环境变量 `PERSONAL_WORKBENCH_LLM_API_KEY` > 会话内临时 key > `userData/llm-secret.bin`（safeStorage 加密）。key 不写日志、不进任何 IPC 返回值；`ai:get-config` 只返回配置状态、加密可用性与模型列表。
+- 模型注册表内置 9 个模型，仅 `stableDefault` 模型可设为默认模型（默认 `claude-sonnet-4-6`）；默认模型保存在 `workbench-prefs.json` 的 `llmDefaultModel`。
+- AI 辅助解析（`llm-task-parser.js`）为审阅优先：只对导入预览中「未解析行」按用户勾选发送，发送前有二次确认展示将发送的行；候选过同一套 `validateImportedTask` 校验；学校/课程/负责人必须逐字出现在原文，否则进 unresolved；置信度低于 0.75 的候选默认不勾选。
+- AI 失败/超时只显示提示，规则解析结果原样保留；关闭预览后迟到的 AI 结果被代际 token 丢弃；取消预览不写盘，只有「应用所选」才修改 `tasks/weekly_tasks.json`。
+
 ## 4. 系统架构
 
 ```mermaid
@@ -138,6 +150,7 @@ flowchart LR
   PY[Python FastAPI 批阅侧车]
   HWDATA[userData/homework-variance]
   POLY[Polymas 作业接口]
+  LLMGW[Polymas 模型网关 HTTPS]
 
   UI -->|受限 API| PRELOAD
   PRELOAD -->|IPC| MAIN
@@ -156,6 +169,7 @@ flowchart LR
   PY --> POLY
   UI --> HW
   HW --> PY
+  MAIN -->|固定 Base URL + 主进程持钥| LLMGW
 ```
 
 ### 进程职责
@@ -209,7 +223,8 @@ flowchart LR
 
 - `weekly-reports.json`：周报快照。
 - `backups/weekly_tasks.json`、`backups/weekly-reports.json`：写入前备份。
-- `workbench-prefs.json`：主题、裁切、待办路径、平台字段映射、周报默认姓名/标题模板等偏好。
+- `workbench-prefs.json`：主题、裁切、待办路径、平台字段映射、周报默认姓名/标题模板、AI 默认模型 `llmDefaultModel` 等偏好。
+- `llm-secret.bin`：safeStorage 加密的模型网关 API key，只属于本机，不得复制到版本库或日志。
 - `extensions.json`：扩展配置；可能包含本机路径，只能留在本机。
 - `extension-debug.log`：扩展兼容调试日志。
 - `homework-variance/`：作业批阅侧车的任务 JSON、上传文件、状态、Excel 和可选 LLM 凭证。
