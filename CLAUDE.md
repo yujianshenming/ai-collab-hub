@@ -45,12 +45,22 @@
 
 ### Issue tracker
 
-本地 Markdown 任务看板。任务存放在 `tasks/` 目录下（`todo.md`、`active.md`、`done.md`）。详见 [issue-tracker.md](file:///e:/codes/docs/agents/issue-tracker.md)。
+本地 Markdown 任务看板。任务存放在 `tasks/` 目录下（`todo.md`、`active.md`、`done.md`）。详见 [issue-tracker.md](docs/agents/issue-tracker.md)。
 
 ### Triage labels
 
-通过在 `tasks/` 目录的不同文件间移动任务来管理状态（`todo` ➔ `active` ➔ `done`）。详见 [triage-labels.md](file:///e:/codes/docs/agents/triage-labels.md)。
+通过在 `tasks/` 目录的不同文件间移动任务来管理状态（`todo` ➔ `active` ➔ `done`）。详见 [triage-labels.md](docs/agents/triage-labels.md)。
 
 ### Domain docs
 
-单上下文模式。项目领域词汇与协作规则由根目录的 `PROTOCOL.md` 以及 `decisions/` 目录定义。详见 [domain.md](file:///e:/codes/docs/agents/domain.md)。
+单上下文模式。项目领域词汇与协作规则由根目录的 `PROTOCOL.md` 以及 `decisions/` 目录定义。详见 [domain.md](docs/agents/domain.md)。
+
+### Skill Canonical Source & Sync
+
+项目 Skill（当前为 `ui-ux-pro-max`）在多个提供者目录（`.claude`、`.qoder`、`.codex`、`.cursor` 等）中各有一份副本，以便不同编码助手加载。为避免内容漂移：
+
+* **Canonical source（唯一权威目录）**：`.claude/skills/ui-ux-pro-max/`。所有内容修改只允许发生在此目录。
+* **同步机制**：修改 canonical source 后，在仓库根目录运行 `sync_skills.ps1`，脚本会将内容镜像到其余提供者目录：
+  * 与 canonical 同格式的提供者（`.qoder`、`.codex`、`.trae`、`.codebuddy`、`.continue`、`.gemini`、`.opencode`）：全量镜像 `SKILL.md` + `data/` + `scripts/`。
+  * 入口文件经提供者适配的目录（`.agent`、`.cursor`、`.windsurf`、`.roo`、`.kiro/steering`、`.github/prompts`）：仅镜像 `data/` + `scripts/`，保留各自的入口文件格式。
+* **镜像标识**：每个非 canonical 副本目录内含 `CANONICAL.md`，指回权威目录与同步脚本；镜像目录中的文件不得手工编辑。
