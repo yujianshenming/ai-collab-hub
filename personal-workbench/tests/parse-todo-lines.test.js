@@ -2,25 +2,25 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const vm = require("node:vm");
 
+// M1 后解析器住在 task-import-helpers.js；本测试验证：
+// 1) 旧 parseTodoLines 契约全部保持；2) renderer.js/index.html 接线仍在
 function loadParseTodoLines() {
-  const rendererPath = path.resolve(__dirname, "..", "renderer.js");
-  const rendererSource = fs.readFileSync(rendererPath, "utf8");
-  const start = rendererSource.indexOf("const TODO_TYPE_MAP = [");
-  const endMarker = "window.parseTodoLines = parseTodoLines;";
-  const end = rendererSource.indexOf(endMarker, start);
-
-  assert.notEqual(start, -1, "renderer.js should contain todo parsing block");
-  assert.notEqual(end, -1, "renderer.js should expose parseTodoLines on window");
-
-  const sandbox = { window: {} };
-  vm.runInNewContext(
-    rendererSource.slice(start, end + endMarker.length),
-    sandbox,
-    { filename: rendererPath }
+  const rendererSource = fs.readFileSync(path.resolve(__dirname, "..", "renderer.js"), "utf8");
+  const indexSource = fs.readFileSync(path.resolve(__dirname, "..", "index.html"), "utf8");
+  assert.ok(
+    rendererSource.includes("window.TaskImportHelpers"),
+    "renderer.js should consume TaskImportHelpers"
   );
-  return sandbox.window.parseTodoLines;
+  assert.ok(
+    indexSource.includes('src="./task-import-helpers.js"'),
+    "index.html should load task-import-helpers.js before renderer.js"
+  );
+  assert.ok(
+    indexSource.indexOf('src="./task-import-helpers.js"') < indexSource.indexOf('src="./renderer.js"'),
+    "task-import-helpers.js must load before renderer.js"
+  );
+  return require("../task-import-helpers.js").parseTodoLines;
 }
 
 const parseTodoLines = loadParseTodoLines();

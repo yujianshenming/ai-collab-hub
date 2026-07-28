@@ -2640,104 +2640,18 @@ window.isCardsArtifactName = isCardsArtifactName;
 // ============ 待做任务.txt 解析（纯函数，无副作用，供测试注入） ============
 
 // 任务类型关键词 → 内部枚举（含 V3.2 新增的 grading-edit）
-const TODO_TYPE_MAP = [
-  ["能力训练搭建", "capability-setup"],
-  ["能力训练修改", "capability-edit"],
-  ["能力训练验收", "capability-acceptance"],
-  ["作业批阅搭建", "grading-setup"],
-  ["作业批阅验收", "grading-acceptance"],
-  ["作业批阅修改", "grading-edit"]
-];
-const TODO_WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-const TODO_IMPORT_FIELDS = ["quantity", "status", "owner", "weekday", "subtasks", "note"];
-const TODO_IMPORT_FIELD_LABELS = {
-  quantity: "数量",
-  status: "状态",
-  owner: "负责人",
-  weekday: "星期",
-  subtasks: "子任务",
-  note: "备注"
-};
+// M1：解析、字段证据、Schema 校验、差异分类已抽取到 task-import-helpers.js（index.html 先于本文件加载）
+const {
+  TODO_TYPE_MAP,
+  TODO_WEEKDAYS,
+  TODO_IMPORT_FIELDS,
+  parseTodoLines,
+  normalizeImportedTodoTask,
+  todoImportKey,
+  taskStatusLabel,
+  normalizeSubtasks
+} = window.TaskImportHelpers;
 let importPreviewState = null;
-
-// 括号备注 → 子任务标记：{ 编号: "done"|"unconfirmed" }；无法识别返回 null
-function parseSubtaskNote(text) {
-  const marks = {};
-  let matched = false;
-  const splitNums = (raw) => raw.split(/[/、,，\s]+/).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
-  const doneMatch = text.match(/已完成任务([\d/、,，\s]+)/) || text.match(/任务([\d/、,，\s]+)已完成/);
-  if (doneMatch) {
-    for (const n of splitNums(doneMatch[1])) marks[n] = "done";
-    matched = true;
-  }
-  const unconfirmedMatch = text.match(/任务([\d/、,，\s]+)待确认/) || text.match(/待确认任务([\d/、,，\s]+)/);
-  if (unconfirmedMatch) {
-    for (const n of splitNums(unconfirmedMatch[1])) marks[n] = "unconfirmed";
-    matched = true;
-  }
-  return matched ? marks : null;
-}
-
-// 行模式：学校《课程》 [任务类型] [N个] [状态(可带括号备注)] [负责人] [星期]
-// 返回 { tasks: [...], unparsed: [原文行] }；字段间空格数量容错
-function parseTodoLines(text) {
-  const tasks = [];
-  const unparsed = [];
-  for (const raw of String(text || "").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line) continue;
-    const head = line.match(/^(.+?)《([^》]+)》(.*)$/);
-    if (!head) {
-      unparsed.push(line);
-      continue;
-    }
-    const school = head[1].trim();
-    const course = head[2].trim();
-    let rest = head[3];
-
-    let taskType = "";
-    for (const [keyword, value] of TODO_TYPE_MAP) {
-      if (rest.includes(keyword)) {
-        taskType = value;
-        rest = rest.replace(keyword, " ");
-        break;
-      }
-    }
-
-    let quantity = 1;
-    const quantityMatch = rest.match(/(\d+)个/);
-    if (quantityMatch) {
-      quantity = Math.max(1, Number(quantityMatch[1]));
-      rest = rest.replace(quantityMatch[0], " ");
-    }
-
-    let status = "pending";
-    let note = "";
-    let subtaskMarks = null;
-    const statusMatch = rest.match(/(已完成|未完成|未提交)\s*(（[^）]*）|\([^)]*\))?/);
-    if (statusMatch) {
-      status = statusMatch[1] === "已完成" ? "completed" : statusMatch[1] === "未提交" ? "unsubmitted" : "pending";
-      if (statusMatch[2]) {
-        const inner = statusMatch[2].slice(1, -1).trim();
-        subtaskMarks = parseSubtaskNote(inner);
-        if (!subtaskMarks) note = inner;
-      }
-      rest = rest.replace(statusMatch[0], " ");
-    }
-
-    let weekday = "";
-    const weekdayMatch = rest.match(/周[一二三四五六日]/);
-    if (weekdayMatch) {
-      weekday = weekdayMatch[0];
-      rest = rest.replace(weekdayMatch[0], " ");
-    }
-
-    const owner = rest.trim().split(/\s+/).filter(Boolean)[0] || "";
-    tasks.push({ school, course, taskType, quantity, status, owner, weekday, note, subtaskMarks });
-  }
-  return { tasks, unparsed };
-}
-window.parseTodoLines = parseTodoLines;
 
 // ============ 待做任务.txt 写回（纯函数，无副作用，与上方解析器互为逆运算） ============
 
@@ -3047,85 +2961,9 @@ function parseCardsDocument(text) {
 
 window.parseCardsDocument = parseCardsDocument;
 
-// 子任务标记 + 数量 → subtasks 数组（index 从 1 起，未标记默认 pending）
-function subtasksFromMarks(quantity, marks) {
-  const list = [];
-  for (let index = 1; index <= Math.max(1, Number(quantity) || 1); index += 1) {
-    list.push({ index, status: marks?.[index] || "pending" });
-  }
-  return list;
-}
-
-function todoImportKey(task) {
-  return [task.school, task.course, task.taskType].map((part) => String(part || "").trim()).join("\u0001");
-}
-
-function normalizeImportedTodoTask(task) {
-  const quantity = Math.max(1, Number(task.quantity) || 1);
-  const defaultMarks = task.subtaskMarks || (["completed", "unsubmitted"].includes(task.status)
-    ? Object.fromEntries(Array.from({ length: quantity }, (_item, index) => [index + 1, "done"]))
-    : {});
-  return {
-    school: task.school || "",
-    course: task.course || "",
-    taskType: typeof task.taskType === "string" ? task.taskType : "",
-    quantity,
-    status: task.status || "pending",
-    owner: task.owner || "",
-    weekday: TODO_WEEKDAYS.includes(task.weekday) ? task.weekday : "",
-    note: task.note || "",
-    subtasks: subtasksFromMarks(quantity, defaultMarks)
-  };
-}
-
-function subtaskSummary(subtasks) {
-  const list = normalizeSubtasks(subtasks, subtasks?.length || 1);
-  const done = list.filter((item) => item.status === "done").map((item) => item.index);
-  const unconfirmed = list.filter((item) => item.status === "unconfirmed").map((item) => item.index);
-  const parts = [`${done.length}/${list.length} 已完成`];
-  if (done.length) parts.push(`完成 ${done.join("/")}`);
-  if (unconfirmed.length) parts.push(`待确认 ${unconfirmed.join("/")}`);
-  return parts.join("，");
-}
-
-function importFieldDisplayValue(field, value) {
-  if (field === "status") return taskStatusLabel(value);
-  if (field === "subtasks") return subtaskSummary(value);
-  if (field === "weekday") return value || "未设置";
-  if (field === "note") return value || "无";
-  return String(value ?? "");
-}
-
-function importFieldComparableValue(field, value) {
-  if (field === "subtasks") return JSON.stringify(normalizeSubtasks(value, value?.length || 1));
-  return JSON.stringify(value ?? "");
-}
-
-function todoImportDiffs(existing, incoming) {
-  return TODO_IMPORT_FIELDS
-    .filter((field) => importFieldComparableValue(field, existing[field]) !== importFieldComparableValue(field, incoming[field]))
-    .map((field) => ({
-      field,
-      label: TODO_IMPORT_FIELD_LABELS[field],
-      from: importFieldDisplayValue(field, existing[field]),
-      to: importFieldDisplayValue(field, incoming[field])
-    }));
-}
-
+// 差异分类薄包装：注入 weeklyTasks 与 normalizeWeeklyTask，分类纯逻辑在 task-import-helpers.js
 function buildTodoImportPreview(parsedTasks, unparsed) {
-  const existingByKey = new Map(weeklyTasks.map((task) => [todoImportKey(task), task]));
-  const groups = { added: [], updated: [], unchanged: [], unparsed: unparsed || [] };
-  parsedTasks.map(normalizeImportedTodoTask).forEach((incoming) => {
-    const existing = existingByKey.get(todoImportKey(incoming));
-    if (!existing) {
-      groups.added.push({ task: incoming, selected: true });
-      return;
-    }
-    const diffs = todoImportDiffs(normalizeWeeklyTask(existing), incoming);
-    if (diffs.length) groups.updated.push({ task: incoming, existingId: existing.id, diffs, selected: true });
-    else groups.unchanged.push({ task: incoming, existingId: existing.id, selected: false });
-  });
-  return groups;
+  return window.TaskImportHelpers.buildTodoImportPreview(parsedTasks, unparsed, weeklyTasks, normalizeWeeklyTask);
 }
 
 function setTodoPathDisplay(pathValue) {
@@ -3756,17 +3594,6 @@ async function completeActiveTask(submitted) {
   showToast(submitted ? "任务已完成，临时文件已清理" : "任务已标记为未提交，临时文件已清理", "success");
 }
 
-function taskStatusLabel(status) {
-  return {
-    pending: "待处理",
-    running: "进行中",
-    evaluating: "评估中",
-    paused: "已暂停",
-    unsubmitted: "未提交",
-    completed: "已完成"
-  }[status] || "待处理";
-}
-
 // 任务表单：居中 dialog（复用原字段与校验）
 function openTaskForm(task = null) {
   resetTaskForm();
@@ -3806,18 +3633,6 @@ function resetTaskForm() {
     document.querySelector("#task-due-date").value = defaultDueDateForWeek();
   }
   if (elements.taskFormTitle) elements.taskFormTitle.textContent = "添加任务";
-}
-
-// 子任务清单与 quantity 联动：长度不足补 pending，超出截断；index 重排为 1..N
-function normalizeSubtasks(subtasks, quantity) {
-  const count = Math.max(1, Number(quantity) || 1);
-  const source = Array.isArray(subtasks) ? subtasks : [];
-  const list = [];
-  for (let index = 1; index <= count; index += 1) {
-    const status = source[index - 1]?.status;
-    list.push({ index, status: ["pending", "running", "done", "unconfirmed"].includes(status) ? status : "pending" });
-  }
-  return list;
 }
 
 function normalizeWeeklyTask(task = {}) {
