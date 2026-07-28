@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -39,6 +40,34 @@ import requests
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+LOG = logging.getLogger("polymas_grade_engine")
+
+
+def _default_log_dir() -> Path:
+    data_root = os.environ.get("PERSONAL_WORKBENCH_HOMEWORK_VARIANCE_DATA", "").strip()
+    base = Path(data_root).expanduser() if data_root else Path(__file__).resolve().parent / "output"
+    return base / "logs"
+
+
+def _setup_logging() -> None:
+    """stderr 输出进度（由 web_server 捕获），文件 handler 持久化到数据目录 logs/。"""
+    if LOG.handlers:
+        return
+    LOG.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    console = logging.StreamHandler(sys.stderr)
+    console.setFormatter(formatter)
+    LOG.addHandler(console)
+    try:
+        log_dir = _default_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "polymas_grade_engine.log", encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        LOG.addHandler(file_handler)
+    except Exception:
+        LOG.warning("无法创建日志文件 handler，仅输出到 stderr", exc_info=True)
+
 
 HOST = "https://cloudapi.polymas.com"
 SUCCESS = {"finished", "completed", "success", "done", "FINISHED", "COMPLETED", "SUCCESS", "DONE"}
@@ -601,7 +630,7 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
         phase = job["phase"]
         level = job["level"]
         ri = job["current_run"]
-        print(f"[{level} run{ri}/{times}] phase={phase}", flush=True)
+        LOG.info("[%s run%s/%s] phase=%s", level, ri, times, phase)
         steps += 1
 
         if phase == "upload":
@@ -622,7 +651,7 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
             job["file_data"] = data["data"]
             job["upload_s"] = round(time.time() - t0, 2)
             job["phase"] = "analyze"
-            print(f"  upload {job['upload_s']}s fileId={job['file_data'].get('fileId')}", flush=True)
+            LOG.info("upload %ss fileId=%s", job["upload_s"], job["file_data"].get("fileId"))
             save_state(cfg, st)
             continue
 
@@ -674,21 +703,18 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
             fix_enabled = bool(cfg.get("fix_empty_answers", True))
 
             if empty:
-                print(f"  🔍 检测到 {len(empty)} 个空答案: {', '.join(e['name'] for e in empty)}", flush=True)
+                LOG.info("检测到 %s 个空答案: %s", len(empty), ", ".join(e["name"] for e in empty))
             else:
-                print("  ✅ 解析无空答案", flush=True)
+                LOG.info("解析无空答案")
 
             if fix_enabled and empty:
                 llm_cfg = resolve_llm_cfg(cfg)
                 if not llm_cfg:
-                    print(
-                        "  ⚠️  需要空题回填但未配置 LLM（secrets.json llm.api_key 或 POLY_LLM_API_KEY），跳过修复",
-                        flush=True,
-                    )
+                    LOG.warning("需要空题回填但未配置 LLM（secrets.json llm.api_key 或 POLY_LLM_API_KEY），跳过修复")
                     job["fix_skip_reason"] = "no_llm_config"
                 else:
                     try:
-                        print(f"  🤖 调用 LLM 校验/回填 ({llm_cfg['model']})…", flush=True)
+                        LOG.info("调用 LLM 校验/回填 (%s)…", llm_cfg["model"])
                         t_fix = time.time()
                         fixed_parsed, fixes = fix_empty_answers_with_llm(
                             parsed if isinstance(parsed, dict) else {"content": []},
@@ -701,22 +727,23 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
                         job["fix_applied"] = bool(fixes)
                         still = detect_empty_items(fixed_parsed if isinstance(fixed_parsed, dict) else {})
                         job["empty_after"] = [e["name"] for e in still]
-                        print(
-                            f"  📝 应用 {len(fixes)} 个修正（耗时 {job['fix_s']}s）；"
-                            f"仍空 {len(still)} 题"
-                            + (f": {', '.join(e['name'] for e in still)}" if still else ""),
-                            flush=True,
+                        LOG.info(
+                            "应用 %s 个修正（耗时 %ss）；仍空 %s 题%s",
+                            len(fixes),
+                            job["fix_s"],
+                            len(still),
+                            f": {', '.join(e['name'] for e in still)}" if still else "",
                         )
                         for fx in fixes:
                             preview = (fx.get("new") or "").replace("\n", " ")[:60]
-                            print(f"  ✏️  修正 {fx['name']}: → \"{preview}…\"", flush=True)
+                            LOG.info("修正 %s: → \"%s…\"", fx["name"], preview)
                     except Exception as e:
                         job["fix_error"] = str(e)[:500]
-                        print(f"  ❌ LLM 回填失败，沿用原始解析: {e}", flush=True)
+                        LOG.exception("LLM 回填失败，沿用原始解析: %s", e)
                         fixed_parsed = parsed
             elif empty and not fix_enabled:
                 job["fix_skip_reason"] = "disabled"
-                print("  ℹ️  空题回填已关闭（fix_empty_answers=false）", flush=True)
+                LOG.info("空题回填已关闭（fix_empty_answers=false）")
 
             (adir / f"{safe}_fixed.json").write_text(
                 json.dumps(fixed_parsed, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
@@ -724,10 +751,11 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
             job["text_input"] = build_text_input(fixed_parsed if isinstance(fixed_parsed, dict) else {})
             job["analyze_s"] = round(time.time() - t0, 2)
             job["phase"] = "execute"
-            print(
-                f"  analyze {job['analyze_s']}s text_len={len(job['text_input'] or '')}"
-                f" fixes={len(job.get('fixes') or [])}",
-                flush=True,
+            LOG.info(
+                "analyze %ss text_len=%s fixes=%s",
+                job["analyze_s"],
+                len(job["text_input"] or ""),
+                len(job.get("fixes") or []),
             )
             save_state(cfg, st)
             continue
@@ -779,7 +807,7 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
                 run["phase"] = "error"
                 _advance(st, job, times)
                 save_state(cfg, st)
-                print(f"  execute FAIL: {data}", flush=True)
+                LOG.error("execute FAIL: %s", data)
                 last_code = 0
                 continue
             task_id = (data.get("data") or {}).get("id") or (data.get("data") or {}).get("taskId")
@@ -802,7 +830,7 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
             run["poll_count"] = 0
             run["phase"] = "poll"
             job["phase"] = "poll"
-            print(f"  execute {run['timings']['execute']}s task={task_id}", flush=True)
+            LOG.info("execute %ss task=%s", run["timings"]["execute"], task_id)
             save_state(cfg, st)
             continue
 
@@ -827,10 +855,7 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
                 state = str(raw_state or "")
                 arts = d.get("artifacts") or []
                 elapsed = time.time() - (run.get("poll_t0") or time.time())
-                print(
-                    f"  poll#{run['poll_count']} state={raw_state} arts={len(arts)} t={elapsed:.1f}s",
-                    flush=True,
-                )
+                LOG.info("poll#%s state=%s arts=%s t=%.1fs", run["poll_count"], raw_state, len(arts), elapsed)
                 if arts or state in SUCCESS or state.lower() in {x.lower() for x in SUCCESS}:
                     done = True
                     break
@@ -869,7 +894,7 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
                 ),
                 encoding="utf-8",
             )
-            print(f"  DONE score={run['total_score']} poll={po}s", flush=True)
+            LOG.info("DONE score=%s poll=%ss", run["total_score"], po)
             _advance(st, job, times)
             save_state(cfg, st)
             last_code = 0
@@ -884,11 +909,11 @@ def cmd_next(cfg_path: Path, max_polls: int = 5, budget_s: float = 38.0) -> int:
             save_state(cfg, st)
             break
 
-        print("unknown phase", phase)
+        LOG.error("unknown phase %s", phase)
         last_code = 1
         break
 
-    print(f"steps={steps} last_code={last_code}", flush=True)
+    LOG.info("steps=%s last_code=%s", steps, last_code)
     return last_code
 
 
@@ -1160,22 +1185,29 @@ def cmd_run(cfg_path: Path, max_loops: int = 200) -> None:
 
 
 def main():
+    _setup_logging()
     ap = argparse.ArgumentParser()
     ap.add_argument("command", choices=["init", "next", "status", "report", "run"])
     ap.add_argument("--config", required=True, help="job config json path")
     args = ap.parse_args()
     cfg_path = Path(args.config)
-    if args.command == "init":
-        cmd_init(cfg_path)
-    elif args.command == "next":
-        code = cmd_next(cfg_path)
-        sys.exit(0 if code in (0, 3) else code)
-    elif args.command == "status":
-        cmd_status(cfg_path)
-    elif args.command == "report":
-        cmd_report(cfg_path)
-    elif args.command == "run":
-        cmd_run(cfg_path)
+    try:
+        if args.command == "init":
+            cmd_init(cfg_path)
+        elif args.command == "next":
+            code = cmd_next(cfg_path)
+            sys.exit(0 if code in (0, 3) else code)
+        elif args.command == "status":
+            cmd_status(cfg_path)
+        elif args.command == "report":
+            cmd_report(cfg_path)
+        elif args.command == "run":
+            cmd_run(cfg_path)
+    except SystemExit:
+        raise
+    except Exception:
+        LOG.exception("命令 %s 执行失败 (config=%s)", args.command, cfg_path)
+        raise
 
 
 if __name__ == "__main__":

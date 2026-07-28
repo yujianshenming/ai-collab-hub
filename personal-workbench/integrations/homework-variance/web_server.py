@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hmac
 import json
+import logging
 import os
 import re
 import shutil
@@ -27,9 +28,43 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+LOG = logging.getLogger("homework_variance.web_server")
+
+
+def _default_log_dir() -> Path:
+    data_root = os.environ.get("PERSONAL_WORKBENCH_HOMEWORK_VARIANCE_DATA", "").strip()
+    base = Path(data_root).expanduser() if data_root else Path(__file__).resolve().parent / "output"
+    return base / "logs"
+
+
+def _setup_logging() -> None:
+    """stderr + 文件双 handler；在三方库导入前初始化，保证启动失败也能落盘。"""
+    if LOG.handlers:
+        return
+    LOG.setLevel(logging.INFO)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    console = logging.StreamHandler(sys.stderr)
+    console.setFormatter(formatter)
+    LOG.addHandler(console)
+    try:
+        log_dir = _default_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "web_server.log", encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        LOG.addHandler(file_handler)
+    except Exception:
+        LOG.warning("无法创建日志文件 handler，仅输出到 stderr", exc_info=True)
+
+
+_setup_logging()
+
+try:
+    from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+    from fastapi.staticfiles import StaticFiles
+except Exception:
+    LOG.exception("依赖导入失败，侧车无法启动（请确认已安装 fastapi/uvicorn）")
+    raise
 
 ROOT = Path(__file__).resolve().parent
 ENGINE = ROOT / "polymas_grade_engine.py"
@@ -451,6 +486,7 @@ def worker_loop(job_id: str) -> None:
         meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
         save_job_meta(job_id, meta)
     except Exception as e:
+        LOG.exception("worker_loop 异常终止 (job_id=%s)", job_id)
         with LOCK:
             RUNTIME[job_id]["status"] = "error"
             RUNTIME[job_id]["message"] = str(e)
@@ -751,17 +787,22 @@ def delete_job(job_id: str):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
     parser = argparse.ArgumentParser(description="Run the local homework variance service")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--data-root", default="")
     parser.add_argument("--auth-token", default=None)
     args = parser.parse_args()
-    configure_runtime(args.data_root or None, args.auth_token)
-    print("=" * 50)
-    print("  Polymas 作业批阅控制台")
-    print(f"  http://{args.host}:{args.port}", flush=True)
-    print("=" * 50)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    try:
+        import uvicorn
+
+        configure_runtime(args.data_root or None, args.auth_token)
+        LOG.info("Polymas 作业批阅控制台启动 http://%s:%s data_root=%s", args.host, args.port, DATA_ROOT)
+        print("=" * 50)
+        print("  Polymas 作业批阅控制台")
+        print(f"  http://{args.host}:{args.port}", flush=True)
+        print("=" * 50)
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    except Exception:
+        LOG.exception("侧车启动失败 (host=%s port=%s data_root=%s)", args.host, args.port, args.data_root or "-")
+        raise
