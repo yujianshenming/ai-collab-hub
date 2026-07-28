@@ -1,30 +1,45 @@
 # Current Status
 
 ## Active Goal
-个人工作台 V3.4「平台填写助手」已开发完成、回归验收通过，进入收尾阶段：补真机上传验证、合入 master，并准备 V3.5 规划。
+个人工作台当前在 `codex/personal-workbench-redesign` 分支上进行作业批阅方差工具的集成收尾，同时保持周报中心、Token 统计和 V3.4 平台填写助手的既有能力稳定可回归。
 
 ## Current Owner
-产品经理（V3.4 回归已通过验收，推进合入 master 与 V3.5 规划）
+Codex（负责当前集成的代码、测试、文档和发布前检查；真实平台批阅验收仍需要用户提供登录态与样本）。
 
 ## Last Updated
-2026-06-23（对齐至最新提交，V3.4 回归四步全绿）
+2026-07-24
 
 ## Latest Summary
-1. **主线已迭代到 V3.4**：个人工作台从早期「常驻网页 + 终端」演进为「任务驱动 + 文件总线 + 卡片舱」的完整工作台，覆盖能力训练搭建的端到端流程。
-2. **已交付版本（按累积）**：
-   - V3：任务驱动 UI、任务舱、流水线五步模型、暂停/继续、结束清理。
-   - V3.1：文件总线（全局下载捕获、文件托盘 fs.watch、上传注入、图片裁切去水印）。
-   - V3.2：任务源头（待做任务.txt 解析导入、未提交状态、子任务进度）—— 已验收通过。
-   - V3.3：文件总线可靠性（6 缺陷清零、上传拦截改 CDP）+ 任务状态写回 txt —— 已合入 master。
-   - V3.4：平台填写助手（cards.md 解析、卡片舱逐字段一键复制、流式逐项填写、平台注入预研）—— 已提交（含三个用户反馈修复：分类折叠、测试残留标签、托盘悬停抖动）。
-3. **V3.4 回归验收（2026-06-23）**：测试工程师四步全绿——①机器检查+冒烟（check+11 单测、DOM/IPC 对账、冒烟 8/8 零异常）②2 个 P1 缺陷均已修复 ③卡片舱 E2E 24/24 全通 ④安全四项 + V3.4 三修复全过。PM 验收通过。
-4. **文档对齐**：已将 status/current.md、roadmap、personal-workbench/README.md、tasks/active.md 对齐至 V3.4 真实状态（此前最多落后 5 个版本，是「感觉乱」的根因）；并新增 `personal-workbench-overview.html` 项目全景介绍页。
+1. **V3.4 基线能力已交付**：任务驱动流程、文件总线、卡片舱、平台填写辅助、任务状态/子任务和启动入口已在代码与项目手册中记录。
+2. **周报中心已接入**：支持从任务生成快照、历史周次、手动编辑、企业微信文档粘贴所需的纯文本/HTML/表格 HTML+TSV 复制，以及 HTML/Markdown/DOCX 导出。
+3. **Token 统计已接入**：工作台通过白名单 IPC 调用 TokenBox Rust sidecar；未构建 sidecar 时明确提示，不伪造统计结果。
+4. **作业批阅方差集成已完成首版本地接线**：按需启动 Python + FastAPI 侧车，使用动态 loopback 端口、随机本地令牌和 `userData/homework-variance` 数据目录；源码、契约测试、README 和打包资源规则均已加入当前工作区，但尚未提交或推送。
+5. **个人数据保持隔离**：`tasks/weekly_tasks.json`、`personal-workbench/temp/`、本机扩展配置和打包输出均不应进入提交；当前 `tasks/weekly_tasks.json` 的修改是用户本地数据变更。
+
+## Verification
+- `personal-workbench/npm run check`：通过。
+- `personal-workbench/npm test`：70/70 通过。
+- 作业批阅 Python 文件 `py_compile`：通过。
+- 本地 Uvicorn 冒烟：健康检查 200、无令牌 API 401、带令牌空任务列表可读。
+- 隔离 Electron 冒烟：点击「作业批阅方差」后侧车就绪，iframe 加载成功，授权 `/api/jobs` 返回 200。
+- `personal-workbench/npm run pack`：通过；打包资源包含 `resources/integrations/homework-variance/web_server.py`。
+- `npm run test:all`：未全绿。冒烟 8/8、卡片舱 24/24、P1 缺陷 13/13 通过；既有 `security-http.e2e.js` 仍有 2 项失败：正确 session token 访问 `/tabs` 返回 401，以及联接目录用例返回 404 而非测试期望的 403。
 
 ## Next Step
-1. 人工补一击：真机点一次网页上传，确认 CDP 注入路径，闭环 P1 #2（机制已健全，仅缺真机验证）。
-2. 将 `codex/personal-workbench` 合入 `master`（V3.4 体验修复提交 3c95d55 + 回归测试套件 + 文档对齐）。
-3. 启动 V3.5 规划（优先方向：增强任务、文件、页面、报告之间的协作，建设强辅助工作台；后续增强项再按该方向拆解）。
+1. 复核当前源码、测试和文档改动，显式排除个人任务数据后再决定是否提交。
+2. 在本机安装并确认 Python 3.10+ 与 `integrations/homework-variance/requirements.txt` 依赖，使用真实 Polymas 登录态和样本完成批阅/方差/Excel 下载验收。
+3. 单独定位 `security-http.e2e.js` 的两项既有失败，保存日志和复现步骤后再决定是否修复测试夹具或应用行为。
+4. TokenBox Rust sidecar 仍受当前机器缺少 MSVC `link.exe` 影响；具备工具链后再执行真实 `build:bridge:stage` 和发布构建。
 
 ## Known Risks
-- 回归清单登记 16 个已知缺陷（P1×2 已修 / P2×8 / P3×6），P2 含本地端口占用静默失败、debugger 重复注册导致浮层弹两次、上传请求 Map 泄漏等，需按版本排期清理。
-- P1 #2（上传注入）机制已修，但真机点上传尚未人工确认。
+- 作业批阅集成只携带 Python 源码，不捆绑 Python runtime；目标机器需要自行安装解释器和依赖。
+- 作业批阅侧车需要用户提供有效的 Polymas URL、JWT/Cookie 和作业文件；自动化验证没有读取真实隐私数据。
+- 完整 E2E 尚未全绿，不能声称当前工作区已完成发布验收。
+- TokenBox 统计的真实 sidecar 构建、首次扫描和重启复用仍需本机手工验证。
+- 扩展注入、第三方平台 DOM、企业微信文档粘贴和 Windows 通知仍受外部页面/权限变化影响。
+
+## Workspace Boundary
+- 当前分支：`codex/personal-workbench-redesign`，跟踪 `origin/codex/personal-workbench-redesign`。
+- 当前功能改动仍在未提交工作区；本次收尾没有执行 commit、push、merge、deploy 或 live 验证。
+- `personal-workbench/build-output/` 是约 400 MB 的可重建打包输出；`personal-workbench/temp/` 是约 77 MB 的本机任务/下载数据；二者均仅作为清理候选，不在未确认前删除。
+- 根目录 `__pycache__/` 与 `personal-workbench/.claude/` 是本机运行/Agent 配置，保留且不纳入提交。

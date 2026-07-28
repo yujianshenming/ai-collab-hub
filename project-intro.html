@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Collab Hub · 小白也能看懂的项目全景介绍</title>
+<style>
+  :root {
+    --bg: #f7f9fc;
+    --panel: #ffffff;
+    --border: #e3e8f0;
+    --text: #1e293b;
+    --text-2: #475569;
+    --text-3: #94a3b8;
+    --blue: #3b82f6;
+    --blue-bg: #eff6ff;
+    --green: #10b981;
+    --green-bg: #ecfdf5;
+    --purple: #8b5cf6;
+    --purple-bg: #f5f3ff;
+    --orange: #f59e0b;
+    --orange-bg: #fffbeb;
+    --pink: #ec4899;
+    --pink-bg: #fdf2f8;
+    --cyan: #06b6d4;
+    --cyan-bg: #ecfeff;
+    --shadow: 0 1px 3px rgba(15,23,42,.06), 0 8px 24px rgba(15,23,42,.05);
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: "PingFang SC","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+  }
+
+  /* ===== 顶部导航 ===== */
+  .nav {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,.88);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner {
+    max-width: 1080px; margin: 0 auto; padding: 0 24px;
+    display: flex; align-items: center; gap: 8px; height: 56px;
+    overflow-x: auto;
+  }
+  .nav-logo { font-weight: 800; font-size: 15px; white-space: nowrap; margin-right: 12px; }
+  .nav-logo span { color: var(--blue); }
+  .nav a {
+    color: var(--text-2); text-decoration: none; font-size: 13.5px;
+    padding: 5px 12px; border-radius: 999px; white-space: nowrap;
+    transition: all .15s;
+  }
+  .nav a:hover { background: var(--blue-bg); color: var(--blue); }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 80px; }
+
+  /* ===== Hero ===== */
+  .hero { padding: 64px 0 40px; text-align: center; }
+  .hero .tag {
+    display: inline-block; background: var(--blue-bg); color: var(--blue);
+    font-size: 13px; font-weight: 700; padding: 4px 14px; border-radius: 999px;
+    margin-bottom: 18px; border: 1px solid #dbeafe;
+  }
+  .hero h1 { font-size: 40px; line-height: 1.3; letter-spacing: 1px; }
+  .hero h1 em { font-style: normal; background: linear-gradient(120deg,#3b82f6,#8b5cf6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.sub {
+    max-width: 680px; margin: 18px auto 0; color: var(--text-2); font-size: 16.5px;
+  }
+  .hero .analogy {
+    max-width: 720px; margin: 28px auto 0; text-align: left;
+    background: linear-gradient(135deg,#eff6ff,#f5f3ff);
+    border: 1px solid #dbeafe; border-radius: var(--radius); padding: 20px 24px;
+    font-size: 14.5px; color: var(--text-2);
+  }
+  .hero .analogy b { color: var(--text); }
+
+  /* ===== 通用区块 ===== */
+  section { padding-top: 72px; }
+  .sec-head { margin-bottom: 28px; }
+  .sec-head .kicker {
+    font-size: 13px; font-weight: 800; letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .sec-head h2 { font-size: 28px; }
+  .sec-head p { color: var(--text-2); margin-top: 8px; max-width: 760px; font-size: 15px; }
+  .k-blue { color: var(--blue); } .k-green { color: var(--green); }
+  .k-purple { color: var(--purple); } .k-orange { color: var(--orange); }
+  .k-pink { color: var(--pink); } .k-cyan { color: var(--cyan); }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px 24px;
+  }
+  .grid { display: grid; gap: 16px; }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 860px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } .hero h1 { font-size: 30px; } }
+
+  .icon-chip {
+    width: 40px; height: 40px; border-radius: 10px; display: flex;
+    align-items: center; justify-content: center; font-size: 20px; margin-bottom: 12px;
+  }
+  .card h3 { font-size: 16.5px; margin-bottom: 6px; }
+  .card p.desc { font-size: 14px; color: var(--text-2); }
+  .card code, td code, li code, p code {
+    background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 5px;
+    padding: 1px 6px; font-size: .88em; font-family: Consolas, "Courier New", monospace;
+    color: #0f172a; word-break: break-all;
+  }
+
+  .pill {
+    display: inline-block; font-size: 12px; font-weight: 700;
+    padding: 2px 10px; border-radius: 999px; vertical-align: middle;
+  }
+  .pill-blue { background: var(--blue-bg); color: var(--blue); }
+  .pill-green { background: var(--green-bg); color: #059669; }
+  .pill-purple { background: var(--purple-bg); color: var(--purple); }
+  .pill-orange { background: var(--orange-bg); color: #d97706; }
+  .pill-gray { background: #f1f5f9; color: #64748b; }
+
+  /* ===== 白话框 ===== */
+  .plain {
+    margin-top: 14px; background: var(--green-bg); border: 1px dashed #a7f3d0;
+    border-radius: 10px; padding: 12px 16px; font-size: 13.5px; color: #065f46;
+  }
+  .plain::before { content: "🗣️ 说人话："; font-weight: 800; }
+
+  /* ===== 表格 ===== */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th {
+    text-align: left; background: #f8fafc; color: var(--text-2);
+    font-size: 12.5px; letter-spacing: .5px; padding: 10px 14px;
+    border-bottom: 2px solid var(--border); white-space: nowrap;
+  }
+  td { padding: 12px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: top; color: var(--text-2); }
+  td b { color: var(--text); }
+  tr:last-child td { border-bottom: none; }
+  .table-card { padding: 0; overflow: hidden; }
+  .table-scroll { overflow-x: auto; }
+
+  /* ===== 流程图 ===== */
+  .flow {
+    display: flex; align-items: stretch; gap: 0; flex-wrap: wrap;
+    justify-content: center; margin-top: 20px;
+  }
+  .flow-node {
+    background: var(--panel); border: 1.5px solid var(--border); border-radius: 12px;
+    padding: 12px 16px; min-width: 130px; max-width: 180px; text-align: center;
+    box-shadow: var(--shadow);
+  }
+  .flow-node .fn-icon { font-size: 22px; }
+  .flow-node .fn-title { font-weight: 700; font-size: 13.5px; margin-top: 2px; }
+  .flow-node .fn-sub { font-size: 11.5px; color: var(--text-3); margin-top: 2px; line-height: 1.5; }
+  .flow-arrow {
+    display: flex; align-items: center; padding: 0 8px;
+    color: var(--blue); font-size: 20px; font-weight: 800;
+  }
+  @media (max-width: 860px) {
+    .flow { flex-direction: column; align-items: center; }
+    .flow-arrow { transform: rotate(90deg); padding: 4px 0; }
+  }
+
+  /* ===== 目录树 ===== */
+  .tree {
+    font-family: Consolas, "Courier New", monospace; font-size: 13.5px;
+    background: #0f172a; color: #cbd5e1; border-radius: var(--radius);
+    padding: 20px 24px; overflow-x: auto; line-height: 1.9;
+    white-space: pre;
+  }
+  .tree .dir { color: #7dd3fc; font-weight: 700; }
+  .tree .cm { color: #64748b; }
+  .tree .hl { color: #fbbf24; }
+
+  /* ===== 步骤列表 ===== */
+  .steps { display: grid; gap: 12px; margin-top: 18px; counter-reset: step; }
+  .step {
+    display: flex; gap: 14px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow);
+  }
+  .step .num {
+    flex: none; width: 30px; height: 30px; border-radius: 50%;
+    background: linear-gradient(135deg,#3b82f6,#8b5cf6); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 14px; margin-top: 2px;
+  }
+  .step .stx { font-size: 14px; color: var(--text-2); }
+  .step .stx b { color: var(--text); }
+
+  /* ===== 时间线 ===== */
+  .timeline { position: relative; margin-top: 28px; padding-left: 32px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 9px; top: 6px; bottom: 6px;
+    width: 3px; border-radius: 3px;
+    background: linear-gradient(180deg,#10b981 0%,#10b981 62%,#3b82f6 62%,#3b82f6 80%,#cbd5e1 80%);
+  }
+  .tl-item { position: relative; padding-bottom: 26px; }
+  .tl-item::before {
+    content: ""; position: absolute; left: -30px; top: 7px;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: #fff; border: 4px solid #10b981;
+  }
+  .tl-item.doing::before { border-color: var(--blue); }
+  .tl-item.future::before { border-color: #cbd5e1; }
+  .tl-item h4 { font-size: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .tl-item .tl-body {
+    margin-top: 8px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 18px; font-size: 14px; color: var(--text-2);
+    box-shadow: var(--shadow);
+  }
+  .tl-item ul { padding-left: 20px; margin-top: 6px; }
+  .tl-item li { margin: 3px 0; }
+
+  /* ===== 角色卡 ===== */
+  .role-card { border-top: 4px solid var(--blue); }
+  .role-card.rc-green { border-top-color: var(--green); }
+  .role-card.rc-purple { border-top-color: var(--purple); }
+
+  .note {
+    margin-top: 16px; font-size: 13px; color: var(--text-3);
+  }
+
+  footer {
+    border-top: 1px solid var(--border); margin-top: 80px;
+    padding: 28px 24px; text-align: center; color: var(--text-3); font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <div class="nav-logo">🤝 AI Collab <span>Hub</span></div>
+    <a href="#what">项目是什么</a>
+    <a href="#map">项目地图</a>
+    <a href="#bus">文件总线</a>
+    <a href="#hermes">Hermes 智能体</a>
+    <a href="#workbench">个人工作台</a>
+    <a href="#together">如何协同</a>
+    <a href="#roadmap">路线图</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- ================= HERO ================= -->
+  <header class="hero">
+    <span class="tag">零基础友好 · 项目全景介绍</span>
+    <h1>让多个 AI 像一个团队一样<br /><em>协同干活</em>的开源项目</h1>
+    <p class="sub">
+      AI Collab Hub 用一个普通的 GitHub 仓库 + 一堆人人能看懂的 Markdown 文件，
+      让不同电脑、不同工具里的多个 AI 助手共享记忆、交接工作、互相配合。
+    </p>
+    <div class="analogy">
+      <b>先打个比方：</b>想象一个小公司里有几位员工——
+      <b>Antigravity</b> 是产品经理（想方案、写规格），<b>Codex</b> 是程序员（写代码、跑测试）。
+      他们不在同一个房间，甚至不在同一台电脑上，怎么配合？<br /><br />
+      答案是：公司里放一块<b>共享白板（GitHub 仓库）</b>。每个人上班先看白板（git pull），
+      干完活把进展写回白板（git push）。白板上有任务清单、当前状态、交接便签、决策记录——
+      这就是整个项目的核心思想：<b>AI 之间不直接"共享脑子"，而是共享清晰、可读、可追溯的工作记录。</b>
+    </div>
+  </header>
+
+  <!-- ================= 项目是什么 ================= -->
+  <section id="what">
+    <div class="sec-head">
+      <div class="kicker k-blue">PART 1 · 项目是什么</div>
+      <h2>一个项目，三大块内容</h2>
+      <p>打开这个仓库，你会看到很多文件夹和文件，但其实它们只属于三大块：</p>
+    </div>
+    <div class="grid grid-3">
+      <div class="card role-card">
+        <div class="icon-chip" style="background:var(--blue-bg)">📋</div>
+        <h3>① 协作协议（文件总线）</h3>
+        <p class="desc">
+          一套用 Markdown 文件定义的"AI 团队工作制度"：状态放哪、任务放哪、怎么交接、怎么记录决策。
+          核心文件是 <code>PROTOCOL.md</code>，配套目录有 <code>status/</code>、<code>tasks/</code>、<code>handoff/</code>、<code>inbox/</code> 等。
+        </p>
+      </div>
+      <div class="card role-card rc-purple">
+        <div class="icon-chip" style="background:var(--purple-bg)">🧪</div>
+        <h3>② Hermes 智能体</h3>
+        <p class="desc">
+          一个"提示词仿真与评估系统"（<code>server.py</code> + <code>hermes_agent.py</code> + 网页界面）。
+          你丢给它一份教学任务文档，它自动生成 AI 导师提示词，还会派一个"模拟学生"去试聊，打分不合格就自动优化。
+        </p>
+      </div>
+      <div class="card role-card rc-green">
+        <div class="icon-chip" style="background:var(--green-bg)">🖥️</div>
+        <h3>③ 个人工作台</h3>
+        <p class="desc">
+          <code>personal-workbench/</code> 里的一个 Windows 桌面应用（用 Electron 开发）。
+          把浏览器页面、终端、任务管理、文件流转、周报、Token 统计全部装进一个窗口，
+          目标是"打开工作台 = 完成全部工作"。
+        </p>
+      </div>
+    </div>
+    <div class="plain">
+      这个仓库既是"制度手册"（协作协议），又是"车间"（两个真实可运行的软件）。
+      两个软件都是按这套制度、由多个 AI 分工协作开发出来的——所以它本身就是这套协议的活案例。
+    </div>
+  </section>
+
+  <!-- ================= 项目地图 ================= -->
+  <section id="map">
+    <div class="sec-head">
+      <div class="kicker k-cyan">PART 2 · 项目地图</div>
+      <h2>目录里都是什么？</h2>
+      <p>先给你一张"地图"，之后每个部分我们再逐一展开：</p>
+    </div>
+    <div class="tree">
+ai-collab-hub/
+├── <span class="dir">PROTOCOL.md</span>              <span class="cm"># 协作协议全文（团队的"规章制度"）</span>
+├── <span class="dir">status/</span>current.md        <span class="cm"># 当前状态：正在干什么、下一步、风险</span>
+├── <span class="dir">inbox/</span>                   <span class="cm"># 收件箱：用户/各 AI 投递新想法的地方</span>
+├── <span class="dir">tasks/</span>                   <span class="cm"># 任务看板：todo（待办）/ active（进行中）/ done（完成）</span>
+├── <span class="dir">handoff/</span>                 <span class="cm"># 交接区：AI 之间"交班"的便签</span>
+├── <span class="dir">decisions/</span>               <span class="cm"># 决策记录：重大技术选择及原因</span>
+├── <span class="dir">docs/agents/</span>             <span class="cm"># 给 AI 看的说明文档</span>
+│
+├── <span class="hl">server.py</span>                <span class="cm"># Hermes 的 Web 服务（FastAPI，提供 HTTP 接口）</span>
+├── <span class="hl">hermes_agent.py</span>          <span class="cm"># Hermes 的大脑（分析、生成、仿真、评估、优化）</span>
+├── <span class="hl">index.html + static/</span>     <span class="cm"># Hermes 的网页操作界面</span>
+│
+├── <span class="dir">personal-workbench/</span>      <span class="cm"># 个人工作台桌面应用（Electron）</span>
+│   ├── main.js / renderer.js / preload.js
+│   ├── sidecars/             <span class="cm"># Token 统计小助手（Rust 程序）</span>
+│   └── integrations/         <span class="cm"># 作业批阅方差工具（Python 程序）</span>
+│
+├── personal-workbench-*.md   <span class="cm"># 工作台各版本规格书与路线图</span>
+└── sync_pull.ps1 / push.ps1  <span class="cm"># Antigravity 配置同步脚本</span>
+    </div>
+  </section>
+
+  <!-- ================= 文件总线 ================= -->
+  <section id="bus">
+    <div class="sec-head">
+      <div class="kicker k-green">PART 3 · 协作协议 / 文件总线</div>
+      <h2>AI 团队的"共享白板"是怎么运转的？</h2>
+      <p>
+        所谓"文件总线"，就是一组约定好用途的文件夹。任何 AI（或人）都按同一套规则读写它们，
+        信息就能在不同 AI、不同电脑之间流动，而且全程人类可读、可追溯。
+      </p>
+    </div>
+
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="icon-chip" style="background:var(--green-bg)">📊</div>
+        <h3>status/current.md <span class="pill pill-green">必读</span></h3>
+        <p class="desc">全项目的"值班表 + 晨会纪要"：当前目标、谁在负责、最近进展、下一步、已知风险。任何 AI 开工前第一个读它。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--blue-bg)">📥</div>
+        <h3>inbox/ 收件箱</h3>
+        <p class="desc">按来源分三个文件：<code>from-user.md</code>、<code>from-antigravity.md</code>、<code>from-codex.md</code>。想到什么新点子、新需求，先丢进来，处理完就移入"已处理"。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--orange-bg)">✅</div>
+        <h3>tasks/ 任务看板</h3>
+        <p class="desc">三个文件就是三列看板：<code>todo.md</code>（待办）→ <code>active.md</code>（进行中）→ <code>done.md</code>（完成）。改任务状态 = 把任务段落从一个文件"搬"到另一个文件。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--purple-bg)">🤝</div>
+        <h3>handoff/ 交接区</h3>
+        <p class="desc">AI 之间"交班"的便签。比如 <code>antigravity-to-codex.md</code> 就是产品经理把方案递给程序员。每张便签固定包含：日期、摘要、当前状态、重要文件、决策、待解决问题、请对方下一步做什么。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--pink-bg)">⚖️</div>
+        <h3>decisions/ 决策记录</h3>
+        <p class="desc">重大技术选择写在这（业内叫 ADR）。比如"为什么用 Markdown 而不是数据库做协作协议"，让后来者不用猜"当初为啥这么干"。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--cyan-bg)">📚</div>
+        <h3>docs/agents/ AI 说明书</h3>
+        <p class="desc">给 AI 看的领域文档：任务看板怎么用（issue-tracker）、状态怎么流转（triage-labels）、项目核心概念在哪查（domain）。</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:36px;font-size:18px;">每次开工的固定流程（不管是哪个 AI）</h3>
+    <div class="flow">
+      <div class="flow-node"><div class="fn-icon">⬇️</div><div class="fn-title">git pull</div><div class="fn-sub">拉取最新仓库<br/>= 先看白板</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">📖</div><div class="fn-title">读 4 个地方</div><div class="fn-sub">status → tasks/active<br/>→ handoff → inbox</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">🔨</div><div class="fn-title">干活</div><div class="fn-sub">规划 / 写代码<br/>/ 测试 / 审查</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">✍️</div><div class="fn-title">写回记录</div><div class="fn-sub">更新任务、交接<br/>便签、状态文件</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">⬆️</div><div class="fn-title">git push</div><div class="fn-sub">推回仓库<br/>= 更新白板</div></div>
+    </div>
+    <div class="plain">
+      换电脑也一样：在 A 电脑下班前 push，到 B 电脑上班时 pull，工作记忆就"搬家"了。
+      配套的 <code>sync_pull.ps1</code> / <code>sync_push.ps1</code> 两个脚本则专门负责同步
+      Antigravity 自己的配置目录（一个独立的 Git 仓库），并且会先检查软件已关闭、防止文件冲突。
+    </div>
+  </section>
+
+  <!-- ================= Hermes ================= -->
+  <section id="hermes">
+    <div class="sec-head">
+      <div class="kicker k-purple">PART 4 · Hermes 智能体</div>
+      <h2>自动写提示词、自动试聊、自动打分的"教练工厂"</h2>
+      <p>
+        使用场景：你需要在教学平台上搭建"AI 导师"（比如引导学生完成实训任务的对话机器人）。
+        手写提示词又慢又难保证质量。Hermes 把这件事变成：<b>上传任务文档 → 一键得到打磨好的提示词</b>。
+      </p>
+    </div>
+
+    <h3 style="font-size:18px;margin-bottom:14px;">4.1 它由三个文件组成</h3>
+    <div class="grid grid-3">
+      <div class="card">
+        <div class="icon-chip" style="background:var(--blue-bg)">🌐</div>
+        <h3>server.py <span class="pill pill-blue">Web 服务</span></h3>
+        <p class="desc">用 Python 的 <b>FastAPI</b> 框架搭的小型网站服务器，跑在本机 <code>127.0.0.1:8000</code>。它是"前台接待"：接收网页发来的请求，转交给大脑处理，再把结果送回网页。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--purple-bg)">🧠</div>
+        <h3>hermes_agent.py <span class="pill pill-purple">核心大脑</span></h3>
+        <p class="desc">全部智能逻辑都在这：分析任务、生成提示词、模拟对话、评分、优化，共 6 个模块（下面详细讲）。它通过调用大语言模型 API 来完成这些工作；没配 API 时自动降级为"模拟模式"，方便无网调试。</p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--green-bg)">🖼️</div>
+        <h3>index.html + static/ <span class="pill pill-green">网页界面</span></h3>
+        <p class="desc">浏览器里看到的三栏操作面板：左栏填任务文档和参数，中栏回放模拟对话，右栏展示评分、卡片方案和最终提示词（每个字段都带"一键复制"按钮）。</p>
+      </div>
+    </div>
+
+    <h3 style="font-size:18px;margin:36px 0 14px;">4.2 对外提供哪些接口？</h3>
+    <div class="card table-card">
+      <div class="table-scroll">
+      <table>
+        <tr><th>接口</th><th>方法</th><th>干什么用</th><th>怎么实现的</th></tr>
+        <tr>
+          <td><b><code>/</code></b></td>
+          <td><span class="pill pill-green">GET</span></td>
+          <td>返回网页主界面</td>
+          <td>直接把 <code>index.html</code> 文件发给浏览器（<code>FileResponse</code>），同时把 <code>/static</code> 目录挂载出去提供 CSS/JS。</td>
+        </tr>
+        <tr>
+          <td><b><code>/api/start-harness</code></b></td>
+          <td><span class="pill pill-blue">POST</span></td>
+          <td><b>核心接口</b>：接收任务文档，启动完整的"生成 → 仿真 → 评估 → 优化"流程，返回全部结果（JSON）</td>
+          <td>
+            接收表单参数：任务文本 <code>text</code> 或上传文件 <code>document</code>（支持 txt/md/docx/pdf，用 python-docx 和 pypdf 解析出纯文本）、
+            合格分数线 <code>threshold</code>、学生人设 <code>student_persona</code>、阶段跳转词 <code>transition_word</code>。
+            先把输入存到 <code>debug/</code> 目录便于排查，然后调用 <code>HermesAgent.run()</code> 跑完整流水线，最后把结果对象转成 JSON 返回。
+          </td>
+        </tr>
+      </table>
+      </div>
+    </div>
+    <div class="plain">
+      "接口"就是软件之间约定好的"服务窗口"。网页（前端）想让 Hermes 干活，不是直接翻它的代码，
+      而是往 <code>/api/start-harness</code> 这个窗口递一张"申请表"（表单数据），窗口里的人（server.py）处理完再把"办理结果"（JSON 数据）递回来。
+    </div>
+
+    <h3 style="font-size:18px;margin:36px 0 6px;">4.3 大脑内部：一条 6 站的流水线</h3>
+    <p style="color:var(--text-2);font-size:14.5px;">点一次"开始"按钮，<code>hermes_agent.py</code> 内部会依次经过这些模块：</p>
+    <div class="flow">
+      <div class="flow-node"><div class="fn-icon">🔍</div><div class="fn-title">TaskAnalyzer<br/>任务分析器</div><div class="fn-sub">读懂任务文档，提取学校、课程、AI 角色、对话模式，拆出多阶段"卡片方案"</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">✏️</div><div class="fn-title">PromptGenerator<br/>提示词生成器</div><div class="fn-sub">根据卡片方案，写出 AI 导师的系统提示词（支持导师模式 / 被动角色扮演模式）</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">🎭</div><div class="fn-title">AgentSandbox<br/>对话沙箱</div><div class="fn-sub">让"模拟学生"和"AI 导师"真的聊起来，多轮对话，检测跳转词自动切换阶段</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">📝</div><div class="fn-title">Evaluator<br/>评估器</div><div class="fn-sub">给对话记录打分：目标对齐度、学生仿真度、引导力、严谨度、可执行度五个维度</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">🔧</div><div class="fn-title">Optimizer<br/>优化器</div><div class="fn-sub">分数不达标？按评估建议改写提示词，回到沙箱再来一轮（最多 2 轮）</div></div>
+    </div>
+    <div class="grid grid-2" style="margin-top:20px;">
+      <div class="card">
+        <h3>🔌 OpenAICompatibleClient（对外联络员）</h3>
+        <p class="desc">
+          上面 5 个模块都不自己"思考"，思考工作统一交给这个模块调用大语言模型 API（读取 <code>config.json</code> 里的密钥和模型名）。
+          API 挂了或没配置？自动切换到内置"模拟模式"返回预设内容，保证系统永远能跑通、能演示。
+        </p>
+      </div>
+      <div class="card">
+        <h3>🎯 阶段跳转词是什么？</h3>
+        <p class="desc">
+          训练分多个阶段（如"任务理解 → 方案制定 → 复盘总结"）。约定 AI 导师在学生达标时<b>只输出一个暗号</b>（如"下个阶段"），
+          系统检测到暗号就自动切换到下一张卡片。每张卡片还可以有自己独立的暗号。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 个人工作台 ================= -->
+  <section id="workbench">
+    <div class="sec-head">
+      <div class="kicker k-orange">PART 5 · 个人工作台</div>
+      <h2>把所有工作装进一个窗口的桌面应用</h2>
+      <p>
+        <code>personal-workbench/</code> 是一个用 <b>Electron</b>（可以理解为"给网页套一个桌面软件外壳"的技术，VS Code 也是这么做的）
+        开发的 Windows 应用。它解决的问题很朴素：用户每天要在 10+ 个网页、企业微信、终端、文件夹之间反复横跳——干脆全塞进一个工作台。
+      </p>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="icon-chip" style="background:var(--blue-bg)">🗂️</div>
+        <h3>基础壳：常驻标签页 + 终端</h3>
+        <p class="desc">
+          每个网页用一个常驻 <code>webview</code> 标签承载，切换只是"隐藏/显示"而不重新加载——所以登录状态、表单内容、滚动位置都不会丢。
+          支持左右/上下分屏、Chrome 扩展加载，底部还内置了真正的 PowerShell 终端（用 node-pty + xterm.js 实现）。
+        </p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--green-bg)">🚦</div>
+        <h3>任务驱动：五步流水线</h3>
+        <p class="desc">
+          任务中心是默认首页。每个任务卡走固定五步：<b>准备 → 本地测试 → 评估上传 → 捕获报告 → 完成</b>，
+          进度环和状态栏实时同步。还能解析桌面的「待做任务.txt」一键导入任务，改完状态再一键写回 txt——双向闭环，两边不再各记各的。
+        </p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--purple-bg)">🚌</div>
+        <h3>文件总线：文件自动"归巢"</h3>
+        <p class="desc">
+          执行任务时自动创建任务专属文件夹。期间<b>所有下载自动落进该文件夹</b>；网页要上传文件时，自动弹出任务文件供你选择注入（技术上用 CDP 调试协议拦截文件选择框）；
+          图片可一键裁掉底部水印。文件不再散落在"下载"目录里找不到。
+        </p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--pink-bg)">🃏</div>
+        <h3>卡片舱：告别逐字段誊写</h3>
+        <p class="desc">
+          Hermes 的产出保存为 <code>cards.md</code> 后，工作台自动解析成结构化卡片（名称/轮次/描述/开场白/提示词）。
+          往平台填表时逐字段<b>一键复制</b>，"流式模式"还会自动高亮下一个待填字段——把 30 多次"选中-切页-粘贴"变成 30 次无脑点击。
+        </p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--orange-bg)">📈</div>
+        <h3>周报中心 + Token 统计</h3>
+        <p class="desc">
+          从任务数据一键生成周报快照，可编辑、可导出 HTML/Markdown/DOCX、可直接复制粘贴进企业微信文档。
+          Token 统计则展示本机 Codex / Claude Code 的用量和成本——数据来自一个独立的 <b>Rust 小助手程序（sidecar）</b>，工作台只负责展示。
+        </p>
+      </div>
+      <div class="card">
+        <div class="icon-chip" style="background:var(--cyan-bg)">🧮</div>
+        <h3>作业批阅方差（集成工具）</h3>
+        <p class="desc">
+          点击后按需启动一个 <b>Python + FastAPI 侧车服务</b>，提供作业批阅轮询、均值/方差计算、Excel 导出。
+          侧车只监听本机端口 + 随机令牌鉴权，数据隔离存在用户目录，不进代码仓库。
+        </p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>🔒 安全设计（为什么小白也该关心）</h3>
+      <p class="desc">
+        工作台里跑着很多第三方网页，所以做了明确的安全边界：网页拿不到你电脑的 Node.js 能力（contextIsolation 隔离）；
+        会话令牌只发给本机地址，绝不发给外网网站；文件路径做了"穿越攻击"防护；Cookie、Token、个人任务数据一律不提交到 Git 仓库。
+      </p>
+    </div>
+    <div class="plain">
+      "sidecar（侧车）"是个形象的叫法：主应用是摩托车，旁边挂个小车斗装专门的工具。
+      Token 统计的 Rust 程序、作业批阅的 Python 程序都是独立的小车斗——各自独立运行，
+      主应用通过本机通信（JSONL 消息或 HTTP）跟它们说话，谁坏了都不拖累谁。
+    </div>
+  </section>
+
+  <!-- ================= 如何协同 ================= -->
+  <section id="together">
+    <div class="sec-head">
+      <div class="kicker k-pink">PART 6 · 它们如何协同工作</div>
+      <h2>两条线索：AI 怎么协作开发，用户怎么用它干活</h2>
+    </div>
+
+    <h3 style="font-size:18px;margin-bottom:6px;">线索一：AI 团队的开发协作（协议在跑）</h3>
+    <p style="color:var(--text-2);font-size:14.5px;">这个项目里所有功能，都是按下面这个循环被"多 AI 接力"开发出来的：</p>
+    <div class="flow">
+      <div class="flow-node"><div class="fn-icon">👤</div><div class="fn-title">用户</div><div class="fn-sub">把想法写进<br/><code>inbox/from-user.md</code><br/>或直接告诉 Antigravity</div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">🧑‍💼</div><div class="fn-title">Antigravity<br/>产品经理</div><div class="fn-sub">分析需求、写规格书，<br/>方案放进<br/><code>handoff/antigravity-to-codex.md</code></div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">👨‍💻</div><div class="fn-title">Codex<br/>程序员</div><div class="fn-sub">读方案 → 改代码 →<br/>跑测试 → 结果写进<br/><code>handoff/codex-to-antigravity.md</code></div></div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node"><div class="fn-icon">🔁</div><div class="fn-title">审查与循环</div><div class="fn-sub">Antigravity 审查结果，<br/>更新 <code>status/</code> 和 <code>tasks/</code>，<br/>规划下一轮</div></div>
+    </div>
+
+    <h3 style="font-size:18px;margin:40px 0 6px;">线索二：用户的日常工作流（工具在跑）</h3>
+    <p style="color:var(--text-2);font-size:14.5px;">Hermes 和个人工作台联手，覆盖了用户"搭建能力训练任务"的端到端 10 步流程：</p>
+    <div class="steps">
+      <div class="step"><div class="num">1</div><div class="stx"><b>领任务</b>：企业微信查看本周任务，整合到桌面「待做任务.txt」→ 工作台一键<b>导入为任务卡</b>。</div></div>
+      <div class="step"><div class="num">2</div><div class="stx"><b>收文档</b>：拿到任务文档，放进任务专属文件夹（工作台自动创建）。</div></div>
+      <div class="step"><div class="num">3</div><div class="stx"><b>开工位</b>：工作台里打开常驻网页标签 + Hermes 页面，登录态都还在。</div></div>
+      <div class="step"><div class="num">4</div><div class="stx"><b>生成方案</b>：任务文档交给 <b>Hermes</b>（走 <code>/api/start-harness</code> 接口）→ 自动分阶段、生成提示词、模拟学生试聊、评分优化。</div></div>
+      <div class="step"><div class="num">5</div><div class="stx"><b>填平台</b>：Hermes 产出保存为 <code>cards.md</code> → 工作台<b>卡片舱</b>解析 → 逐字段一键复制填进公司平台。</div></div>
+      <div class="step"><div class="num">6</div><div class="stx"><b>做封面</b>：AI 生成封面图 → 工作台托盘<b>一键裁掉底部水印</b> → 填到平台。</div></div>
+      <div class="step"><div class="num">7</div><div class="stx"><b>填标准</b>：评价标准同样从卡片舱一键复制。</div></div>
+      <div class="step"><div class="num">8</div><div class="stx"><b>测试评估</b>：浏览器插件测试 → 测试对话<b>自动下载进任务文件夹</b> → 上传评估页时<b>自动注入</b>这些文件。</div></div>
+      <div class="step"><div class="num">9</div><div class="stx"><b>改到通过</b>：不合格？评估报告被自动捕获归档 → 一键把对话和报告路径灌回 Hermes → 修改 → 循环直到通过。</div></div>
+      <div class="step"><div class="num">10</div><div class="stx"><b>收尾</b>：任务状态在工作台标记完成 → 一键<b>写回「待做任务.txt」</b>，闭环结束。</div></div>
+    </div>
+    <div class="plain">
+      注意分工：<b>Hermes 负责"动脑"</b>（生成和验证提示词），<b>工作台负责"跑腿"</b>（文件搬运、页面切换、复制粘贴），
+      而它俩之间通过<b>文件</b>（任务文件夹、cards.md、dialogue.json、评估报告）传递成果——这正是"文件总线"思想在用户侧的延伸。
+    </div>
+  </section>
+
+  <!-- ================= 路线图 ================= -->
+  <section id="roadmap">
+    <div class="sec-head">
+      <div class="kicker k-blue">PART 7 · 路线图</div>
+      <h2>项目走到哪了，接下来去哪？</h2>
+      <p>主线是个人工作台的版本演进（协作协议和 Hermes 作为地基已稳定运行）：</p>
+    </div>
+
+    <div class="timeline">
+      <div class="tl-item">
+        <h4>协议奠基 <span class="pill pill-green">已完成</span><span style="font-size:12px;color:var(--text-3)">2026-05</span></h4>
+        <div class="tl-body">确立 AI 协作协议（PROTOCOL.md）与目录结构，Antigravity + Codex 双角色分工开始运转；Hermes 提示词仿真评估系统上线并多轮打磨（被动模式、按卡片跳转词、输出规范硬约束等）。</div>
+      </div>
+      <div class="tl-item">
+        <h4>V3 · 任务驱动 UI <span class="pill pill-green">已交付</span></h4>
+        <div class="tl-body">工作台从"浏览器壳"升级为"任务驱动"：任务中心落地页、任务卡、专注视图、<b>五步流水线模型</b>、任务暂停/继续/结束。</div>
+      </div>
+      <div class="tl-item">
+        <h4>V3.1 · 文件总线 <span class="pill pill-green">已交付</span></h4>
+        <div class="tl-body">全局下载自动捕获进任务文件夹、文件托盘实时刷新、网页上传自动注入任务文件、图片一键裁切去水印。</div>
+      </div>
+      <div class="tl-item">
+        <h4>V3.2 · 任务源头 <span class="pill pill-green">验收通过</span></h4>
+        <div class="tl-body">桌面「待做任务.txt」解析导入为任务卡（带预览）、新增"未提交"状态、子任务进度环——把任务的"源头"接进工作台。</div>
+      </div>
+      <div class="tl-item">
+        <h4>V3.3 · 可靠性 + 写回 <span class="pill pill-green">已合入 master</span></h4>
+        <div class="tl-body">
+          <ul>
+            <li>6 个已知缺陷清零：上传拦截改用 CDP 重做、下载分类按来源域名门控、标签销毁资源泄漏修复等。</li>
+            <li>任务状态<b>反向写回</b>「待做任务.txt」（预览 diff + 自动备份 + 安全合并），完成双向闭环。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tl-item">
+        <h4>V3.4 · 平台填写助手 <span class="pill pill-blue">回归验收通过 · 待真机验证</span></h4>
+        <div class="tl-body">
+          <ul>
+            <li><b>卡片舱</b>：解析 cards.md 为结构化卡片包，逐字段一键复制 + 流式逐项填写模式 + 开场白超长标红。</li>
+            <li>平台表单自动注入的<b>预研</b>：选择器映射配置 + 单字段试注入验证。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tl-item doing">
+        <h4>当前进行中 <span class="pill pill-blue">In Progress</span><span style="font-size:12px;color:var(--text-3)">2026-07</span></h4>
+        <div class="tl-body">
+          <ul>
+            <li>周报中心首版、Token 统计首版（Rust sidecar）、作业批阅方差集成（Python sidecar）已完成本地接线，处于收尾复核阶段。</li>
+            <li>待办：真机上传验证、E2E 安全测试两项既有失败的定位修复、TokenBox sidecar 真实构建。</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tl-item future">
+        <h4>V3.5 · 强辅助工作台 <span class="pill pill-gray">构想中</span></h4>
+        <div class="tl-body">增强任务、文件、页面、报告之间的协作，探索平台表单自动注入落地。理念是<b>自动化只作为辅助能力</b>——提交动作永远由人确认，不追求全自动填卡。</div>
+      </div>
+      <div class="tl-item future">
+        <h4>长期愿景 <span class="pill pill-gray">Vision</span></h4>
+        <div class="tl-body">把协作协议、模板和工作台沉淀为<b>可复用的开源构建块</b>，帮助更多开发者搭建跨工具、跨机器的可靠多 AI 协作体系。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 快速上手 ================= -->
+  <section id="quickstart">
+    <div class="sec-head">
+      <div class="kicker k-green">附录 · 快速上手</div>
+      <h2>想自己跑起来？三步走</h2>
+    </div>
+    <div class="grid grid-3">
+      <div class="card">
+        <h3>① 克隆仓库</h3>
+        <p class="desc"><code>git clone https://github.com/yujianshenming/ai-collab-hub.git</code><br/>然后按顺序读 <code>status/current.md</code> → <code>tasks/active.md</code> → <code>handoff/</code> → <code>inbox/</code>。</p>
+      </div>
+      <div class="card">
+        <h3>② 启动 Hermes</h3>
+        <p class="desc"><code>pip install fastapi uvicorn python-multipart python-docx pypdf</code><br/><code>python server.py</code><br/>浏览器打开 <code>http://127.0.0.1:8000</code>。不配 API 密钥也能跑（模拟模式）。</p>
+      </div>
+      <div class="card">
+        <h3>③ 启动个人工作台</h3>
+        <p class="desc"><code>cd personal-workbench</code><br/><code>npm install</code><br/><code>npm start</code><br/>深入了解请先读 <code>docs/PROJECT_HANDBOOK.md</code>。</p>
+      </div>
+    </div>
+    <p class="note">※ 本页面基于仓库当前状态（2026-07）整理，权威信息以 README.md、PROTOCOL.md、personal-workbench-roadmap.md 与 status/current.md 为准。</p>
+  </section>
+
+</div>
+
+<footer>
+  AI Collab Hub · 让多个 AI 共享一块白板，像团队一样协作 · 本介绍页：project-intro.html
+</footer>
+
+</body>
+</html>
