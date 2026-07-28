@@ -9,6 +9,7 @@ const crypto = require("node:crypto");
 const { spawn, exec } = require("node:child_process");
 const llmRegistry = require("./llm-model-registry.js");
 const { createLlmClient } = require("./llm-client.js");
+const { aiParseTodoLines } = require("./llm-task-parser.js");
 
 if (process.env.PERSONAL_WORKBENCH_USER_DATA) {
   app.setPath("userData", path.resolve(process.env.PERSONAL_WORKBENCH_USER_DATA));
@@ -2790,6 +2791,12 @@ function registerIpc() {
     if (!clean) return { ok: false, error: "模型 ID 不合法" };
     const result = await llmClient.testModel(clean);
     return { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? "" : result.error };
+  });
+  // AI 辅助解析（M3）：只接收 renderer 选中的任务行文本，候选在主进程过同一套 Schema 校验
+  ipcMain.handle("ai:parse-todo-lines", async (_event, payload) => {
+    const lines = Array.isArray(payload?.lines) ? payload.lines : [];
+    const model = llmRegistry.sanitizeModelId(payload?.model) || loadWorkbenchPrefs().llmDefaultModel;
+    return aiParseTodoLines({ client: llmClient, model, lines });
   });
 
   ipcMain.handle("tokenbox:status", () => tokenboxBridgeStatus());

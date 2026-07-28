@@ -2661,6 +2661,11 @@ const {
   normalizeSubtasks
 } = window.TaskImportHelpers;
 let importPreviewState = null;
+// AI 辅助解析（M3）：预览数据源 + 预览代际令牌（关闭/重开后迟到的 AI 结果一律丢弃）
+let importPreviewSource = null;
+let importPreviewToken = 0;
+let importAiBusy = false;
+let importAiFeedback = "";
 
 // ============ 待做任务.txt 写回（纯函数，无副作用，与上方解析器互为逆运算） ============
 
@@ -5528,19 +5533,116 @@ function renderUnparsedImportGroup(lines) {
     empty.textContent = "暂无";
     list.append(empty);
   } else {
-    lines.forEach((line) => {
-      const item = document.createElement("div");
+    lines.forEach((line, index) => {
+      // 行前勾选框：选中的行才会被发给 AI 解析（默认全选）
+      const item = document.createElement("label");
       item.className = "import-row import-row-unparsed";
-      item.textContent = line;
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = true;
+      checkbox.dataset.aiLine = String(index);
+      const text = document.createElement("span");
+      text.textContent = line;
+      item.append(checkbox, text);
       list.append(item);
     });
   }
   section.append(list);
+  // AI 操作区：只在有内容可发送时启用；模型失败/超时时规则解析结果保持不变
+  const actions = document.createElement("div");
+  actions.className = "import-ai-actions";
+  const aiSelected = document.createElement("button");
+  aiSelected.type = "button";
+  aiSelected.className = "secondary-button";
+  aiSelected.textContent = "使用 AI 解析所选行";
+  aiSelected.disabled = importAiBusy || !lines.length;
+  aiSelected.addEventListener("click", () => {
+    const selected = [...section.querySelectorAll("input[data-ai-line]:checked")]
+      .map((input) => lines[Number(input.dataset.aiLine)])
+      .filter(Boolean);
+    runAiParseOnLines(selected, "selected");
+  });
+  const aiAll = document.createElement("button");
+  aiAll.type = "button";
+  aiAll.className = "secondary-button";
+  aiAll.textContent = "AI 重新解析全部";
+  aiAll.disabled = importAiBusy || !(importPreviewSource?.rawLines?.length);
+  aiAll.addEventListener("click", () => runAiParseOnLines(importPreviewSource?.rawLines || [], "all"));
+  const feedback = document.createElement("small");
+  feedback.className = "helper-text import-ai-feedback";
+  feedback.textContent = importAiBusy ? "AI 解析中…" : importAiFeedback;
+  actions.append(aiSelected, aiAll, feedback);
+  section.append(actions);
   return section;
 }
 
-function openImportPreview(parsed) {
-  importPreviewState = buildTodoImportPreview(parsed.tasks, parsed.unparsed);
+// 二次确认将发送的文本 → 发送 → 候选并入预览（低置信度默认不勾选）
+async function runAiParseOnLines(rawLines, mode) {
+  if (importAiBusy || !importPreviewState || !importPreviewSource) return;
+  const lines = rawLines.map((line) => String(line || "").trim()).filter(Boolean);
+  if (!lines.length) {
+    importAiFeedback = "请先勾选要发送的行";
+    renderImportPreview();
+    return;
+  }
+  // 只发送选中的任务文本；发送前逐行展示，用户确认后才出网（计划书 §M3）
+  const previewLines = lines.slice(0, 10).map((line) => `· ${line}`).join("\n");
+  const more = lines.length > 10 ? `\n…共 ${lines.length} 行` : "";
+  const label = mode === "all" ? "AI 将重新解析全部任务行" : "AI 将解析以下所选行";
+  if (!window.confirm(`${label}，以下文本将发送给公司模型网关：\n\n${previewLines}${more}\n\n确认发送？`)) return;
+
+  const token = importPreviewToken;
+  importAiBusy = true;
+  importAiFeedback = "";
+  renderImportPreview();
+  let result;
+  try {
+    result = await window.workbench.aiParseTodoLines({ lines });
+  } catch {
+    result = { ok: false, error: "AI 解析调用失败" };
+  }
+  importAiBusy = false;
+  // 预览已关闭或重开：迟到结果不得覆盖新预览
+  if (token !== importPreviewToken || !importPreviewState || !importPreviewSource) return;
+  if (!result?.ok) {
+    // AI 失败：规则解析结果原封不动，只提示错误
+    importAiFeedback = `AI 解析失败：${result?.error || "未知错误"}（规则解析结果已保留）`;
+    renderImportPreview();
+    return;
+  }
+  const items = result.items || [];
+  const lowKeys = new Set(items.filter((item) => item.lowConfidence).map((item) => todoImportKey(item.task)));
+  if (mode === "all") {
+    importPreviewSource.tasks = items.map((item) => ({ ...item.task }));
+    importPreviewSource.unparsed = (result.unresolved || []).map((entry) => entry.sourceText);
+  } else {
+    const resolvedTexts = new Set(items.map((item) => item.sourceText));
+    importPreviewSource.tasks = importPreviewSource.tasks.concat(items.map((item) => ({ ...item.task })));
+    importPreviewSource.unparsed = importPreviewSource.unparsed.filter((line) => !resolvedTexts.has(String(line || "").trim()));
+  }
+  importPreviewState = buildTodoImportPreview(importPreviewSource.tasks, importPreviewSource.unparsed);
+  // 低置信度候选默认不勾选，由用户逐条确认
+  for (const group of ["added", "updated"]) {
+    for (const row of importPreviewState[group]) {
+      if (lowKeys.has(todoImportKey(row.task))) row.selected = false;
+    }
+  }
+  const unresolvedCount = (result.unresolved || []).length;
+  importAiFeedback = `AI 解析完成：${items.length} 行进入预览${lowKeys.size ? `（${lowKeys.size} 行低置信度未勾选）` : ""}，${unresolvedCount} 行仍无法解析`;
+  renderImportPreview();
+}
+
+function openImportPreview(parsed, rawText = "") {
+  importPreviewToken += 1;
+  importAiBusy = false;
+  importAiFeedback = "";
+  importPreviewSource = {
+    tasks: [...parsed.tasks],
+    unparsed: [...parsed.unparsed],
+    // 原始非空行：供「AI 重新解析全部」二次确认并发送
+    rawLines: String(rawText || "").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean)
+  };
+  importPreviewState = buildTodoImportPreview(importPreviewSource.tasks, importPreviewSource.unparsed);
   renderImportPreview();
   elements.importPreviewDialog?.showModal();
 }
@@ -5588,7 +5690,7 @@ async function handleTodoImport() {
       return;
     }
     setTodoPathDisplay(result.path || "");
-    openImportPreview(parseTodoLines(result.text));
+    openImportPreview(parseTodoLines(result.text), result.text);
   } catch (error) {
     console.error("导入待做任务失败:", error);
     showToast("导入待做任务失败", "error");
@@ -6753,6 +6855,10 @@ elements.importPreviewCancel?.addEventListener("click", () => elements.importPre
 elements.importPreviewCancelX?.addEventListener("click", () => elements.importPreviewDialog?.close());
 elements.importPreviewDialog?.addEventListener("close", () => {
   importPreviewState = null;
+  importPreviewSource = null;
+  // 代际递增：关闭后迟到的 AI 结果不得覆盖下一次预览
+  importPreviewToken += 1;
+  importAiBusy = false;
 });
 elements.sbTerminal?.addEventListener("click", () => toggleTerminal());
 elements.sbTaskChip?.addEventListener("click", expandTaskRail);

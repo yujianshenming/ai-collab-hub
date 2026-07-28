@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("workbench", {
   aiSetDefaultModel: (modelId) => ipcRenderer.invoke("ai:set-default-model", modelId),
   aiListModels: () => ipcRenderer.invoke("ai:list-models"),
   aiTestModel: (modelId) => ipcRenderer.invoke("ai:test-model", modelId),
+  aiParseTodoLines: (payload) => ipcRenderer.invoke("ai:parse-todo-lines", payload),
   pickTodoFile: () => ipcRenderer.invoke("dialog:pick-todo-file"),
   readTodoFile: () => ipcRenderer.invoke("tasks:read-todo-file"),
   writeTodoFile: (text) => ipcRenderer.invoke("tasks:write-todo-file", text),
