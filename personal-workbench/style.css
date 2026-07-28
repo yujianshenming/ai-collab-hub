@@ -658,6 +658,11 @@ button { cursor: pointer; }
 .pref-inject-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .pref-inject-row input { flex: 1 1 140px; min-width: 0; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 11.5px; }
 .pref-inject-row .secondary-button { flex: 1 1 100%; }
+/* AI 模型配置（M2）：key 输入行与逐模型测试行，布局同试注入行 */
+.pref-ai-key-row, .pref-ai-test-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.pref-ai-key-row input { flex: 1 1 140px; min-width: 0; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 11.5px; }
+.pref-ai-test-row select { flex: 1 1 140px; min-width: 0; }
+.pref-ai-test { display: grid; gap: 6px; }
 .prefs-feedback { min-height: 18px; margin: 0; color: var(--text-secondary); font-size: 11px; font-weight: 700; }
 .prefs-feedback:empty { visibility: hidden; }
 .prefs-feedback[data-type="error"] { color: #b42318; }

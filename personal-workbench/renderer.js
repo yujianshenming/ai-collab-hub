@@ -374,6 +374,15 @@ const elements = {
   prefInjectField: document.querySelector("#pref-inject-field"),
   prefInjectValue: document.querySelector("#pref-inject-value"),
   prefInjectRun: document.querySelector("#pref-inject-run"),
+  prefAiModel: document.querySelector("#pref-ai-model"),
+  prefAiStatus: document.querySelector("#pref-ai-status"),
+  prefAiKey: document.querySelector("#pref-ai-key"),
+  prefAiKeySave: document.querySelector("#pref-ai-key-save"),
+  prefAiKeyClear: document.querySelector("#pref-ai-key-clear"),
+  prefAiTestModel: document.querySelector("#pref-ai-test-model"),
+  prefAiTestRun: document.querySelector("#pref-ai-test-run"),
+  prefAiRefreshModels: document.querySelector("#pref-ai-refresh-models"),
+  prefAiTestResult: document.querySelector("#pref-ai-test-result"),
   importPreviewDialog: document.querySelector("#import-preview-dialog"),
   importPreviewSummary: document.querySelector("#import-preview-summary"),
   importPreviewGroups: document.querySelector("#import-preview-groups"),
@@ -6472,6 +6481,7 @@ elements.menuPrefsButton?.addEventListener("click", async () => {
       const map = prefs?.platformFieldMap || {};
       elements.prefPlatformMap.value = Object.keys(map).length ? JSON.stringify(map, null, 2) : "";
     }
+    await loadAiConfigIntoPrefs();
   } catch {
     elements.prefTheme.value = normalizeWorkbenchTheme(document.body.dataset.theme);
     elements.prefCropSide.value = "bottom";
@@ -6559,6 +6569,128 @@ elements.prefInjectRun?.addEventListener("click", async () => {
   } catch (error) {
     console.error("试注入失败:", error);
     setPrefsFeedback("试注入调用失败", "error");
+  }
+});
+// ============ AI 模型配置（M2）：主进程只回传 {configured, encryptionAvailable, defaultModel, models}，key 永不回显 ============
+function renderAiModelOptions(config) {
+  const models = Array.isArray(config?.models) ? config.models : [];
+  const fillSelect = (select, selectedId) => {
+    if (!select) return;
+    select.innerHTML = "";
+    for (const model of models) {
+      const option = document.createElement("option");
+      option.value = model.id;
+      const availability = model.availability === "available" ? "" : model.availability === "unlisted" ? "（未在网关列表）" : "";
+      option.textContent = `${model.label || model.id}${availability}`;
+      // 不稳定模型可测试但不可设为默认，默认模型下拉里禁用
+      if (select === elements.prefAiModel && !model.stableDefault) option.disabled = true;
+      if (model.id === selectedId) option.selected = true;
+      select.appendChild(option);
+    }
+  };
+  fillSelect(elements.prefAiModel, config?.defaultModel);
+  fillSelect(elements.prefAiTestModel, config?.defaultModel);
+}
+
+function renderAiStatus(config) {
+  if (!elements.prefAiStatus) return;
+  if (config?.configured) {
+    elements.prefAiStatus.textContent = config.encryptionAvailable
+      ? "已配置 API key（本机加密保存）"
+      : "已配置 API key（仅本次会话，系统加密不可用）";
+  } else {
+    elements.prefAiStatus.textContent = "未配置 API key；AI 辅助功能不可用，其他功能不受影响";
+  }
+}
+
+async function loadAiConfigIntoPrefs() {
+  try {
+    const config = await window.workbench.aiGetConfig();
+    renderAiModelOptions(config);
+    renderAiStatus(config);
+  } catch {
+    if (elements.prefAiStatus) elements.prefAiStatus.textContent = "读取 AI 配置失败";
+  }
+  if (elements.prefAiTestResult) elements.prefAiTestResult.textContent = "逐模型连接测试；在列表里不代表此刻可用。";
+}
+
+elements.prefAiKeySave?.addEventListener("click", async () => {
+  const rawKey = elements.prefAiKey?.value || "";
+  if (!rawKey.trim()) {
+    setPrefsFeedback("请先输入 API key", "error");
+    return;
+  }
+  try {
+    const result = await window.workbench.aiSetSecret(rawKey);
+    // 无论成败失败都立即清空输入框，key 不在界面停留（计划书 §6.1）
+    if (elements.prefAiKey) elements.prefAiKey.value = "";
+    if (result?.ok) {
+      setPrefsFeedback(result.persisted ? "API key 已加密保存" : "API key 仅本次会话生效（系统加密不可用）", "success");
+      renderAiStatus(await window.workbench.aiGetConfig());
+    } else {
+      setPrefsFeedback(`保存失败：${result?.error || "未知错误"}`, "error");
+    }
+  } catch {
+    if (elements.prefAiKey) elements.prefAiKey.value = "";
+    setPrefsFeedback("保存 API key 调用失败", "error");
+  }
+});
+elements.prefAiKeyClear?.addEventListener("click", async () => {
+  try {
+    await window.workbench.aiClearSecret();
+    setPrefsFeedback("已清除本机 API key", "success");
+    renderAiStatus(await window.workbench.aiGetConfig());
+  } catch {
+    setPrefsFeedback("清除 API key 调用失败", "error");
+  }
+});
+elements.prefAiModel?.addEventListener("change", async () => {
+  const modelId = elements.prefAiModel.value;
+  try {
+    const result = await window.workbench.aiSetDefaultModel(modelId);
+    if (result?.ok) {
+      setPrefsFeedback(`默认模型已设为 ${modelId}`, "success");
+    } else {
+      setPrefsFeedback(`设置默认模型失败：${result?.error || "未知错误"}`, "error");
+      loadAiConfigIntoPrefs();
+    }
+  } catch {
+    setPrefsFeedback("设置默认模型调用失败", "error");
+  }
+});
+elements.prefAiTestRun?.addEventListener("click", async () => {
+  const modelId = elements.prefAiTestModel?.value;
+  if (!modelId) return;
+  if (elements.prefAiTestResult) elements.prefAiTestResult.textContent = `正在测试 ${modelId} …`;
+  elements.prefAiTestRun.disabled = true;
+  try {
+    const result = await window.workbench.aiTestModel(modelId);
+    if (elements.prefAiTestResult) {
+      elements.prefAiTestResult.textContent = result?.ok
+        ? `✓ ${modelId} 连接正常（${result.latencyMs}ms）`
+        : `✗ ${modelId} 测试失败：${result?.error || "未知错误"}`;
+    }
+  } catch {
+    if (elements.prefAiTestResult) elements.prefAiTestResult.textContent = `✗ ${modelId} 测试调用失败`;
+  } finally {
+    elements.prefAiTestRun.disabled = false;
+  }
+});
+elements.prefAiRefreshModels?.addEventListener("click", async () => {
+  if (elements.prefAiTestResult) elements.prefAiTestResult.textContent = "正在刷新模型列表…";
+  elements.prefAiRefreshModels.disabled = true;
+  try {
+    const result = await window.workbench.aiListModels();
+    if (result?.ok) {
+      renderAiModelOptions(await window.workbench.aiGetConfig());
+      if (elements.prefAiTestResult) elements.prefAiTestResult.textContent = "模型列表已刷新";
+    } else if (elements.prefAiTestResult) {
+      elements.prefAiTestResult.textContent = `刷新失败：${result?.error || "未知错误"}（保留本地注册表）`;
+    }
+  } catch {
+    if (elements.prefAiTestResult) elements.prefAiTestResult.textContent = "刷新模型列表调用失败";
+  } finally {
+    elements.prefAiRefreshModels.disabled = false;
   }
 });
 document.querySelectorAll("[data-command]").forEach((button) => {

@@ -793,6 +793,28 @@
           <input id="pref-report-title-pattern" type="text" maxlength="120" placeholder="留空则使用 M{month}W{weekOfMonth}周报" />
           <small class="helper-text">可选占位符：{period} {year} {isoWeek} {month} {weekOfMonth}</small>
         </label>
+        <p class="helper-text">AI 模型（公司网关）：API key 只保存在本机主进程，界面不会回显；没有 key 时其他功能不受影响。</p>
+        <label>
+          默认模型
+          <select id="pref-ai-model"></select>
+          <small id="pref-ai-status" class="helper-text">未配置 API key</small>
+        </label>
+        <label>
+          公司 API key
+          <span class="pref-ai-key-row">
+            <input id="pref-ai-key" type="password" maxlength="512" placeholder="输入后点保存，输入框随即清空" autocomplete="off" />
+            <button id="pref-ai-key-save" class="secondary-button" type="button">保存 key</button>
+            <button id="pref-ai-key-clear" class="secondary-button" type="button">清除 key</button>
+          </span>
+        </label>
+        <div class="pref-ai-test">
+          <span class="pref-ai-test-row">
+            <select id="pref-ai-test-model"></select>
+            <button id="pref-ai-test-run" class="secondary-button" type="button">测试连接</button>
+            <button id="pref-ai-refresh-models" class="secondary-button" type="button">刷新模型列表</button>
+          </span>
+          <small id="pref-ai-test-result" class="helper-text">逐模型连接测试；在列表里不代表此刻可用。</small>
+        </div>
         <label>
           平台字段映射 platformFieldMap（V3.4 预研）
           <textarea id="pref-platform-map" class="pref-platform-map" rows="5" placeholder='JSON：字段名 → CSS 选择器，例如&#10;{&#10;  "卡片名称": "#card-title",&#10;  "开场白": "textarea[name=opening]"&#10;}'></textarea>

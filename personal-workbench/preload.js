@@ -37,6 +37,13 @@ contextBridge.exposeInMainWorld("workbench", {
   cropImage: (filePath) => ipcRenderer.invoke("tasks:crop-image", filePath),
   getWorkbenchPrefs: () => ipcRenderer.invoke("prefs:get-workbench"),
   setWorkbenchPrefs: (prefs) => ipcRenderer.invoke("prefs:set-workbench", prefs),
+  // 公司模型网关（M2）：key 只进不出，renderer 仅能拿到 configured 布尔与注册表快照
+  aiGetConfig: () => ipcRenderer.invoke("ai:get-config"),
+  aiSetSecret: (key) => ipcRenderer.invoke("ai:set-secret", key),
+  aiClearSecret: () => ipcRenderer.invoke("ai:clear-secret"),
+  aiSetDefaultModel: (modelId) => ipcRenderer.invoke("ai:set-default-model", modelId),
+  aiListModels: () => ipcRenderer.invoke("ai:list-models"),
+  aiTestModel: (modelId) => ipcRenderer.invoke("ai:test-model", modelId),
   pickTodoFile: () => ipcRenderer.invoke("dialog:pick-todo-file"),
   readTodoFile: () => ipcRenderer.invoke("tasks:read-todo-file"),
   writeTodoFile: (text) => ipcRenderer.invoke("tasks:write-todo-file", text),

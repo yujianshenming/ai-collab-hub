@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage, clipboard, Notification } = require("electron");
+const { app, BrowserWindow, ipcMain, session, shell, Menu, dialog, nativeImage, clipboard, Notification, safeStorage } = require("electron");
 const pty = require("node-pty");
 const fs = require("node:fs");
 const http = require("node:http");
@@ -7,6 +7,8 @@ const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const { spawn, exec } = require("node:child_process");
+const llmRegistry = require("./llm-model-registry.js");
+const { createLlmClient } = require("./llm-client.js");
 
 if (process.env.PERSONAL_WORKBENCH_USER_DATA) {
   app.setPath("userData", path.resolve(process.env.PERSONAL_WORKBENCH_USER_DATA));
@@ -1760,7 +1762,9 @@ function normalizeWorkbenchPrefs(prefs = {}) {
   const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
   const theme = ["sakura", "sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "sakura";
   const weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs.weeklyReportDefaults);
-  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap, theme, weeklyReportDefaults };
+  // 默认模型只存模型 ID（仅限 stableDefault 注册模型），API key 绝不入 prefs
+  const llmDefaultModel = llmRegistry.normalizeDefaultModel(prefs.llmDefaultModel);
+  return { cropSide: side, cropPixels: pixels, todoFilePath, platformFieldMap, theme, weeklyReportDefaults, llmDefaultModel };
 }
 
 function saveWorkbenchPrefs(prefs) {
@@ -1779,6 +1783,69 @@ function loadWorkbenchPrefs() {
   } catch {
     return normalizeWorkbenchPrefs();
   }
+}
+
+// ============ 公司模型网关密钥（M2）：仅主进程可见，safeStorage 加密落盘 ============
+// 优先级：环境变量（开发/CI 覆盖，不写日志）> 会话内密钥 > 加密文件
+// safeStorage 不可用时只允许会话内使用，绝不明文落盘（计划书 §6.1）
+function llmSecretPath() {
+  return path.join(app.getPath("userData"), "llm-secret.bin");
+}
+
+let llmSessionKey = "";
+let llmRemoteModelIds = null; // 最近一次 /models 成功结果；失败保留旧值，本地注册表永不删除
+
+function readLlmApiKey() {
+  const envKey = String(process.env.PERSONAL_WORKBENCH_LLM_API_KEY || "").trim();
+  if (envKey) return envKey;
+  if (llmSessionKey) return llmSessionKey;
+  try {
+    if (safeStorage.isEncryptionAvailable() && fs.existsSync(llmSecretPath())) {
+      return safeStorage.decryptString(fs.readFileSync(llmSecretPath())).trim();
+    }
+  } catch (error) {
+    console.warn("读取模型密钥失败:", error?.message);
+  }
+  return "";
+}
+
+function storeLlmApiKey(rawKey) {
+  const key = String(rawKey || "").trim();
+  if (!key || key.length < 8 || key.length > 512) return { ok: false, error: "key 长度不合法" };
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      fs.writeFileSync(llmSecretPath(), safeStorage.encryptString(key));
+      llmSessionKey = "";
+      return { ok: true, persisted: true };
+    } catch {
+      return { ok: false, error: "保存密钥失败" };
+    }
+  }
+  llmSessionKey = key;
+  return { ok: true, persisted: false };
+}
+
+function clearLlmApiKey() {
+  llmSessionKey = "";
+  try {
+    fs.rmSync(llmSecretPath(), { force: true });
+  } catch {
+    // 文件不存在或删除失败都视为已清除会话态
+  }
+  return { ok: true };
+}
+
+// 客户端固定公司网关；不接受 renderer 传入的任何 Base URL
+const llmClient = createLlmClient({ getApiKey: readLlmApiKey });
+
+// renderer 只能看到 configured 布尔与注册表快照，拿不到 key/密文/密钥路径
+function llmConfigForRenderer() {
+  return {
+    configured: Boolean(readLlmApiKey()),
+    encryptionAvailable: safeStorage.isEncryptionAvailable(),
+    defaultModel: loadWorkbenchPrefs().llmDefaultModel,
+    models: llmRegistry.buildModelList(llmRemoteModelIds)
+  };
 }
 
 function resolveConfiguredPathCandidate(candidate) {
@@ -2692,6 +2759,38 @@ function registerIpc() {
   });
   ipcMain.handle("tasks:read-weekly", () => readWeeklyTasks());
   ipcMain.handle("tasks:write-weekly", (_event, tasks) => writeWeeklyTasks(tasks));
+
+  // ===== 公司模型网关（M2）：白名单 IPC，参数逐字段归一，key 永不回传 renderer =====
+  ipcMain.handle("ai:get-config", () => llmConfigForRenderer());
+  ipcMain.handle("ai:set-secret", (_event, rawKey) => {
+    const result = storeLlmApiKey(rawKey);
+    return { ...result, configured: Boolean(readLlmApiKey()) };
+  });
+  ipcMain.handle("ai:clear-secret", () => {
+    clearLlmApiKey();
+    return { ok: true, configured: Boolean(readLlmApiKey()) };
+  });
+  ipcMain.handle("ai:set-default-model", (_event, modelId) => {
+    const clean = llmRegistry.sanitizeModelId(modelId);
+    if (!llmRegistry.isAllowedDefaultModel(clean)) return { ok: false, error: "该模型不能设为默认模型" };
+    saveWorkbenchPrefs({ ...loadWorkbenchPrefs(), llmDefaultModel: clean });
+    return { ok: true, defaultModel: clean };
+  });
+  ipcMain.handle("ai:list-models", async () => {
+    const result = await llmClient.listModels();
+    if (result.ok) llmRemoteModelIds = result.ids;
+    return {
+      ok: result.ok,
+      error: result.ok ? "" : result.error,
+      models: llmRegistry.buildModelList(llmRemoteModelIds)
+    };
+  });
+  ipcMain.handle("ai:test-model", async (_event, modelId) => {
+    const clean = llmRegistry.sanitizeModelId(modelId);
+    if (!clean) return { ok: false, error: "模型 ID 不合法" };
+    const result = await llmClient.testModel(clean);
+    return { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? "" : result.error };
+  });
 
   ipcMain.handle("tokenbox:status", () => tokenboxBridgeStatus());
   ipcMain.handle("tokenbox:backup", async () => callTokenboxBridge("backup_database", {}));
