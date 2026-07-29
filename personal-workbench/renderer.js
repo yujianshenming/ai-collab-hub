@@ -1364,8 +1364,8 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
             <button class="md-btn md-italic" title="斜体" type="button"><i>I</i></button>
             <button class="md-btn md-header" title="标题" type="button">H</button>
             <button class="md-btn md-code" title="代码块" type="button">&lt;/&gt;</button>
-            <button class="md-btn md-link" title="链接" type="button">🔗</button>
-            <button class="md-btn md-image" title="图片" type="button">🖼️</button>
+            <button class="md-btn md-link" title="链接" aria-label="插入链接" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
+            <button class="md-btn md-image" title="图片" aria-label="插入图片" type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg></button>
             <span class="md-toolbar-spacer"></span>
             <span class="md-saved-status">自动保存已启用</span>
           </div>
@@ -1442,9 +1442,9 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
               <option value="10">粗画笔</option>
               <option value="20">特粗画笔</option>
             </select>
-            <button class="wb-btn wb-tool-draw active" title="画笔模式" type="button">✏️</button>
-            <button class="wb-btn wb-tool-erase" title="橡皮擦" type="button">🧹</button>
-            <button class="wb-btn wb-clear" title="清空画板" type="button">🗑️</button>
+            <button class="wb-btn wb-tool-draw active" title="画笔模式" aria-label="画笔模式" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></button>
+            <button class="wb-btn wb-tool-erase" title="橡皮擦" aria-label="橡皮擦" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+            <button class="wb-btn wb-clear" title="清空画板" aria-label="清空画板" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
             <span class="wb-toolbar-spacer"></span>
             <button class="wb-btn wb-download primary-button" title="导出为图片" type="button">保存图片</button>
           </div>
@@ -1544,6 +1544,8 @@ function createTabViewport(tab, { deferWeb = true } = {}) {
       });
 
       clearBtn.addEventListener("click", () => {
+        // 破坏性操作：清空前确认，避免误触丢失手绘内容
+        if (!window.confirm("确定清空画板吗？此操作无法撤销。")) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       });
 
@@ -2655,6 +2657,8 @@ const {
   TODO_WEEKDAYS,
   TODO_IMPORT_FIELDS,
   parseTodoLines,
+  parseTodoDocument,
+  validateImportedTask,
   normalizeImportedTodoTask,
   todoImportKey,
   taskStatusLabel,
@@ -2666,6 +2670,8 @@ let importPreviewSource = null;
 let importPreviewToken = 0;
 let importAiBusy = false;
 let importAiFeedback = "";
+// 问题 #4：进行中 AI 解析的 requestId，供真取消（主进程 abort 对应请求）
+let importAiRequestId = "";
 
 // ============ 待做任务.txt 写回（纯函数，无副作用，与上方解析器互为逆运算） ============
 
@@ -5446,6 +5452,55 @@ async function updateTaskFields(id, fields) {
   return weeklyTasks.find((candidate) => candidate.id === id) || null;
 }
 
+// 预览字段标签与来源标记文案（问题 #2：inferred/default/manual 必须明确标识）
+const IMPORT_FIELD_LABELS_FULL = {
+  school: "学校", course: "课程", taskType: "类型", quantity: "数量",
+  status: "状态", owner: "负责人", weekday: "星期", note: "备注", subtasks: "子任务"
+};
+const IMPORT_EVIDENCE_LABELS = { source: "原文", derived: "推导", default: "默认", inferred: "AI推断", manual: "手动" };
+// 当前展开编辑的行（问题 #2：应用前可逐字段编辑）
+let importEditTarget = null;
+
+function importRowMeta(task) {
+  return importPreviewSource?.metaByKey?.get(todoImportKey(task)) || null;
+}
+
+// 行内编辑表单（问题 #2）：8 字段可改，保存前过 validateImportedTask
+function renderImportEditForm(row, groupKey, index) {
+  const task = row.task;
+  const form = document.createElement("form");
+  form.className = "import-edit-form";
+  form.dataset.editGroup = groupKey;
+  form.dataset.editIndex = String(index);
+  const typeOptions = TODO_TYPE_MAP
+    .map(([label, value]) => `<option value="${value}" ${task.taskType === value ? "selected" : ""}>${escapeHtml(label)}</option>`)
+    .join("");
+  const weekdayOptions = ['<option value="">未设置</option>']
+    .concat(TODO_WEEKDAYS.map((day) => `<option value="${day}" ${task.weekday === day ? "selected" : ""}>${day}</option>`))
+    .join("");
+  const statusOptions = [["pending", "未完成"], ["unsubmitted", "未提交"], ["completed", "已完成"]]
+    .map(([value, label]) => `<option value="${value}" ${task.status === value ? "selected" : ""}>${label}</option>`)
+    .join("");
+  form.innerHTML = `
+    <div class="import-edit-grid">
+      <label>学校 <input name="school" value="${escapeHtml(task.school)}" /></label>
+      <label>课程 <input name="course" value="${escapeHtml(task.course)}" /></label>
+      <label>类型 <select name="taskType">${typeOptions}</select></label>
+      <label>数量 <input name="quantity" type="number" min="1" max="999" value="${Number(task.quantity) || 1}" /></label>
+      <label>状态 <select name="status">${statusOptions}</select></label>
+      <label>负责人 <input name="owner" value="${escapeHtml(task.owner)}" /></label>
+      <label>星期 <select name="weekday">${weekdayOptions}</select></label>
+      <label>备注 <input name="note" value="${escapeHtml(task.note)}" /></label>
+    </div>
+    <small class="import-edit-error" hidden></small>
+    <div class="import-edit-actions">
+      <button type="submit" class="secondary-button">保存修改</button>
+      <button type="button" class="secondary-button" data-edit-cancel="1">取消编辑</button>
+    </div>
+  `;
+  return form;
+}
+
 function renderImportPreviewGroup(key, title, rows, { collapsed = false, selectable = true } = {}) {
   const section = document.createElement("section");
   section.className = "import-group";
@@ -5469,26 +5524,64 @@ function renderImportPreviewGroup(key, title, rows, { collapsed = false, selecta
   } else {
     rows.forEach((row, index) => {
       const task = row.task;
+      const meta = importRowMeta(task);
+      const isConflict = key === "conflicts";
       const item = document.createElement("label");
-      item.className = `import-row${!task.taskType ? " warning" : ""}`;
-      // 无变化组禁用勾选：导入它们没有意义，避免误操作
+      item.className = `import-row${!task.taskType || isConflict ? " warning" : ""}`;
+      // 冲突行必须先选定目标任务才允许勾选（问题 #6）
+      const checkboxDisabled = isConflict && !row.targetId;
       const checkbox = selectable
-        ? `<input type="checkbox" data-group="${key}" data-index="${index}" ${row.selected ? "checked" : ""} />`
+        ? `<input type="checkbox" data-group="${key}" data-index="${index}" ${row.selected ? "checked" : ""} ${checkboxDisabled ? "disabled" : ""} />`
         : '<input type="checkbox" disabled />';
       const diffs = row.diffs?.length
         ? `<div class="import-diffs">${row.diffs.map((diff) => `<span><b>${escapeHtml(diff.label)}</b> ${escapeHtml(diff.from)} → ${escapeHtml(diff.to)}</span>`).join("")}</div>`
         : "";
-      const warning = task.taskType ? "" : '<span class="import-warning">类型未匹配，导入后显示为未分类</span>';
+      const warning = task.taskType ? "" : '<span class="import-warning">缺少任务类型，请先编辑指定类型</span>';
+      // 问题 #2：原文行、字段来源标记（非 source 的字段明确标识）、AI 置信度、告警
+      const sourceHtml = meta
+        ? `<small class="import-source-text">第 ${meta.sourceLine} 行原文：${escapeHtml(meta.sourceText)}</small>`
+        : "";
+      const originBadge = meta?.origin === "ai"
+        ? `<span class="import-origin-ai">AI 解析${Number.isFinite(meta.confidence) ? ` · 置信度 ${Math.round(meta.confidence * 100)}%` : ""}</span>`
+        : "";
+      const evidenceChips = meta
+        ? Object.entries(meta.fieldEvidence || {})
+            .filter(([field, entry]) => entry && entry.kind && entry.kind !== "source" && String(task[field] ?? "") !== "")
+            .map(([field, entry]) => `<span class="import-evidence import-evidence-${entry.kind}">${escapeHtml(IMPORT_FIELD_LABELS_FULL[field] || field)}：${IMPORT_EVIDENCE_LABELS[entry.kind] || entry.kind}</span>`)
+            .join("")
+        : "";
+      const metaWarnings = meta?.warnings?.length
+        ? `<small class="import-warning">${meta.warnings.map((text) => escapeHtml(text)).join("；")}</small>`
+        : "";
+      // 问题 #6：冲突候选清单，用户明确选择目标任务后才可勾选
+      const conflictHtml = isConflict
+        ? `<div class="import-conflict-list"><small>同键存在 ${row.candidates.length} 个现有任务，请选择要更新的目标：</small>${row.candidates.map((candidate) => `
+            <label class="import-conflict-candidate">
+              <input type="radio" name="import-conflict-${index}" value="${escapeHtml(candidate.id)}" data-conflict-index="${index}" ${row.targetId === candidate.id ? "checked" : ""} />
+              <span>${escapeHtml(candidate.id)} · ${escapeHtml(taskStatusLabel(candidate.status))} · ${Number(candidate.quantity) || 1}个 · ${escapeHtml(candidate.owner || "未指定")}</span>
+            </label>`).join("")}</div>`
+        : "";
+      const editBtn = selectable
+        ? `<button type="button" class="import-edit-btn" data-edit-group="${key}" data-edit-index="${index}">编辑字段</button>`
+        : "";
       item.innerHTML = `
         ${checkbox}
         <span class="import-row-body">
-          <strong>${escapeHtml(importPreviewTaskTitle(task))}</strong>
+          <strong>${escapeHtml(importPreviewTaskTitle(task))} ${originBadge}</strong>
           <small>${escapeHtml(taskStatusLabel(task.status))} · ${Number(task.quantity) || 1}个 · ${escapeHtml(task.owner || "未指定")}${task.weekday ? ` · ${escapeHtml(task.weekday)}` : ""}</small>
+          ${sourceHtml}
+          ${evidenceChips ? `<span class="import-evidence-list">${evidenceChips}</span>` : ""}
           ${warning}
+          ${metaWarnings}
           ${diffs}
+          ${conflictHtml}
+          ${editBtn}
         </span>
       `;
       list.append(item);
+      if (importEditTarget && importEditTarget.group === key && importEditTarget.index === index) {
+        list.append(renderImportEditForm(row, key, index));
+      }
     });
   }
   container.append(list);
@@ -5498,52 +5591,91 @@ function renderImportPreviewGroup(key, title, rows, { collapsed = false, selecta
 function renderImportPreview() {
   if (!importPreviewState || !elements.importPreviewGroups) return;
   const { added, updated, unchanged, unparsed } = importPreviewState;
+  const conflicts = importPreviewState.conflicts || [];
   elements.importPreviewSummary.textContent =
-    `新增 ${added.length} 条，更新 ${updated.length} 条，无变化 ${unchanged.length} 条，无法解析 ${unparsed.length} 条。新增和更新默认勾选。`;
+    `新增 ${added.length} 条，更新 ${updated.length} 条，疑似重复 ${conflicts.length} 条，无变化 ${unchanged.length} 条，无法解析 ${unparsed.length} 条。冲突与低置信度候选默认不勾选。`;
   elements.importPreviewGroups.replaceChildren(
     renderImportPreviewGroup("added", "新增", added),
     renderImportPreviewGroup("updated", "更新", updated),
+    renderImportPreviewGroup("conflicts", "疑似重复/冲突", conflicts),
     renderImportPreviewGroup("unchanged", "无变化", unchanged, { collapsed: true, selectable: false }),
     renderUnparsedImportGroup(unparsed)
   );
+  // 每次整体重渲染后统一注册一次事件（修复旧实现重复注册 change 监听的问题）
   elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       const rows = importPreviewState?.[checkbox.dataset.group];
       const row = rows?.[Number(checkbox.dataset.index)];
       if (row) row.selected = checkbox.checked;
+      renderImportPreview();
     });
   });
-  const selectedCount = [...added, ...updated, ...unchanged].filter((row) => row.selected).length;
+  // 冲突组（问题 #6）：先用 radio 明确选定目标任务，行才可勾选
+  elements.importPreviewGroups.querySelectorAll('input[type="radio"][data-conflict-index]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const row = importPreviewState?.conflicts?.[Number(radio.dataset.conflictIndex)];
+      if (!row) return;
+      row.targetId = radio.value;
+      row.selected = true;
+      renderImportPreview();
+    });
+  });
+  // 逐字段编辑（问题 #2）：展开/收起编辑表单，保存走 saveImportRowEdit
+  elements.importPreviewGroups.querySelectorAll("button[data-edit-group]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      importEditTarget = { group: button.dataset.editGroup, index: Number(button.dataset.editIndex) };
+      renderImportPreview();
+    });
+  });
+  elements.importPreviewGroups.querySelectorAll("form.import-edit-form").forEach((form) => {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveImportRowEdit(form.dataset.editGroup, Number(form.dataset.editIndex), form);
+    });
+    form.querySelector("[data-edit-cancel]")?.addEventListener("click", () => {
+      importEditTarget = null;
+      renderImportPreview();
+    });
+  });
+  // 冲突行只有选定 targetId 后才计入导入（问题 #6：禁止自动选择）
+  const selectedCount =
+    [...added, ...updated].filter((row) => row.selected).length +
+    conflicts.filter((row) => row.selected && row.targetId).length;
   elements.importPreviewApply.disabled = selectedCount <= 0;
   elements.importPreviewApply.textContent = selectedCount > 0 ? `导入所选 (${selectedCount})` : "导入所选";
-  elements.importPreviewGroups.querySelectorAll('input[type="checkbox"][data-group]').forEach((checkbox) => {
-    checkbox.addEventListener("change", renderImportPreview);
-  });
 }
 
-function renderUnparsedImportGroup(lines) {
+function renderUnparsedImportGroup(entries) {
   const section = document.createElement("section");
   section.className = "import-group";
-  section.innerHTML = `<h3>无法解析 <span>${lines.length}</span></h3>`;
+  section.innerHTML = `<h3>无法解析 <span>${entries.length}</span></h3>`;
   const list = document.createElement("div");
   list.className = "import-list";
-  if (!lines.length) {
+  if (!entries.length) {
     const empty = document.createElement("div");
     empty.className = "import-empty";
     empty.textContent = "暂无";
     list.append(empty);
   } else {
-    lines.forEach((line, index) => {
+    entries.forEach((entry, index) => {
       // 行前勾选框：选中的行才会被发给 AI 解析（默认全选）
+      // 问题 #3：逐行显示行号与失败原因，用户能看到哪些行失败/未发送
       const item = document.createElement("label");
       item.className = "import-row import-row-unparsed";
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = true;
       checkbox.dataset.aiLine = String(index);
+      const body = document.createElement("span");
+      body.className = "import-row-body";
       const text = document.createElement("span");
-      text.textContent = line;
-      item.append(checkbox, text);
+      text.textContent = entry.sourceLine ? `第 ${entry.sourceLine} 行：${entry.sourceText}` : String(entry.sourceText || "");
+      const reason = document.createElement("small");
+      reason.className = "import-warning";
+      reason.textContent = entry.reason || "无法解析";
+      body.append(text, reason);
+      item.append(checkbox, body);
       list.append(item);
     });
   }
@@ -5555,10 +5687,10 @@ function renderUnparsedImportGroup(lines) {
   aiSelected.type = "button";
   aiSelected.className = "secondary-button";
   aiSelected.textContent = "使用 AI 解析所选行";
-  aiSelected.disabled = importAiBusy || !lines.length;
+  aiSelected.disabled = importAiBusy || !entries.length;
   aiSelected.addEventListener("click", () => {
     const selected = [...section.querySelectorAll("input[data-ai-line]:checked")]
-      .map((input) => lines[Number(input.dataset.aiLine)])
+      .map((input) => entries[Number(input.dataset.aiLine)])
       .filter(Boolean);
     runAiParseOnLines(selected, "selected");
   });
@@ -5568,96 +5700,284 @@ function renderUnparsedImportGroup(lines) {
   aiAll.textContent = "AI 重新解析全部";
   aiAll.disabled = importAiBusy || !(importPreviewSource?.rawLines?.length);
   aiAll.addEventListener("click", () => runAiParseOnLines(importPreviewSource?.rawLines || [], "all"));
+  actions.append(aiSelected, aiAll);
+  // 问题 #4：请求进行中提供真取消（主进程 abort 网络请求）
+  if (importAiBusy) {
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "secondary-button";
+    cancelBtn.textContent = "取消解析";
+    cancelBtn.addEventListener("click", () => cancelAiParse());
+    actions.append(cancelBtn);
+  }
   const feedback = document.createElement("small");
   feedback.className = "helper-text import-ai-feedback";
   feedback.textContent = importAiBusy ? "AI 解析中…" : importAiFeedback;
-  actions.append(aiSelected, aiAll, feedback);
+  actions.append(feedback);
   section.append(actions);
   return section;
 }
 
-// 二次确认将发送的文本 → 发送 → 候选并入预览（低置信度默认不勾选）
-async function runAiParseOnLines(rawLines, mode) {
+// 二次确认将发送的文本 → 发送 → AI 结果按原文/行号合并进预览（问题 #3：不整体覆盖规则结果）
+async function runAiParseOnLines(entries, mode) {
   if (importAiBusy || !importPreviewState || !importPreviewSource) return;
-  const lines = rawLines.map((line) => String(line || "").trim()).filter(Boolean);
-  if (!lines.length) {
+  const clean = (entries || [])
+    .map((entry) => ({ sourceLine: Number(entry?.sourceLine) || 0, sourceText: String(entry?.sourceText || "").trim() }))
+    .filter((entry) => entry.sourceText);
+  if (!clean.length) {
     importAiFeedback = "请先勾选要发送的行";
     renderImportPreview();
     return;
   }
   // 只发送选中的任务文本；发送前逐行展示，用户确认后才出网（计划书 §M3）
-  const previewLines = lines.slice(0, 10).map((line) => `· ${line}`).join("\n");
-  const more = lines.length > 10 ? `\n…共 ${lines.length} 行` : "";
+  const previewLines = clean.slice(0, 10).map((entry) => `· ${entry.sourceText}`).join("\n");
+  const more = clean.length > 10 ? `\n…共 ${clean.length} 行` : "";
   const label = mode === "all" ? "AI 将重新解析全部任务行" : "AI 将解析以下所选行";
   if (!window.confirm(`${label}，以下文本将发送给公司模型网关：\n\n${previewLines}${more}\n\n确认发送？`)) return;
 
   const token = importPreviewToken;
+  // 问题 #4：requestId 交给主进程登记 AbortController，取消时真正中止网络请求
+  const requestId = `ai-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  importAiRequestId = requestId;
   importAiBusy = true;
   importAiFeedback = "";
   renderImportPreview();
   let result;
   try {
-    result = await window.workbench.aiParseTodoLines({ lines });
+    result = await window.workbench.aiParseTodoLines({ lines: clean.map((entry) => entry.sourceText), requestId });
   } catch {
     result = { ok: false, error: "AI 解析调用失败" };
   }
-  importAiBusy = false;
-  // 预览已关闭或重开：迟到结果不得覆盖新预览
+  // 预览已关闭或重开：迟到结果不得覆盖新预览（先判代际，再改任何状态）
   if (token !== importPreviewToken || !importPreviewState || !importPreviewSource) return;
+  importAiBusy = false;
+  if (importAiRequestId === requestId) importAiRequestId = "";
+  if (result?.cancelled) {
+    // 取消后任务数据与预览数据均保持原样（问题 #4）
+    importAiFeedback = "已取消 AI 解析（规则解析结果已保留）";
+    renderImportPreview();
+    return;
+  }
   if (!result?.ok) {
     // AI 失败：规则解析结果原封不动，只提示错误
     importAiFeedback = `AI 解析失败：${result?.error || "未知错误"}（规则解析结果已保留）`;
     renderImportPreview();
     return;
   }
-  const items = result.items || [];
-  const lowKeys = new Set(items.filter((item) => item.lowConfidence).map((item) => todoImportKey(item.task)));
-  if (mode === "all") {
-    importPreviewSource.tasks = items.map((item) => ({ ...item.task }));
-    importPreviewSource.unparsed = (result.unresolved || []).map((entry) => entry.sourceText);
-  } else {
-    const resolvedTexts = new Set(items.map((item) => item.sourceText));
-    importPreviewSource.tasks = importPreviewSource.tasks.concat(items.map((item) => ({ ...item.task })));
-    importPreviewSource.unparsed = importPreviewSource.unparsed.filter((line) => !resolvedTexts.has(String(line || "").trim()));
-  }
-  importPreviewState = buildTodoImportPreview(importPreviewSource.tasks, importPreviewSource.unparsed);
-  // 低置信度候选默认不勾选，由用户逐条确认
-  for (const group of ["added", "updated"]) {
-    for (const row of importPreviewState[group]) {
-      if (lowKeys.has(todoImportKey(row.task))) row.selected = false;
-    }
-  }
-  const unresolvedCount = (result.unresolved || []).length;
-  importAiFeedback = `AI 解析完成：${items.length} 行进入预览${lowKeys.size ? `（${lowKeys.size} 行低置信度未勾选）` : ""}，${unresolvedCount} 行仍无法解析`;
+  const { merged, skipped, failed } = mergeAiResultIntoPreview(result, clean);
+  rebuildImportPreviewState({ preserveSelection: true });
+  const parts = [`AI 解析完成：${merged} 行进入预览`];
+  if (skipped) parts.push(`${skipped} 行已有结果未覆盖`);
+  if (failed) parts.push(`${failed} 行仍无法解析`);
+  if (Array.isArray(result.warnings) && result.warnings.length) parts.push(result.warnings.join("；"));
+  importAiFeedback = parts.join("，");
   renderImportPreview();
 }
 
-function openImportPreview(parsed, rawText = "") {
+// AI 结果合并（问题 #3）：已有结果的原文行跳过不覆盖；新行带 origin=ai 与低置信度标记
+function mergeAiResultIntoPreview(result, sentEntries) {
+  const knownTexts = new Set((importPreviewSource.meta || []).map((meta) => meta.sourceText));
+  let merged = 0;
+  let skipped = 0;
+  for (const item of result.items || []) {
+    const sent = sentEntries[Number(item.sourceLine) - 1];
+    const sourceText = String(item.sourceText || sent?.sourceText || "").trim();
+    if (!sourceText || knownTexts.has(sourceText)) {
+      skipped += 1;
+      continue;
+    }
+    const evidence = item.evidence || {};
+    const hasInferred = Object.values(evidence).some(
+      (entry) => entry && (entry.kind === "inferred" || entry.kind === "default")
+    );
+    importPreviewSource.tasks.push({ ...item.task });
+    importPreviewSource.meta.push({
+      key: todoImportKey(normalizeImportedTodoTask(item.task)),
+      sourceLine: sent?.sourceLine || 0,
+      sourceText,
+      fieldEvidence: evidence,
+      confidence: Number(item.confidence),
+      warnings: Array.isArray(item.warnings) ? item.warnings : [],
+      origin: "ai",
+      // 问题 #1/#2：低置信度或含推断/默认字段的候选默认不勾选
+      lowTrust: Boolean(item.lowConfidence) || hasInferred
+    });
+    knownTexts.add(sourceText);
+    // 成功解析的行离开「无法解析」组
+    importPreviewSource.unresolved = importPreviewSource.unresolved.filter(
+      (entry) => String(entry.sourceText || "").trim() !== sourceText
+    );
+    merged += 1;
+  }
+  let failed = 0;
+  for (const entry of result.unresolved || []) {
+    failed += 1;
+    const sent = sentEntries[Number(entry.sourceLine) - 1];
+    const sourceText = String(entry.sourceText || sent?.sourceText || "").trim();
+    const existing = importPreviewSource.unresolved.find(
+      (candidate) => String(candidate.sourceText || "").trim() === sourceText
+    );
+    if (existing) existing.reason = entry.reason || existing.reason;
+    else if (sourceText) {
+      importPreviewSource.unresolved.push({
+        sourceLine: sent?.sourceLine || 0,
+        sourceText,
+        reason: entry.reason || "AI 无法解析"
+      });
+    }
+  }
+  return { merged, skipped, failed };
+}
+
+// 重建预览分组，保留用户已做的勾选与冲突目标选择（问题 #3：合并不重置用户操作）
+function rebuildImportPreviewState({ preserveSelection = false } = {}) {
+  const snapshot = new Map();
+  if (preserveSelection && importPreviewState) {
+    for (const group of ["added", "updated", "conflicts"]) {
+      for (const row of importPreviewState[group] || []) {
+        snapshot.set(`${group}:${todoImportKey(row.task)}`, { selected: row.selected, targetId: row.targetId || "" });
+      }
+    }
+  }
+  importPreviewState = buildTodoImportPreview(importPreviewSource.tasks, importPreviewSource.unresolved);
+  importPreviewSource.metaByKey = new Map((importPreviewSource.meta || []).map((meta) => [meta.key, meta]));
+  for (const group of ["added", "updated", "conflicts"]) {
+    for (const row of importPreviewState[group] || []) {
+      const key = todoImportKey(row.task);
+      const saved = snapshot.get(`${group}:${key}`);
+      if (saved) {
+        row.selected = saved.selected;
+        if (Object.prototype.hasOwnProperty.call(row, "targetId")) row.targetId = saved.targetId;
+      } else if (importPreviewSource.metaByKey.get(key)?.lowTrust) {
+        // 低置信度 / 含推断字段的 AI 候选默认不勾选（问题 #1/#2）
+        row.selected = false;
+      }
+    }
+  }
+}
+
+// 真取消（问题 #4）：请求主进程 abort 进行中的 AI 请求；迟到结果仍由代际令牌兜底
+async function cancelAiParse() {
+  const requestId = importAiRequestId;
+  if (!requestId) return;
+  try {
+    await window.workbench.aiCancelParse?.(requestId);
+  } catch {
+    // 取消 IPC 失败不影响本地兜底：迟到结果由 importPreviewToken 拦截
+  }
+}
+
+// 保存行内编辑（问题 #2）：先过本地 Schema 校验，失败只提示不落盘；改过的字段来源标记为 manual
+function saveImportRowEdit(groupKey, index, form) {
+  const row = importPreviewState?.[groupKey]?.[index];
+  if (!row || !importPreviewSource) return;
+  const data = new FormData(form);
+  const edited = normalizeImportedTodoTask({
+    ...row.task,
+    school: String(data.get("school") || "").trim(),
+    course: String(data.get("course") || "").trim(),
+    taskType: String(data.get("taskType") || ""),
+    quantity: Number(data.get("quantity")),
+    status: String(data.get("status") || "pending"),
+    owner: String(data.get("owner") || "").trim(),
+    weekday: String(data.get("weekday") || ""),
+    note: String(data.get("note") || "").trim()
+  });
+  const issues = validateImportedTask(edited);
+  const errorBox = form.querySelector(".import-edit-error");
+  if (issues.length) {
+    if (errorBox) {
+      errorBox.textContent = issues.join("；");
+      errorBox.hidden = false;
+    }
+    return;
+  }
+  // 同步修改数据源中的对应任务（按规范化后完全相等定位，避免误改同名行）
+  const oldNormalized = JSON.stringify(normalizeImportedTodoTask(row.task));
+  const sourceIndex = importPreviewSource.tasks.findIndex(
+    (task) => JSON.stringify(normalizeImportedTodoTask(task)) === oldNormalized
+  );
+  if (sourceIndex >= 0) {
+    importPreviewSource.tasks[sourceIndex] = { ...importPreviewSource.tasks[sourceIndex], ...edited };
+  }
+  const meta = importPreviewSource.metaByKey?.get(todoImportKey(row.task));
+  if (meta) {
+    for (const field of TODO_IMPORT_FIELDS) {
+      if (String(row.task[field] ?? "") !== String(edited[field] ?? "")) {
+        meta.fieldEvidence = { ...meta.fieldEvidence, [field]: { kind: "manual", text: "" } };
+      }
+    }
+    meta.key = todoImportKey(edited);
+    // 手动确认过的行不再按低置信度处理
+    meta.lowTrust = false;
+  }
+  importEditTarget = null;
+  rebuildImportPreviewState({ preserveSelection: true });
+  renderImportPreview();
+}
+
+// 接收 parseTodoDocument 契约 { items, unresolved, warnings }，为每行建立来源证据 meta（问题 #2）
+function openImportPreview(doc, rawText = "") {
   importPreviewToken += 1;
   importAiBusy = false;
   importAiFeedback = "";
+  importAiRequestId = "";
+  importEditTarget = null;
+  const items = Array.isArray(doc?.items) ? doc.items : [];
+  const unresolved = Array.isArray(doc?.unresolved) ? doc.unresolved : [];
+  // 原始非空行（带真实行号）：供「AI 重新解析全部」二次确认并发送
+  const rawLines = [];
+  String(rawText || "").replace(/\r\n/g, "\n").split("\n").forEach((line, index) => {
+    const text = line.trim();
+    if (text) rawLines.push({ sourceLine: index + 1, sourceText: text });
+  });
   importPreviewSource = {
-    tasks: [...parsed.tasks],
-    unparsed: [...parsed.unparsed],
-    // 原始非空行：供「AI 重新解析全部」二次确认并发送
-    rawLines: String(rawText || "").replace(/\r\n/g, "\n").split("\n").map((line) => line.trim()).filter(Boolean)
+    tasks: items.map((item) => ({ ...item.task, subtaskMarks: item.subtaskMarks })),
+    meta: items.map((item) => ({
+      key: todoImportKey(normalizeImportedTodoTask(item.task)),
+      sourceLine: item.sourceLine,
+      sourceText: item.sourceText,
+      fieldEvidence: item.fieldEvidence || {},
+      confidence: NaN,
+      warnings: Array.isArray(item.warnings) ? item.warnings : [],
+      origin: "rule",
+      lowTrust: false
+    })),
+    unresolved: unresolved.map((entry) => ({ ...entry })),
+    metaByKey: new Map(),
+    rawLines
   };
-  importPreviewState = buildTodoImportPreview(importPreviewSource.tasks, importPreviewSource.unparsed);
+  rebuildImportPreviewState();
   renderImportPreview();
   elements.importPreviewDialog?.showModal();
 }
 
 async function applyTodoImportSelection() {
   if (!importPreviewState) return;
+  const addedRows = importPreviewState.added.filter((row) => row.selected);
+  const updatedRows = importPreviewState.updated.filter((row) => row.selected);
+  // 冲突行必须由用户明确选定目标任务（问题 #6）
+  const conflictRows = (importPreviewState.conflicts || []).filter((row) => row.selected && row.targetId);
+  if (!addedRows.length && !updatedRows.length && !conflictRows.length) return;
+  // 应用前明确确认（问题 #2）
+  const summary = [`新增 ${addedRows.length} 条`, `更新 ${updatedRows.length} 条`];
+  if (conflictRows.length) summary.push(`冲突更新 ${conflictRows.length} 条`);
+  if (!window.confirm(`确认导入所选任务？（${summary.join("，")}）`)) return;
   let addedCount = 0;
   let updatedCount = 0;
   const now = Date.now();
-  importPreviewState.added.filter((row) => row.selected).forEach((row, index) => {
+  addedRows.forEach((row, index) => {
     weeklyTasks.push(normalizeWeeklyTask({ ...row.task, id: `task-${now}-${index}` }));
     addedCount += 1;
   });
-  importPreviewState.updated.filter((row) => row.selected).forEach((row) => {
+  updatedRows.forEach((row) => {
     const target = weeklyTasks.find((task) => task.id === row.existingId);
+    if (!target) return;
+    for (const field of TODO_IMPORT_FIELDS) target[field] = row.task[field];
+    updatedCount += 1;
+  });
+  conflictRows.forEach((row) => {
+    const target = weeklyTasks.find((task) => task.id === row.targetId);
     if (!target) return;
     for (const field of TODO_IMPORT_FIELDS) target[field] = row.task[field];
     updatedCount += 1;
@@ -5690,7 +6010,7 @@ async function handleTodoImport() {
       return;
     }
     setTodoPathDisplay(result.path || "");
-    openImportPreview(parseTodoLines(result.text), result.text);
+    openImportPreview(parseTodoDocument(result.text), result.text);
   } catch (error) {
     console.error("导入待做任务失败:", error);
     showToast("导入待做任务失败", "error");
@@ -6854,11 +7174,17 @@ elements.importPreviewApply?.addEventListener("click", () => applyTodoImportSele
 elements.importPreviewCancel?.addEventListener("click", () => elements.importPreviewDialog?.close());
 elements.importPreviewCancelX?.addEventListener("click", () => elements.importPreviewDialog?.close());
 elements.importPreviewDialog?.addEventListener("close", () => {
+  // 关闭预览时真取消进行中的 AI 请求（问题 #4：主进程 abort 网络请求）
+  if (importAiBusy && importAiRequestId) {
+    Promise.resolve(window.workbench.aiCancelParse?.(importAiRequestId)).catch(() => {});
+  }
   importPreviewState = null;
   importPreviewSource = null;
   // 代际递增：关闭后迟到的 AI 结果不得覆盖下一次预览
   importPreviewToken += 1;
   importAiBusy = false;
+  importAiRequestId = "";
+  importEditTarget = null;
 });
 elements.sbTerminal?.addEventListener("click", () => toggleTerminal());
 elements.sbTaskChip?.addEventListener("click", expandTaskRail);

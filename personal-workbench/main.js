@@ -1836,8 +1836,13 @@ function clearLlmApiKey() {
   return { ok: true };
 }
 
-// 客户端固定公司网关；不接受 renderer 传入的任何 Base URL
-const llmClient = createLlmClient({ getApiKey: readLlmApiKey });
+// 客户端固定公司网关；不接受 renderer 传入的任何 Base URL。
+// 唯一例外：E2E 假网关经环境变量注入，且只接受 127.0.0.1 回环地址（renderer 无法触达该变量）。
+function llmBaseUrlOverride() {
+  const raw = String(process.env.PERSONAL_WORKBENCH_LLM_BASE_URL || "");
+  return raw.startsWith("http://127.0.0.1:") ? raw : "";
+}
+const llmClient = createLlmClient({ getApiKey: readLlmApiKey, baseUrl: llmBaseUrlOverride() || undefined });
 
 // renderer 只能看到 configured 布尔与注册表快照，拿不到 key/密文/密钥路径
 function llmConfigForRenderer() {
@@ -2789,14 +2794,54 @@ function registerIpc() {
   ipcMain.handle("ai:test-model", async (_event, modelId) => {
     const clean = llmRegistry.sanitizeModelId(modelId);
     if (!clean) return { ok: false, error: "模型 ID 不合法" };
+    // 问题 #7：不在本地注册表的模型直接拒绝，不向网关发出请求
+    if (!llmRegistry.isKnownModelId(clean)) return { ok: false, error: "未注册的模型，已拒绝请求" };
     const result = await llmClient.testModel(clean);
     return { ok: result.ok, latencyMs: result.latencyMs, error: result.ok ? "" : result.error };
   });
   // AI 辅助解析（M3）：只接收 renderer 选中的任务行文本，候选在主进程过同一套 Schema 校验
-  ipcMain.handle("ai:parse-todo-lines", async (_event, payload) => {
+  // 问题 #4：保存进行中的 AbortController，支持真取消；新请求会中止同一 renderer 的旧请求
+  // 问题 #7：显式传入的模型必须在本地注册表内，未知模型直接拒绝
+  const aiParseControllers = new Map();
+  const abortAiParseForSender = (senderId) => {
+    for (const [id, entry] of aiParseControllers) {
+      if (entry.senderId === senderId) {
+        entry.controller.abort(new Error("cancelled"));
+        aiParseControllers.delete(id);
+      }
+    }
+  };
+  ipcMain.handle("ai:parse-todo-lines", async (event, payload) => {
     const lines = Array.isArray(payload?.lines) ? payload.lines : [];
-    const model = llmRegistry.sanitizeModelId(payload?.model) || loadWorkbenchPrefs().llmDefaultModel;
-    return aiParseTodoLines({ client: llmClient, model, lines });
+    const rawModel = payload?.model;
+    let model = loadWorkbenchPrefs().llmDefaultModel;
+    if (rawModel !== undefined && rawModel !== null && String(rawModel).trim() !== "") {
+      const clean = llmRegistry.sanitizeModelId(rawModel);
+      if (!clean || !llmRegistry.isKnownModelId(clean)) return { ok: false, error: "未注册的模型，已拒绝请求" };
+      model = clean;
+    }
+    abortAiParseForSender(event.sender.id);
+    const requestId = typeof payload?.requestId === "string" && payload.requestId
+      ? payload.requestId.slice(0, 64)
+      : `auto-${Date.now()}-${crypto.randomUUID()}`;
+    const controller = new AbortController();
+    aiParseControllers.set(requestId, { controller, senderId: event.sender.id });
+    try {
+      return await aiParseTodoLines({ client: llmClient, model, lines, signal: controller.signal });
+    } finally {
+      aiParseControllers.delete(requestId);
+    }
+  });
+  // 问题 #4：preload 暴露的取消入口；请求已结束时返回 cancelled:false（幂等）
+  ipcMain.handle("ai:cancel-parse", (event, requestId) => {
+    const key = typeof requestId === "string" ? requestId.slice(0, 64) : "";
+    const entry = aiParseControllers.get(key);
+    if (entry && entry.senderId === event.sender.id) {
+      entry.controller.abort(new Error("cancelled"));
+      aiParseControllers.delete(key);
+      return { ok: true, cancelled: true };
+    }
+    return { ok: true, cancelled: false };
   });
 
   ipcMain.handle("tokenbox:status", () => tokenboxBridgeStatus());

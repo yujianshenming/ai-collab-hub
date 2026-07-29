@@ -809,7 +809,7 @@
         </label>
         <div class="pref-ai-test">
           <span class="pref-ai-test-row">
-            <select id="pref-ai-test-model"></select>
+            <select id="pref-ai-test-model" aria-label="选择要测试的模型"></select>
             <button id="pref-ai-test-run" class="secondary-button" type="button">测试连接</button>
             <button id="pref-ai-refresh-models" class="secondary-button" type="button">刷新模型列表</button>
           </span>
@@ -822,8 +822,8 @@
         </label>
         <div class="pref-inject-test">
           <span class="pref-inject-row">
-            <input id="pref-inject-field" type="text" placeholder="字段名（须在上方映射中）" />
-            <input id="pref-inject-value" type="text" placeholder="试注入文本" />
+            <input id="pref-inject-field" type="text" placeholder="字段名（须在上方映射中）" aria-label="试注入字段名" />
+            <input id="pref-inject-value" type="text" placeholder="试注入文本" aria-label="试注入文本" />
             <button id="pref-inject-run" class="secondary-button" type="button">试注入到当前页</button>
           </span>
           <small class="helper-text">对当前激活的网页标签按映射注入一个字段，验证注入路径。仅注入，不提交。</small>

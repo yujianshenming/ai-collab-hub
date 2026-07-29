@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld("workbench", {
   aiListModels: () => ipcRenderer.invoke("ai:list-models"),
   aiTestModel: (modelId) => ipcRenderer.invoke("ai:test-model", modelId),
   aiParseTodoLines: (payload) => ipcRenderer.invoke("ai:parse-todo-lines", payload),
+  // 问题 #4：明确的取消入口，按 requestId 中止主进程里进行中的 AI 解析请求
+  aiCancelParse: (requestId) => ipcRenderer.invoke("ai:cancel-parse", requestId),
   pickTodoFile: () => ipcRenderer.invoke("dialog:pick-todo-file"),
   readTodoFile: () => ipcRenderer.invoke("tasks:read-todo-file"),
   writeTodoFile: (text) => ipcRenderer.invoke("tasks:write-todo-file", text),

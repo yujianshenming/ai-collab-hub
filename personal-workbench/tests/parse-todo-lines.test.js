@@ -47,20 +47,10 @@ function plain(value) {
 test("parses all 8 real examples from spec section 0", () => {
   const result = parseTodoLines(SPEC_SAMPLE);
 
-  assert.equal(result.unparsed.length, 0);
-  assert.equal(result.tasks.length, 8);
-
-  assert.deepEqual(plain(byCourse(result.tasks, "工程机器人现场编程")), {
-    school: "河南职业技术学院",
-    course: "工程机器人现场编程",
-    taskType: "",
-    quantity: 8,
-    status: "completed",
-    owner: "李姝琦",
-    weekday: "周二",
-    note: "",
-    subtaskMarks: null
-  });
+  // 问题 #1：缺少任务类型的行不再伪装成任务，进入 unparsed 等待人工指定
+  assert.equal(result.unparsed.length, 1);
+  assert.ok(result.unparsed[0].includes("工程机器人现场编程"));
+  assert.equal(result.tasks.length, 7);
 
   assert.deepEqual(plain(byCourse(result.tasks, "生物医学工程项目管理")), {
     school: "首都医科大学",
@@ -103,10 +93,10 @@ test("handles double spaces, missing type, and owner with digit", () => {
 
   assert.equal(byCourse(result.tasks, "医学遗传学").owner, "姜唯一");
 
-  const missingType = byCourse(result.tasks, "工程机器人现场编程");
-  assert.equal(missingType.taskType, "");
-  assert.equal(missingType.quantity, 8);
-  assert.equal(missingType.status, "completed");
+  // 问题 #1：缺任务类型的行进入 unparsed，不再作为可导入任务返回
+  assert.equal(result.tasks.length, 2);
+  assert.equal(result.unparsed.length, 1);
+  assert.ok(result.unparsed[0].includes("工程机器人现场编程"));
 
   const digitOwner = byCourse(result.tasks, "经络腧穴学");
   assert.equal(digitOwner.owner, "李漫1");

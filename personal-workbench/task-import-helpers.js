@@ -38,6 +38,11 @@
   const TYPE_FRAGMENTS = ["能力训练", "作业批阅", "搭建", "修改", "验收", "批阅"];
   // 状态类词片段：出现在剩余文本中说明是状态/进度描述，进备注而非负责人
   const STATUS_FRAGMENTS = ["已完成", "未完成", "未提交", "进行中", "已暂停", "待确认", "完成", "提交"];
+  // 负责人只接受“像人名”的中文 token（常见单姓 2-3 字 / 复姓 3-4 字）或明确负责人语法；
+  // 不为提高解析数量而猜测负责人（问题 #5）
+  const OWNER_SINGLE_SURNAMES =
+    "王李张刘陈杨黄赵吴周徐孙马朱胡郭何林罗高郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦傅方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤温康施文屈柳";
+  const OWNER_DOUBLE_SURNAMES = ["欧阳", "司马", "上官", "诸葛", "东方", "皇甫", "尉迟", "公孙", "令狐", "慕容"];
 
   // 括号备注 → 子任务标记：{ 编号: "done"|"unconfirmed" }；无法识别返回 null
   function parseSubtaskNote(text) {
@@ -67,6 +72,20 @@
     if (TYPE_FRAGMENTS.some((fragment) => token.includes(fragment))) return false;
     if (STATUS_FRAGMENTS.some((fragment) => token.includes(fragment))) return false;
     return true;
+  }
+
+  // “像人名”判定（问题 #5）：纯中文（允许少数民族名的 ·），且
+  // - 单姓：2-3 字且首字在常见姓氏表；或
+  // - 复姓：3-4 字且前两字在常见复姓表。
+  // 不满足者一律不作为负责人候选，留给备注 + 告警。
+  function isLikelyPersonName(token) {
+    if (!token) return false;
+    // 允许末尾单个数字后缀（规格 §0 真实样例「李漫1」：同名同姓用数字区分）
+    if (!/^[\u4e00-\u9fa5·]+\d?$/.test(token)) return false;
+    const clean = token.replace(/·/g, "").replace(/\d$/, "");
+    if (clean.length >= 3 && clean.length <= 4 && OWNER_DOUBLE_SURNAMES.includes(clean.slice(0, 2))) return true;
+    if (clean.length >= 2 && clean.length <= 3 && OWNER_SINGLE_SURNAMES.includes(clean[0])) return true;
+    return false;
   }
 
   // 单行解析 → 契约 item：字段按明确语义顺序消费（学校课程 → 类型 → 数量 → 状态 → 星期 → 负责人 → 剩余进备注）
@@ -152,11 +171,18 @@
       fieldEvidence.weekday = { kind: "default", text: "" };
     }
 
-    // 负责人：取第一个“像人名”的 token；类型词/状态词污染的 token 一律进备注并告警
+    // 负责人（问题 #5）：先认明确语法（负责人：X / @X），否则只接受“像人名”的 token；
+    // 无法证明的一律留空进备注，并保留 warning，不猜测负责人
     let owner = "";
+    const explicitOwnerMatch = rest.match(/负责人[:：]?\s*(\S+)/) || rest.match(/@([^\s@]+)/);
+    if (explicitOwnerMatch && looksLikeOwner(explicitOwnerMatch[1])) {
+      owner = clampText(explicitOwnerMatch[1], TODO_IMPORT_LIMITS.owner);
+      fieldEvidence.owner = { kind: "source", text: explicitOwnerMatch[0] };
+      rest = rest.replace(explicitOwnerMatch[0], " ");
+    }
     const tailTokens = [];
     for (const token of rest.trim().split(/\s+/).filter(Boolean)) {
-      if (!owner && looksLikeOwner(token)) {
+      if (!owner && looksLikeOwner(token) && isLikelyPersonName(token)) {
         owner = token;
         fieldEvidence.owner = { kind: "source", text: token };
         continue;
@@ -170,6 +196,7 @@
     if (!owner) {
       fieldEvidence.owner = { kind: "default", text: "" };
       confidence -= 0.1;
+      if (tailTokens.length) warnings.push("未能确认负责人，剩余文本已计入备注");
     }
 
     // 所有剩余文本进入备注，绝不静默丢弃
@@ -224,6 +251,7 @@
   }
 
   // Schema 校验：必填、枚举、长度/范围；返回问题列表（空数组 = 通过）
+  // taskType 必须是已知枚举，缺失也算校验失败（问题 #1：缺类型不得静默进入导入项）
   function validateImportedTask(task) {
     const issues = [];
     if (!task || typeof task !== "object") return ["任务不是对象"];
@@ -231,7 +259,9 @@
     if (!String(task.course || "").trim()) issues.push("缺少课程");
     if (String(task.school || "").length > TODO_IMPORT_LIMITS.school) issues.push("学校名过长");
     if (String(task.course || "").length > TODO_IMPORT_LIMITS.course) issues.push("课程名过长");
-    if (task.taskType && !TODO_TYPE_VALUES.includes(task.taskType)) issues.push(`未知任务类型：${task.taskType}`);
+    if (!TODO_TYPE_VALUES.includes(task.taskType)) {
+      issues.push(task.taskType ? `未知任务类型：${task.taskType}` : "缺少任务类型，需人工指定");
+    }
     const quantity = Number(task.quantity);
     if (!Number.isInteger(quantity) || quantity < TODO_IMPORT_LIMITS.quantityMin || quantity > TODO_IMPORT_LIMITS.quantityMax) {
       issues.push(`数量必须是 ${TODO_IMPORT_LIMITS.quantityMin}-${TODO_IMPORT_LIMITS.quantityMax} 的整数`);
@@ -357,23 +387,43 @@
   }
 
   // 差异分类：existingTasks / normalizeExisting 由调用方注入（renderer 传 weeklyTasks + normalizeWeeklyTask）
-  // 同一稳定键对应多个现有任务时保持旧 Map 行为（后者覆盖），并把键记入 duplicateKeys 供上层提示
+  // 同一稳定键对应多个现有任务时进入 conflicts（问题 #6）：禁止自动选最后一个，
+  // 冲突候选默认不勾选，必须由用户在候选列表中明确选择目标任务后才能更新。
   function buildTodoImportPreview(parsedTasks, unparsed, existingTasks, normalizeExisting) {
     const normalize = typeof normalizeExisting === "function" ? normalizeExisting : (task) => task;
     const existingByKey = new Map();
     const duplicateKeys = [];
     for (const task of existingTasks || []) {
       const key = todoImportKey(task);
-      if (existingByKey.has(key) && !duplicateKeys.includes(key)) duplicateKeys.push(key);
-      existingByKey.set(key, task);
+      if (!existingByKey.has(key)) existingByKey.set(key, []);
+      else if (!duplicateKeys.includes(key)) duplicateKeys.push(key);
+      existingByKey.get(key).push(task);
     }
-    const groups = { added: [], updated: [], unchanged: [], unparsed: unparsed || [], duplicateKeys };
+    const groups = { added: [], updated: [], unchanged: [], conflicts: [], unparsed: unparsed || [], duplicateKeys };
     (parsedTasks || []).map(normalizeImportedTodoTask).forEach((incoming) => {
-      const existing = existingByKey.get(todoImportKey(incoming));
-      if (!existing) {
+      const matches = existingByKey.get(todoImportKey(incoming)) || [];
+      if (!matches.length) {
         groups.added.push({ task: incoming, selected: true });
         return;
       }
+      if (matches.length > 1) {
+        groups.conflicts.push({
+          task: incoming,
+          selected: false,
+          targetId: "",
+          candidates: matches.map((candidate) => ({
+            id: candidate.id,
+            school: candidate.school,
+            course: candidate.course,
+            taskType: candidate.taskType,
+            quantity: candidate.quantity,
+            status: candidate.status,
+            owner: candidate.owner
+          }))
+        });
+        return;
+      }
+      const existing = matches[0];
       const diffs = todoImportDiffs(normalize(existing), incoming);
       if (diffs.length) groups.updated.push({ task: incoming, existingId: existing.id, diffs, selected: true });
       else groups.unchanged.push({ task: incoming, existingId: existing.id, selected: false });

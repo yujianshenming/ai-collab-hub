@@ -34,6 +34,8 @@ function aiItem(overrides = {}) {
     },
     evidence: {
       school: { kind: "source", text: "示例大学" },
+      course: { kind: "source", text: "示例课程" },
+      taskType: { kind: "source", text: "能力训练搭建" },
       owner: { kind: "source", text: "张三" },
       ...overrides.evidence
     },
@@ -55,13 +57,17 @@ function stubClient(result, record = {}) {
   };
 }
 
-test("输入归一：非字符串/空行剔除，行数与长度受限", () => {
-  const lines = normalizeAiInputLines(["  a  ", "", 42, null, "b".repeat(600)]);
-  assert.deepEqual(lines[0], "a");
-  assert.equal(lines[1].length, 500);
-  assert.equal(lines.length, 2);
+test("输入归一：非字符串/空行剔除，超长行进 rejected 而非静默截断（问题 #3）", () => {
+  const { lines, rejected } = normalizeAiInputLines(["  a  ", "", 42, null, "b".repeat(600)]);
+  assert.deepEqual(lines, [{ sourceLine: 1, text: "a" }]);
+  assert.equal(rejected.length, 1);
+  assert.equal(rejected[0].sourceLine, 5);
+  assert.match(rejected[0].reason, /未发送/);
+  // 不再按 MAX_AI_LINES 丢行：200 行全部保留原始 sourceLine，分批由 aiParseTodoLines 负责
   const flood = normalizeAiInputLines(Array.from({ length: 200 }, (_, i) => `行${i}`));
-  assert.equal(flood.length, MAX_AI_LINES);
+  assert.equal(flood.lines.length, 200);
+  assert.equal(flood.lines[199].sourceLine, 200);
+  assert.equal(flood.rejected.length, 0);
 });
 
 test("提示词：JSON-only、保留 sourceLine、枚举约束、防编造、防注入声明齐全", () => {
@@ -212,4 +218,125 @@ test("aiParseTodoLines：正常链路 temperature=0 且候选过同一套校验"
   // 空输入与缺客户端直接失败，不出网
   assert.equal((await aiParseTodoLines({ client: stubClient({}), model: "m", lines: [] })).ok, false);
   assert.equal((await aiParseTodoLines({ model: "m", lines: LINES })).ok, false);
+});
+
+// ===== 问题 #2：证据完整性 =====
+test("关键字段非空但缺证据：整行进 unresolved", () => {
+  const result = parseAiResponse(responseJson([aiItem({ evidence: { taskType: null } })]), LINES);
+  assert.equal(result.ok, true);
+  assert.equal(result.items.length, 0);
+  assert.match(result.unresolved[0].reason, /taskType 非空但缺少来源证据/);
+});
+
+test("非关键字段缺证据：补 inferred 标记并告警，候选保留", () => {
+  const result = parseAiResponse(responseJson([aiItem()]), LINES);
+  assert.equal(result.items.length, 1);
+  const item = result.items[0];
+  // fixture 的 note 非空但模型没给证据 → 按 inferred 补记
+  assert.equal(item.evidence.note.kind, "inferred");
+  assert.ok(item.warnings.some((w) => w.includes("note 缺少证据")));
+});
+
+test("AI 返回空 taskType：候选进 unresolved（问题 #1）", () => {
+  const result = parseAiResponse(
+    responseJson([aiItem({ task: { taskType: "" }, evidence: { taskType: null } })]),
+    LINES
+  );
+  assert.equal(result.items.length, 0);
+  assert.match(result.unresolved[0].reason, /缺少任务类型/);
+});
+
+// ===== 问题 #3：分批与不丢行 =====
+
+// 多批 stub：按调用顺序返回 results 数组中的结果，并记录每次请求
+function batchStubClient(results, calls = []) {
+  let call = 0;
+  return {
+    chatCompletion: async (payload) => {
+      calls.push(payload);
+      const result = results[Math.min(call, results.length - 1)];
+      call += 1;
+      return typeof result === "function" ? result(payload) : result;
+    }
+  };
+}
+
+const PARSABLE_LINE = "示例大学《示例课程》能力训练搭建 1个 未完成 张三";
+
+test("超过 80 行分批发送：第 81 行不丢失且 sourceLine 保留", async () => {
+  const lines = Array.from({ length: 100 }, () => PARSABLE_LINE);
+  const calls = [];
+  // 第一批返回空结果（全部补“模型未返回”），第二批返回批内第 1 行（= 全局第 81 行）的候选
+  const result = await aiParseTodoLines({
+    client: batchStubClient([
+      { ok: true, content: responseJson([]) },
+      { ok: true, content: responseJson([aiItem()]) }
+    ], calls),
+    model: "claude-sonnet-4-6",
+    lines
+  });
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 2, "100 行必须拆成 2 批请求");
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].sourceLine, 81, "批内 sourceLine 必须映射回原始行号");
+  // 其余 99 行全部有 unresolved 痕迹，无一静默消失
+  const covered = new Set([...result.items, ...result.unresolved].map((entry) => entry.sourceLine));
+  assert.equal(covered.size, 100);
+});
+
+test("超过总上限：明确拒绝，不假装解析完成", async () => {
+  const lines = Array.from({ length: 401 }, () => PARSABLE_LINE);
+  const calls = [];
+  const result = await aiParseTodoLines({
+    client: batchStubClient([{ ok: true, content: responseJson([]) }], calls),
+    model: "claude-sonnet-4-6",
+    lines
+  });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /最多解析 400 行/);
+  assert.equal(calls.length, 0, "超限时不得发出任何请求");
+});
+
+test("部分批失败：失败批进 unresolved 并告警，成功批结果保留", async () => {
+  const lines = Array.from({ length: 100 }, () => PARSABLE_LINE);
+  const result = await aiParseTodoLines({
+    client: batchStubClient([
+      { ok: false, error: "网关服务异常（500）" },
+      { ok: true, content: responseJson([aiItem()]) }
+    ]),
+    model: "claude-sonnet-4-6",
+    lines
+  });
+  assert.equal(result.ok, true, "有批次成功时整体不算失败");
+  assert.equal(result.items[0].sourceLine, 81);
+  const failedLines = result.unresolved.filter((entry) => entry.reason.includes("AI 请求失败"));
+  assert.equal(failedLines.length, 80, "失败批的 80 行全部可见");
+  assert.ok(result.warnings.some((w) => w.includes("批次失败")));
+});
+
+test("超长行不发送但保留在 unresolved 中（行级状态可见）", async () => {
+  const result = await aiParseTodoLines({
+    client: batchStubClient([{ ok: true, content: responseJson([aiItem()]) }]),
+    model: "claude-sonnet-4-6",
+    lines: [PARSABLE_LINE, "x".repeat(600)]
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.items[0].sourceLine, 1);
+  const skipped = result.unresolved.find((entry) => entry.sourceLine === 2);
+  assert.ok(skipped, "超长行必须出现在 unresolved");
+  assert.match(skipped.reason, /未发送给模型/);
+});
+
+test("signal 已中止：不发请求直接返回 cancelled", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const calls = [];
+  const result = await aiParseTodoLines({
+    client: batchStubClient([{ ok: true, content: responseJson([]) }], calls),
+    model: "claude-sonnet-4-6",
+    lines: LINES,
+    signal: controller.signal
+  });
+  assert.equal(result.cancelled, true);
+  assert.equal(calls.length, 0);
 });

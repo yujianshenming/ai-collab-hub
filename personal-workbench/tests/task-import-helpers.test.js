@@ -70,14 +70,14 @@ test("每个字段都有来源证据（source/derived/default）", () => {
 });
 
 // ===== M1 测试矩阵 =====
-test("负责人被任务类型污染：类型词不作为负责人", () => {
+test("负责人被任务类型污染：类型词不作为负责人，且缺类型行进 unresolved", () => {
   // “能力训练搭” 是打错的类型词（不在枚举中），旧解析器会把它当负责人
   const doc = parseTodoDocument("示例大学《示例课程》能力训练搭 2个 未完成 张三");
-  const item = doc.items[0];
-  assert.equal(item.task.taskType, "");
-  assert.equal(item.task.owner, "张三");
-  assert.ok(item.task.note.includes("能力训练搭"), "污染词应进入备注");
-  assert.ok(item.warnings.some((w) => w.includes("疑似任务类型词")));
+  // 问题 #1：缺少合法 taskType 的行不得进入 items，必须落入 unresolved
+  assert.equal(doc.items.length, 0);
+  assert.equal(doc.unresolved.length, 1);
+  assert.ok(doc.unresolved[0].reason.includes("任务类型"));
+  assert.ok(!doc.unresolved[0].reason.includes("能力训练搭建"), "污染词不得被当成合法类型");
 });
 
 test("全角/半角括号子任务备注均可解析", () => {
@@ -88,13 +88,12 @@ test("全角/半角括号子任务备注均可解析", () => {
   assert.deepEqual({ ...half.items[0].subtaskMarks }, expected);
 });
 
-test("任务类型缺失：留空 + 告警 + 置信度下降", () => {
+test("任务类型缺失：进入 unresolved，需人工指定（问题 #1）", () => {
   const doc = parseTodoDocument("示例大学《示例课程》 3个 未完成 张三");
-  const item = doc.items[0];
-  assert.equal(item.task.taskType, "");
-  assert.equal(item.fieldEvidence.taskType.kind, "default");
-  assert.ok(item.warnings.some((w) => w.includes("任务类型")));
-  assert.ok(item.confidence < 1);
+  assert.equal(doc.items.length, 0);
+  assert.equal(doc.unresolved.length, 1);
+  assert.ok(doc.unresolved[0].reason.includes("缺少任务类型"));
+  assert.equal(doc.unresolved[0].sourceLine, 1);
 });
 
 test("负责人缺失：owner 为空 + 置信度下降", () => {
@@ -103,6 +102,42 @@ test("负责人缺失：owner 为空 + 置信度下降", () => {
   assert.equal(item.task.owner, "");
   assert.equal(item.fieldEvidence.owner.kind, "default");
   assert.ok(item.confidence < 1);
+});
+
+// ===== 问题 #5：模糊负责人不得被猜测 =====
+test("普通备注短语不被误判为负责人，owner 留空并告警", () => {
+  const doc = parseTodoDocument("示例大学《示例课程》能力训练搭建 1个 未完成 本月重点跟进");
+  const item = doc.items[0];
+  assert.equal(item.task.owner, "");
+  assert.equal(item.fieldEvidence.owner.kind, "default");
+  assert.ok(item.task.note.includes("本月重点跟进"), "未消费文本必须进备注");
+  assert.ok(item.warnings.some((w) => w.includes("未能确认负责人")));
+});
+
+test("备注短语与人名同行时：人名作 owner，备注保留（问题 #5 复现文本）", () => {
+  const doc = parseTodoDocument("示例大学《示例课程》能力训练搭建 1个 未完成 本月重点跟进 张三");
+  const item = doc.items[0];
+  assert.equal(item.task.owner, "张三");
+  assert.equal(item.fieldEvidence.owner.kind, "source");
+  assert.ok(item.task.note.includes("本月重点跟进"), "尾部备注不得丢失");
+});
+
+test("明确负责人语法优先：负责人：X 与 @X 均可识别", () => {
+  const colon = parseTodoDocument("示例大学《示例课程》能力训练搭建 1个 未完成 负责人：张三 抓紧推进").items[0];
+  assert.equal(colon.task.owner, "张三");
+  assert.equal(colon.fieldEvidence.owner.kind, "source");
+  assert.ok(colon.task.note.includes("抓紧推进"));
+
+  const at = parseTodoDocument("示例大学《示例课程》能力训练搭建 1个 未完成 @李四 抓紧推进").items[0];
+  assert.equal(at.task.owner, "李四");
+  assert.ok(at.task.note.includes("抓紧推进"));
+});
+
+test("非人名形状 token（英文/数字/生僻首字）不作为负责人", () => {
+  const doc = parseTodoDocument("示例大学《示例课程》能力训练搭建 1个 未完成 followup2026");
+  const item = doc.items[0];
+  assert.equal(item.task.owner, "");
+  assert.ok(item.task.note.includes("followup2026"));
 });
 
 test("多个尾部备注词全部进入备注", () => {
@@ -170,7 +205,7 @@ test("toLegacyParseResult 保持旧 9 字段形状", () => {
 });
 
 // ===== 差异分类 =====
-test("同一稳定键对应多个现有任务：记入 duplicateKeys 且行为确定（后者覆盖）", () => {
+test("同一稳定键对应多个现有任务：进入 conflicts，不自动选最后一个（问题 #6）", () => {
   const incoming = parseTodoLines("示例大学《示例课程》能力训练搭建 2个 未完成 张三").tasks;
   const existing = [
     { id: "task-a", school: "示例大学", course: "示例课程", taskType: "capability-setup", quantity: 2, status: "pending", owner: "张三", weekday: "", note: "", subtasks: [] },
@@ -178,9 +213,14 @@ test("同一稳定键对应多个现有任务：记入 duplicateKeys 且行为�
   ];
   const groups = buildTodoImportPreview(incoming, [], existing, (task) => task);
   assert.deepEqual(groups.duplicateKeys, [todoImportKey(existing[0])]);
-  // Map 行为：与后一个现有任务比较（确定性），差异进入 updated
-  assert.equal(groups.updated.length, 1);
-  assert.equal(groups.updated[0].existingId, "task-b");
+  // 禁止后者覆盖：不得进入 updated，必须进入 conflicts 且默认不勾选
+  assert.equal(groups.updated.length, 0);
+  assert.equal(groups.conflicts.length, 1);
+  const conflict = groups.conflicts[0];
+  assert.equal(conflict.selected, false);
+  assert.equal(conflict.targetId, "");
+  assert.deepEqual(conflict.candidates.map((c) => c.id), ["task-a", "task-b"]);
+  assert.equal(conflict.candidates[1].owner, "李四");
 });
 
 test("差异分类：新增/更新/未变化分组正确", () => {

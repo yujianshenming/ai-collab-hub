@@ -123,12 +123,17 @@ Personal Workbench 是一个“任务优先”的桌面工作台：把常驻网�
 
 ### 任务导入与 AI 辅助解析行为
 
-- 待办导入的确定性解析由 `task-import-helpers.js` 提供（UMD，renderer 与 Node 测试共用）：字段级证据、`validateImportedTask` Schema 校验（必填/枚举/长度/数量 1-999）、与现有任务的差异分类；`todoImportKey` 做行级匹配。
-- AI 能力经公司 Polymas 网关，Base URL 固定为 `https://llm-service.polymas.com/api/openai/v1` 且只存在于主进程；renderer 不能注入地址，也不能直接发起模型请求。
+- 待办导入的确定性解析由 `task-import-helpers.js` 提供（UMD，renderer 与 Node 测试共用）：`parseTodoDocument` 输出统一契约 `{ items, unresolved, warnings }`，每行带 `sourceLine/sourceText/fieldEvidence/confidence/warnings`；`validateImportedTask` Schema 校验（必填/枚举/长度/数量 1-999），缺少或未知 `taskType` 的行进入 unresolved，不会伪装成「未分类」导入项。
+- 负责人只认明确语法（`负责人：X` / `@X`）或「像人名」token（常见单姓 2-3 字/复姓 3-4 字，允许末尾单个数字后缀如「李漫1」）；无法证明时 owner 留空、剩余文本进备注并保留 warning，不为提高解析数量猜测负责人。
+- 差异分类 `buildTodoImportPreview`：同稳定键（学校+课程+类型）恰有一个现有任务才进 updated；多个现有任务进 conflicts（默认不勾选、`targetId` 为空、附候选任务 ID/状态/数量/负责人），必须由用户明确选定目标后才能更新，禁止自动选最后一个。
+- 导入预览（renderer）：每行显示原文行号与原文；规则与 AI 共用 `fieldEvidence` 结构，非 source 来源字段（推导/默认/AI推断/手动）在预览中打标；「编辑字段」支持逐字段修改，保存前再过 `validateImportedTask`，改过的字段来源标为 manual；「应用所选」前有 confirm 明确确认。
+- AI 能力经公司 Polymas 网关，Base URL 固定为 `https://llm-service.polymas.com/api/openai/v1` 且只存在于主进程；renderer 不能注入地址，也不能直接发起模型请求；`ai:test-model` 与 `ai:parse-todo-lines` 均校验模型属于本地注册表，未注册模型直接拒绝、不出网。
 - API key 优先级：环境变量 `PERSONAL_WORKBENCH_LLM_API_KEY` > 会话内临时 key > `userData/llm-secret.bin`（safeStorage 加密）。key 不写日志、不进任何 IPC 返回值；`ai:get-config` 只返回配置状态、加密可用性与模型列表。
 - 模型注册表内置 9 个模型，仅 `stableDefault` 模型可设为默认模型（默认 `claude-sonnet-4-6`）；默认模型保存在 `workbench-prefs.json` 的 `llmDefaultModel`。
-- AI 辅助解析（`llm-task-parser.js`）为审阅优先：只对导入预览中「未解析行」按用户勾选发送，发送前有二次确认展示将发送的行；候选过同一套 `validateImportedTask` 校验；学校/课程/负责人必须逐字出现在原文，否则进 unresolved；置信度低于 0.75 的候选默认不勾选。
-- AI 失败/超时只显示提示，规则解析结果原样保留；关闭预览后迟到的 AI 结果被代际 token 丢弃；取消预览不写盘，只有「应用所选」才修改 `tasks/weekly_tasks.json`。
+- AI 辅助解析（`llm-task-parser.js`）为审阅优先：只对导入预览中「未解析行」按用户勾选发送，发送前有二次确认展示将发送的行；候选过同一套 `validateImportedTask` 校验；学校/课程/负责人必须逐字出现在原文，否则进 unresolved；每个非空字段必须有来源证据，关键字段（学校/课程/类型/负责人）缺证据整行进 unresolved；置信度低于 0.75 或含推断/默认字段的候选默认不勾选。
+- 超 80 行自动分批请求且保留原始 `sourceLine`（不静默截断），超 400 行明确拒绝并提示；单批失败该批行进 unresolved 并留 warning，其余批继续；模型漏行一律补进 unresolved。
+- AI 结果按原文行合并进预览（已有结果不覆盖、成功行离开「无法解析」组、失败行更新原因），不整体替换任务列表；AI 失败/部分失败只提示，规则解析结果原样保留。
+- 取消是真取消：renderer 每次请求生成 `requestId`，主进程按 requestId 登记 `AbortController`，`ai:cancel-parse`（校验 senderId）真正 abort 网络请求；关闭预览或发起新请求也会 abort 旧请求；迟到结果仍由代际 token 兜底丢弃；取消后任务数据与预览数据均不变，只有「应用所选」才修改 `tasks/weekly_tasks.json`。
 
 ## 4. 系统架构
 
@@ -395,6 +400,8 @@ python -m py_compile integrations/homework-variance/web_server.py integrations/h
 
 2026-07-28 最新回归：上述安全 E2E 失败已确认是生产工作台与测试实例争用固定 `38924`，请求误入生产实例所致，并非 token 或联接目录保护失效。测试改用随机 loopback 端口后，`npm run test:all` 全量通过：单元/契约测试 89/89，E2E 从启动冒烟到周报流程 111 项断言全部通过；用户的生产工作台可在测试期间保持打开。
 
+2026-07-28 导入 7 项修复后的回归：`npm test` 通过（155/155，含新增 `tests/ai-import-regression.test.js` 契约测试与按新语义重写的 `tests/parse-todo-lines.test.js`）；`npm run test:e2e` 全链通过并新增 `tests/ai-import.e2e.js`（19/19：隔离 userData/任务文件 + 本地随机端口假网关，覆盖预览分组、冲突候选选择、逐字段编辑、AI 合并、真取消、应用落盘）；`git diff --check` 无空白错误。
+
 人工验收仍然重要的场景：
 
 - 真实浏览器中的扩展注入和重新打开扩展后的行为。
@@ -471,6 +478,7 @@ git diff --stat
 | 日期 | 类型 | 内容 | 关键文件 | 验证 |
 |---|---|---|---|---|
 | 2026-07-28 | docs/plan | 新增下一阶段可执行计划：先建立任务解析证据与 Schema，再接入主进程公司模型网关、AI 辅助导入和可编辑预览，随后实施通用 AI 助手、测量驱动的模块化与性能优化；明确密钥边界、多模型协作、测试矩阵、停止和退出条件 | `docs/NEXT_PHASE_DEVELOPMENT_PLAN_2026-07-28.md`、`README.md`、`docs/PROJECT_HANDBOOK.md` | 文档事实核对；`git diff --check`；敏感信息扫描 |
+| 2026-07-28 | fix/security | 修复导入 7 项已确认问题：缺/未知 taskType 进 unresolved 且不默认勾选；规则与 AI 统一 fieldEvidence（原文行号/来源标记/逐字段编辑/manual 标记/应用前 confirm）；AI 超限分批保留 sourceLine、按原文行合并不覆盖规则结果；requestId + AbortController 真取消；模糊负责人不猜测（剩余文本进备注）；同稳定键多现有任务进冲突组（禁自动选最后一个，用户选定 targetId 才可更新）；`ai:test-model`/`ai:parse-todo-lines` 拒绝未注册模型 | `task-import-helpers.js`、`llm-task-parser.js`、`main.js`、`preload.js`、`renderer.js`、`style.css`、`package.json`、`tests/ai-import-regression.test.js`、`tests/ai-import.e2e.js`、`tests/parse-todo-lines.test.js`、`tests/task-import-helpers.test.js`、`tests/llm-task-parser.test.js`、`docs/PROJECT_HANDBOOK.md`、`regression-checklist.md` | `npm test`（155/155）；`npm run test:e2e` 全链通过（新增 AI 导入 E2E 19/19）；`git diff --check` |
 | 2026-07-28 | feat/fix | 网页标签增加逐标签可选的一层返回书签（返回/切回、隐藏/恢复、关闭即清除历史）；任务中心增加默认专注视图、完整视图和保守的疑似重复提示，筛选始终可查完整数据；安全 HTTP E2E 使用随机端口，消除生产工作台占用 `38924` 导致的假失败 | `renderer.js`、`index.html`、`style.css`、`main.js`、`tests/page-return-bookmark.test.js`、`tests/page-return-bookmark.e2e.js`、`tests/task-focus-helpers.test.js`、`tests/task-focus-view.e2e.js`、`tests/security-http.e2e.js`、`README.md`、`regression-checklist.md` | `npm run test:all`（单元/契约 89/89；E2E 111 项断言全通过）；书签 E2E（6/6）；专注视图 E2E（4/4）；安全 HTTP E2E（11/11） |
 | 2026-07-25 | feat | 完成 TokenBox headless JSONL gateway 与工作台扩展：模型事件证据、源日志/SQLite 审计、JSON/CSV 导出、中转站导入和逐字段对账；Rust core 继续拥有扫描、去重、游标、Decimal 计价和账本规则 | `../../tokenbox/src-tauri/src/bin/tokenbox-bridge.rs`、`../../tokenbox/src-tauri/src/commands/mod.rs`、`../../tokenbox/src-tauri/src/storage/mod.rs`、`main.js`、`preload.js`、`renderer.js`、`index.html`、`style.css` | `npm test`（81/81）；`npm run test:all`；`npm run build:bridge:stage`；TokenBox `npm run build`；桥接 UI smoke（2,495 Token / 3 models / audit PASS） |
 | 2026-07-25 | fix | Apply the 2026-07-24 adversarial review: IPC path/token boundaries, report period/orphan preservation, completion timestamps, same-lane reorder, artifact lifecycle, and local server status | `main.js`, `preload.js`, `renderer.js`, `tests/adversarial-fix-regression.test.js` | `npm test`; `npm run test:e2e` |

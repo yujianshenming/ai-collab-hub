@@ -14,8 +14,11 @@ const {
 } = require("./task-import-helpers.js");
 
 // 单次 AI 解析的输入上限：防止把整个大文件塞进一次请求
+// 问题 #3：超过 MAX_AI_LINES 时改为分批请求（保留原始 sourceLine），不再静默截断；
+// 超过 MAX_AI_TOTAL_LINES 的请求明确拒绝并提示，不假装全部解析完成。
 const MAX_AI_LINES = 80;
 const MAX_AI_LINE_LENGTH = 500;
+const MAX_AI_TOTAL_LINES = 400;
 // 低于该置信度的候选在预览中默认不勾选（renderer 消费 lowConfidence 标记）
 const LOW_CONFIDENCE_THRESHOLD = 0.75;
 
@@ -23,19 +26,33 @@ const TODO_TYPE_VALUES = TODO_TYPE_MAP.map(([, value]) => value);
 const TASK_FIELDS = ["school", "course", "taskType", "quantity", "status", "owner", "weekday", "note"];
 // 这三个字段禁止编造：非空值必须逐字出现在原文行中
 const SOURCE_ONLY_FIELDS = ["school", "course", "owner"];
+// 问题 #2：关键字段非空却缺证据 → 整行进 unresolved；其余字段缺证据按 inferred 补记并告警
+const CRITICAL_EVIDENCE_FIELDS = ["school", "course", "taskType", "owner"];
 
-// IPC 入参归一：只收字符串行，去空行、截长、限行数
+// IPC 入参归一（问题 #3）：只收字符串行，去空行；超长行不截断改送 rejected；
+// 不再按 MAX_AI_LINES 丢行，分批由 aiParseTodoLines 负责。
+// 返回 { lines: [{ sourceLine, text }], rejected: [{ sourceLine, sourceText, reason }] }，
+// sourceLine 为输入数组的 1-based 位置。
 function normalizeAiInputLines(lines) {
-  const list = [];
-  if (!Array.isArray(lines)) return list;
-  for (const raw of lines) {
-    if (typeof raw !== "string") continue;
+  const accepted = [];
+  const rejected = [];
+  if (!Array.isArray(lines)) return { lines: accepted, rejected };
+  lines.forEach((raw, index) => {
+    if (typeof raw !== "string") return;
     const text = raw.trim();
-    if (!text) continue;
-    list.push(text.slice(0, MAX_AI_LINE_LENGTH));
-    if (list.length >= MAX_AI_LINES) break;
-  }
-  return list;
+    if (!text) return;
+    const sourceLine = index + 1;
+    if (text.length > MAX_AI_LINE_LENGTH) {
+      rejected.push({
+        sourceLine,
+        sourceText: text.slice(0, MAX_AI_LINE_LENGTH),
+        reason: `行超过 ${MAX_AI_LINE_LENGTH} 字，未发送给模型`
+      });
+      return;
+    }
+    accepted.push({ sourceLine, text });
+  });
+  return { lines: accepted, rejected };
 }
 
 // 提示词：只输出 JSON、保留 sourceLine、枚举约束、防编造、防注入
@@ -141,6 +158,25 @@ function parseAiResponse(text, lines) {
       continue;
     }
 
+    // 问题 #2：每个非空字段必须有来源证据。关键字段（学校/课程/类型/负责人）缺证据
+    // → 整行进 unresolved；其余字段缺证据按 inferred 补记并告警（预览中明确标识）。
+    let missingCriticalEvidence = "";
+    for (const field of TASK_FIELDS) {
+      const providedValue = String(rawTask[field] ?? "").trim();
+      if (!providedValue || evidence[field]) continue;
+      if (CRITICAL_EVIDENCE_FIELDS.includes(field)) {
+        missingCriticalEvidence = `字段 ${field} 非空但缺少来源证据`;
+        break;
+      }
+      evidence[field] = { kind: "inferred", text: "" };
+      itemWarnings.push(`字段 ${field} 缺少证据，按推断（inferred）处理`);
+    }
+    if (missingCriticalEvidence) {
+      unresolved.push({ sourceLine, sourceText, reason: missingCriticalEvidence });
+      seenLines.add(sourceLine);
+      continue;
+    }
+
     // 防编造：学校/课程/负责人非空值必须逐字出现在原文行
     const fabricated = SOURCE_ONLY_FIELDS.find((field) => task[field] && !sourceText.includes(task[field]));
     if (fabricated) {
@@ -186,26 +222,72 @@ function parseAiResponse(text, lines) {
   return { ok: true, items, unresolved, warnings };
 }
 
-// 组合入口：构建提示词 → 走 llm-client → 本地校验。任何失败都原样透传
-// { ok:false, error, timedOut?, cancelled? }，调用方（renderer）保留规则解析结果。
+// 组合入口（问题 #3）：归一 → 分批（每批 MAX_AI_LINES 行）→ llm-client → 本地校验。
+// - 返回结果中的 sourceLine 始终是调用方传入 lines 数组的 1-based 位置（不因分批漂移）。
+// - 超长行进 unresolved（未发送），总行数超过 MAX_AI_TOTAL_LINES 明确拒绝。
+// - 单批失败：该批所有行进 unresolved 并留 warning，其余批继续；全部批失败才整体失败。
+// - 取消（signal / cancelled）立即整体返回 cancelled，调用方（renderer）保留规则解析结果。
 async function aiParseTodoLines({ client, model, lines, signal } = {}) {
-  const cleanLines = normalizeAiInputLines(lines);
-  if (!cleanLines.length) return { ok: false, error: "没有可发送的任务行" };
+  const { lines: cleanLines, rejected } = normalizeAiInputLines(lines);
+  if (!cleanLines.length && !rejected.length) return { ok: false, error: "没有可发送的任务行" };
+  if (cleanLines.length > MAX_AI_TOTAL_LINES) {
+    return { ok: false, error: `一次最多解析 ${MAX_AI_TOTAL_LINES} 行（当前 ${cleanLines.length} 行），请分次选择` };
+  }
   if (!client || typeof client.chatCompletion !== "function") return { ok: false, error: "模型客户端不可用" };
-  const result = await client.chatCompletion({
-    model,
-    messages: buildParseMessages(cleanLines),
-    temperature: 0,
-    signal
-  });
-  if (!result.ok) return result;
-  return parseAiResponse(result.content, cleanLines);
+
+  const items = [];
+  const unresolved = rejected.map((entry) => ({ ...entry }));
+  const warnings = rejected.map((entry) => `第 ${entry.sourceLine} 行超过 ${MAX_AI_LINE_LENGTH} 字，未发送给模型`);
+  let succeededBatches = 0;
+  let firstFailure = null;
+
+  for (let offset = 0; offset < cleanLines.length; offset += MAX_AI_LINES) {
+    if (signal?.aborted) return { ok: false, error: "请求已取消", cancelled: true };
+    const batch = cleanLines.slice(offset, offset + MAX_AI_LINES);
+    const batchTexts = batch.map((entry) => entry.text);
+    const batchLabel = `第 ${batch[0].sourceLine}-${batch[batch.length - 1].sourceLine} 行`;
+    const result = await client.chatCompletion({
+      model,
+      messages: buildParseMessages(batchTexts),
+      temperature: 0,
+      signal
+    });
+    if (!result.ok && result.cancelled) return { ok: false, error: result.error || "请求已取消", cancelled: true };
+    const parsed = result.ok ? parseAiResponse(result.content, batchTexts) : result;
+    if (!parsed.ok) {
+      // 部分失败：该批行全部进 unresolved，不假装成功；其余批继续
+      if (!firstFailure) firstFailure = parsed;
+      const reason = `AI 请求失败：${parsed.error || "未知错误"}`;
+      for (const entry of batch) unresolved.push({ sourceLine: entry.sourceLine, sourceText: entry.text, reason });
+      warnings.push(`${batchLabel}批次失败：${parsed.error || "未知错误"}`);
+      continue;
+    }
+    succeededBatches += 1;
+    // 批内 sourceLine（1..batch.length）→ 原始 sourceLine
+    for (const item of parsed.items) {
+      const origin = batch[item.sourceLine - 1];
+      if (!origin) continue;
+      items.push({ ...item, sourceLine: origin.sourceLine });
+    }
+    for (const entry of parsed.unresolved) {
+      const origin = batch[entry.sourceLine - 1];
+      if (!origin) continue;
+      unresolved.push({ ...entry, sourceLine: origin.sourceLine });
+    }
+    warnings.push(...parsed.warnings);
+  }
+
+  // 所有批次都失败：透传首个失败（含 timedOut 等标记），调用方保留规则结果
+  if (!succeededBatches && cleanLines.length && firstFailure) return firstFailure;
+  return { ok: true, items, unresolved, warnings };
 }
 
 module.exports = {
   MAX_AI_LINES,
   MAX_AI_LINE_LENGTH,
+  MAX_AI_TOTAL_LINES,
   LOW_CONFIDENCE_THRESHOLD,
+  CRITICAL_EVIDENCE_FIELDS,
   normalizeAiInputLines,
   buildParseMessages,
   extractJsonPayload,
