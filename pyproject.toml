@@ -1,0 +1,34 @@
+# Python 质量门禁配置（代码审查流程阶段 1 引入）
+# 作用：为 server.py / hermes_agent.py / integrations/ 提供统一的 lint + 测试入口。
+# 详见 docs/CODE_REVIEW_PROCESS.md §6。
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# 只扫仓库内的 Python 源码，跳过前端构建产物与第三方目录。
+# 阶段 1 先聚焦主动维护的核心代码；integrations/ 为遗留大文件，待清理 sprint 后纳入。
+exclude = [
+    "node_modules",
+    "personal-workbench/node_modules",
+    "personal-workbench/build-output",
+    "personal-workbench/integrations",
+    "articles",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+# 阶段 1 只盯"真问题"：F=未用/未定义名, E9=语法级危险, B=常见 bug 模式。
+# 行长度/缩进/import 排序等纯风格(E1-E4/E501/W/I/UP/SIM)留到清理 sprint 再开，避免首道门禁被噪音淹没。
+select = ["F", "E9", "B"]
+# F541: 无占位符的 f-string（本仓库大量模板字符串，纯风格，非缺陷）。
+# B008: FastAPI 官方推荐 `File(default=None)` 写法，属已知误报。
+ignore = ["F541", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试文件允许较宽松
+"tests/python/**" = ["B"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests/python"]
+addopts = "-q"

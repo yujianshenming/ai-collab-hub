@@ -1,29 +1,68 @@
-name: CI
+name: CI (Code Review Gate)
 
 on:
-  push:
   pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# 本工作流是 CODE_REVIEW_PROCESS.md §3③ 的自动门禁。
+# 阶段 1：ruff 仅报告(continue-on-error)；阶段 2 起移除 continue-on-error 并设为 branch protection 必需检查。
 
 jobs:
-  test:
-    name: npm run test:all
-    runs-on: windows-latest
+  python:
+    name: Python lint + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: pip install --upgrade pip ruff pytest
+
+      - name: Ruff lint (phase 1: report-only)
+        # TODO(阶段2): 移除 continue-on-error，使 lint 成为阻塞检查
+        continue-on-error: true
+        run: ruff check .
+
+      - name: Syntax-check homework-variance scripts
+        # 对齐 regression-checklist.md §0.1 的 Python 静态检查
+        run: |
+          python -m py_compile \
+            personal-workbench/integrations/homework-variance/web_server.py \
+            personal-workbench/integrations/homework-variance/polymas_grade_engine.py
+
+      - name: Pytest (仅当存在测试时)
+        if: ${{ hashFiles('tests/python/**/*.py') != '' }}
+        run: pytest
+
+  frontend:
+    name: Frontend check + unit tests
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: personal-workbench
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: "22"
           cache: npm
           cache-dependency-path: personal-workbench/package-lock.json
 
-      - name: Install dependencies
+      - name: Install deps
         run: npm ci
 
-      - name: Run all tests
-        run: npm run test:all
+      - name: Syntax check (npm run check)
+        run: npm run check
+
+      - name: Unit tests (npm test)
+        # 仅跑 node --test 单测（含 regression-checklist.md §7.1 契约测试）。
+        # e2e(需显示器/Electron)在本地或带 display 的 runner 执行，不在本门禁内。
+        run: npm test
