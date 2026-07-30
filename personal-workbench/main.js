@@ -10,6 +10,8 @@ const { spawn, exec } = require("node:child_process");
 const llmRegistry = require("./llm-model-registry.js");
 const { createLlmClient } = require("./llm-client.js");
 const { aiParseTodoLines } = require("./llm-task-parser.js");
+const { normalizeWebviewPopupUrl } = require("./webview-navigation-helpers.js");
+const { resolveContained } = require("./safe-paths");
 
 if (process.env.PERSONAL_WORKBENCH_USER_DATA) {
   app.setPath("userData", path.resolve(process.env.PERSONAL_WORKBENCH_USER_DATA));
@@ -314,6 +316,15 @@ function extensionDebugLog(event, details = {}) {
     });
     fs.appendFileSync(logPath, `${line}\n`, "utf8");
   } catch {}
+}
+
+function debugWebviewUrl(value) {
+  try {
+    const parsed = new URL(String(value || ""));
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "";
+  }
 }
 
 function createWindow() {
@@ -1065,6 +1076,15 @@ function registerWebviewContents(contents) {
   if (uploadInterceptionEnabled) {
     setWebviewFileChooserInterception(contents, true);
   }
+  contents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    extensionDebugLog("webview:navigation-failed", {
+      source: debugWebviewUrl(contents.getURL()),
+      target: debugWebviewUrl(validatedURL),
+      errorCode,
+      errorDescription
+    });
+  });
 }
 
 async function injectUploadFiles(contents, backendNodeId, paths) {
@@ -1761,7 +1781,7 @@ function normalizeWorkbenchPrefs(prefs = {}) {
   const pixels = Math.max(1, Math.min(2000, Math.round(Number(prefs.cropPixels) || 100)));
   const todoFilePath = typeof prefs.todoFilePath === "string" ? prefs.todoFilePath : "";
   const platformFieldMap = normalizePlatformFieldMap(prefs.platformFieldMap);
-  const theme = ["sakura", "sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "sakura";
+  const theme = ["sakura", "sky", "morning", "night"].includes(prefs.theme) ? prefs.theme : "morning";
   const weeklyReportDefaults = normalizeWeeklyReportDefaults(prefs.weeklyReportDefaults);
   // 默认模型只存模型 ID（仅限 stableDefault 注册模型），API key 绝不入 prefs
   const llmDefaultModel = llmRegistry.normalizeDefaultModel(prefs.llmDefaultModel);
@@ -1857,9 +1877,11 @@ function llmConfigForRenderer() {
 function resolveConfiguredPathCandidate(candidate) {
   const raw = String(candidate || "").trim();
   if (!raw || path.extname(raw).toLowerCase() !== ".txt") return "";
+  // 复用 safe-paths.resolveContained(realpath 比对),与 resolveTaskPath 统一守卫实现
+  const resolved = resolveContained(null, candidate, { extensions: [".txt"] });
+  if (!resolved) return "";
   try {
-    const realPath = fs.realpathSync(raw);
-    return fs.statSync(realPath).isFile() ? realPath : "";
+    return fs.statSync(resolved).isFile() ? resolved : "";
   } catch {
     return "";
   }
@@ -1873,12 +1895,11 @@ function resolveConfiguredTodoFilePath() {
   return resolved ? { path: resolved, error: "" } : { path: "", error: "not-found" };
 }
 
-// temp/tasks 防穿越校验：合法返回绝对路径，否则返回 null（所有任务文件 IPC 统一走这里）
+// temp/tasks 防穿越校验：合法返回真实绝对路径，否则返回 null（所有任务文件 IPC 统一走这里）
+// 统一用 safe-paths.resolveContained(realpath 比对),杜绝 Windows junction/symlink 逃逸。
 function resolveTaskPath(candidate) {
   const tasksRoot = path.resolve(downloadRoot, "tasks");
-  const target = path.resolve(String(candidate || ""));
-  if (target !== tasksRoot && !target.startsWith(`${tasksRoot}${path.sep}`)) return null;
-  return target;
+  return resolveContained(tasksRoot, candidate);
 }
 
 function cleanupTaskFolder(folderPath) {
@@ -3312,13 +3333,31 @@ app.whenReady().then(async () => {
   app.on("web-contents-created", (_event, contents) => {
     if (contents.getType() === "webview") {
       registerWebviewContents(contents);
-      contents.setWindowOpenHandler(({ url }) => {
+      contents.setWindowOpenHandler(({ url, frameName, disposition }) => {
+        const sourceUrl = contents.getURL();
+        const resolvedUrl = normalizeWebviewPopupUrl(sourceUrl, url);
+        extensionDebugLog("webview:window-open", {
+          source: debugWebviewUrl(sourceUrl),
+          target: debugWebviewUrl(url),
+          resolvedTarget: debugWebviewUrl(resolvedUrl),
+          frameName: String(frameName || ""),
+          disposition: String(disposition || "")
+        });
         let protocol = "";
-        try { protocol = new URL(url).protocol; } catch {}
+        try { protocol = new URL(resolvedUrl).protocol; } catch {}
         if (["http:", "https:"].includes(protocol)) {
-          contents.loadURL(url).catch(() => {});
+          contents.loadURL(resolvedUrl).then(() => {
+            extensionDebugLog("webview:window-open-loaded", {
+              target: debugWebviewUrl(resolvedUrl)
+            });
+          }).catch((error) => {
+            extensionDebugLog("webview:window-open-load-failed", {
+              target: debugWebviewUrl(resolvedUrl),
+              error: error?.message || String(error)
+            });
+          });
         } else if (protocol === "mailto:") {
-          shell.openExternal(url).catch(() => {});
+          shell.openExternal(resolvedUrl).catch(() => {});
         }
         return { action: "deny" };
       });

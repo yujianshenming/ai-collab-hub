@@ -84,3 +84,9 @@ test("local server startup failures are observable through IPC and UI", () => {
   assert.match(preloadSrc, /onLocalServerStatus/);
   assert.match(rendererSrc, /handleLocalServerStatus/);
 });
+
+test("task path resolution delegates to the shared realpath guard (no string-prefix bypass)", () => {
+  assert.match(mainSrc, /const \{ resolveContained \} = require\("\.\/safe-paths"\)/);
+  assert.match(mainSrc, /function resolveTaskPath\(candidate\) \{[\s\S]*?return resolveContained\(tasksRoot, candidate\);/);
+  assert.match(mainSrc, /function resolveConfiguredPathCandidate\(candidate\) \{[\s\S]*?resolveContained\(null, candidate, \{\s*extensions:\s*\[\s*"\.txt"\s*\]\s*\}\)/);
+});
