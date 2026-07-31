@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 # 本工作流是 CODE_REVIEW_PROCESS.md §3③ 的自动门禁。
-# 阶段 1：ruff 仅报告(continue-on-error)；阶段 2 起移除 continue-on-error 并设为 branch protection 必需检查。
+# 阶段 2：ruff 为阻塞检查，lint 失败会阻断 PR 合并（阶段 1 的 continue-on-error 已移除）。
 
 jobs:
   python:
@@ -24,9 +24,7 @@ jobs:
       - name: Install tools
         run: pip install --upgrade pip ruff pytest
 
-      - name: Ruff lint (phase 1: report-only)
-        # TODO(阶段2): 移除 continue-on-error，使 lint 成为阻塞检查
-        continue-on-error: true
+      - name: Ruff lint (blocking)
         run: ruff check .
 
       - name: Syntax-check homework-variance scripts

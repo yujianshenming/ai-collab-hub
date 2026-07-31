@@ -486,7 +486,7 @@ class AgentSandbox:
         # We simulate a total of 30 speech turns maximum (exchanges * 2) as requested by the user
         max_exchanges = 15
         
-        for exchange_idx in range(max_exchanges):
+        for _exchange_idx in range(max_exchanges):
             if current_stage_idx >= len(cards):
                 break
                 

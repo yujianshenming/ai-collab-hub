@@ -9,3 +9,21 @@ venv/
 # IDE 生成的本地产物，不入库
 .qoder/repowiki/
 .qoder/better-harness/
+
+# 自动安装的 skill 副本（生成物，非项目源码）。由 agent 工具写入仓库根目录，
+# 会造成 ruff 误报与提交污染；已在 pyproject.toml 的 ruff.exclude 中一并跳过。
+.agent/
+.claude/
+.codebuddy/
+.codex/
+.continue/
+.cursor/
+.gemini/
+.kiro/
+.opencode/
+.qoder/
+.roo/
+.trae/
+.windsurf/
+.github/prompts/
+**/ui-ux-pro-max/
